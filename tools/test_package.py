@@ -399,17 +399,18 @@ class Registry(unittest.TestCase):
         self.assertTrue(any("جلسةُ النواة" in p for p in vr.validate(bad2, ROUTING)))
 
     def test_empty_tab_is_allowed(self):
-        tabs = json.loads(json.dumps(TABS)); next(t for t in tabs["tabs"] if t["id"] == "intake")["members"] = []
+        tabs = json.loads(json.dumps(TABS)); next(t for t in tabs["tabs"] if t["id"] == "review")["members"] = []
         self.assertEqual(vr.validate(tabs, ROUTING), [])
 
-    def test_flexible_session_keeps_its_04_number_across_stages(self):
+    def test_flexible_sessions_live_in_04_only(self):
         tabs = json.loads(json.dumps(TABS))
         review = next(t for t in tabs["tabs"] if t["id"] == "review")
-        review["members"].append("0409 · جدول: مهمّةٌ انتقلت")
-        self.assertEqual(vr.validate(tabs, ROUTING), [])
-        release = next(t for t in tabs["tabs"] if t["id"] == "release")
-        release["members"].append("0309 · من مرحلةٍ لا تنتقل")
-        self.assertTrue(any("لا تطابقان رقمَ مرحلته 06" in p for p in vr.validate(tabs, ROUTING)))
+        review["members"].append("0409 · جدول: مهمّةٌ في غير 04"); review["live_cap"] = 9
+        self.assertTrue(any("لا تطابقان رقمَ مرحلته 05" in p for p in vr.validate(tabs, ROUTING)))
+
+    def test_core_to_open_is_listed_but_not_required_live(self):
+        self.assertIn("0501 · المعاينة على 8500 والاعتماد", TABS["session_policy"]["core_to_open"])
+        self.assertEqual(vr.validate(TABS, ROUTING), [])
 
     def test_routes_point_to_specialties(self):
         ids = {s["id"] for s in TABS["specialties"]}
