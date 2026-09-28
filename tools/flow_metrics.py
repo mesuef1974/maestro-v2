@@ -74,6 +74,7 @@ def gh_json(*args: str) -> list[dict]:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # طرفيّةُ ويندوز (cp1256) تُسقط الطباعةَ عند العربيّة وبعض الرموز
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=3)
     ap.add_argument("--json", action="store_true")

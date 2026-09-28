@@ -24,6 +24,7 @@ def tool(script: str, *extra: str) -> dict:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # طرفيّةُ ويندوز (cp1256) تُسقط الطباعةَ عند العربيّة وبعض الرموز
     flow = tool("flow_metrics.py", "--days", "3")
     load = tool("session_load_v2.py", *(["--no-fetch"] if "--no-fetch" in sys.argv else []))
     c = flow["cycle_h"]

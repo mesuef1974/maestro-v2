@@ -151,6 +151,7 @@ def load_json(name: str, project: str = "schoolos") -> dict:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")  # طرفيّةُ ويندوز (cp1256) تُسقط الطباعةَ عند العربيّة وبعض الرموز
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-fetch", action="store_true")

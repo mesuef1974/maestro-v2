@@ -3,6 +3,7 @@
 import json, re, subprocess, sys, statistics as st
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+sys.stdout.reconfigure(encoding="utf-8")  # طرفيّةُ ويندوز (cp1256) تُسقط الطباعةَ عند العربيّة وبعض الرموز
 DOHA = timezone(timedelta(hours=3))
 DAYS = int(sys.argv[1]) if len(sys.argv) > 1 else 7
 raw = subprocess.run(["gh","pr","list","--state","merged","--limit","700","--json","number,createdAt,mergedAt,additions,deletions,changedFiles,files,author"],
