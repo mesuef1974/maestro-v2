@@ -56,6 +56,20 @@ class RiskTier(unittest.TestCase):
         self.assertIn("base_template", info["flags"])
         self.assertIn("base_template", rt.classify_paths(["templates/auth/login.html"])["flags"])
 
+    def test_skill_scripts_are_infra_not_visible_ui(self):
+        # F87: امتدادُ .js/.css/.html وحدَه كان يُصيّر سكربتَ مهارةٍ تحت .claude/skills/*/scripts/
+        # «واجهةً مرئيّة» (خطورةٌ متوسّطة) لأنّ فحصَ الامتداد سبق فحصَ .claude/ — اكتُشف بتشغيل
+        # evidence_pack.py فعلاً على طلب الدمج #730 (158 ملفّاً كلُّها تحت .claude/skills/)
+        for path in (".claude/skills/schoolos-feedback-intake/scripts/build_runner.js",
+                     ".claude/skills/schoolos-quality-guards/references/00-guards-map.md",
+                     ".claude/skills/schoolos-git-safety/scripts/git_preflight.py"):
+            r = rt.classify_paths([path])
+            self.assertNotEqual(r["category"], "visible_ui", path)
+        self.assertEqual(rt.classify_paths([".claude/skills/x/scripts/a.js"])["tier"], "low")
+        # وامتدادُها نفسُه تحت templates/ أو static/ يبقى واجهةً مرئيّة كالمعتاد
+        self.assertEqual(rt.classify_paths(["static/js/base.js"])["category"], "visible_ui")
+        self.assertEqual(rt.classify_paths(["templates/wings/record.html"])["category"], "visible_ui")
+
     def test_risk_fails_closed_on_sensitive_and_unknown(self):
         # قائمةٌ ثابتة: كلُّ مسارٍ حسّاسٍ يبقى عاليةً حتى لا ينحدر التصنيفُ لاحقاً (طلبُ 0103)
         for path in ("core/rls.py", "core/middleware_rls.py", "governance/retention.py", "governance/erasure_service.py",
@@ -265,8 +279,12 @@ class EvidencePack(unittest.TestCase):
         self.assertIn("كلُّ الصفحات (CSS عامّ)", md)
 
     def test_missing_approval_line_flagged(self):
+        # غيابُ السطر في الوصف لا يعني وحدَه رفضَ الدمج: الاعتمادُ المباشر في محادثة الجلسة
+        # المنفّذة قناةٌ صحيحةٌ مستقلّة (قرارُ المالك 09-27، الفلو v2.2) — فالنصُّ يحيل إلى التحقّق لا يحكم
         md = ep.build_pack({**self.PR, "body": "لا شيء"})
-        self.assertIn("غائب — لا يُدمج", md)
+        self.assertIn("غائبٌ في وصف الطلب", md)
+        self.assertIn("اعتمادٍ مباشرٍ في محادثة الجلسة المنفّذة", md)
+        self.assertNotIn("لا يُدمج", md)
 
     def test_migration_adds_high_risk_section(self):
         pr = {**self.PR, "files": [{"path": "operations/migrations/0009_x.py"}]}

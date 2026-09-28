@@ -58,7 +58,11 @@ def build_pack(pr: dict) -> str:
     info = classify_paths(paths)
     checks = summarize_checks(pr.get("statusCheckRollup"))
     body = pr.get("body") or ""
-    approval = "موجود" if APPROVAL.search(body) else ("مشمولٌ باستثناء الفلو" if EXEMPT.search(body) else "غائب — لا يُدمج")
+    # الاعتمادُ المباشر في محادثة الجلسة المنفّذة قناةٌ صحيحةٌ مستقلّة عن سطر الوصف (قرارُ المالك 09-27، الفلو v2.2)،
+    # فالحزمةُ لا تحكم «لا يُدمج» من غياب السطر وحدَه — تنبّه فقط وتحيل إلى التحقّق البشريّ
+    approval = ("موجود" if APPROVAL.search(body) else
+                "مشمولٌ باستثناء الفلو" if EXEMPT.search(body) else
+                "غائبٌ في وصف الطلب — تحقّقْ من اعتمادٍ مباشرٍ في محادثة الجلسة المنفّذة قبل الحكم بعدم الدمج")
     lines = [
         f"# حزمةُ الأدلّة — #{pr['number']}",
         f"**الخطورة:** {TIER_AR[info['tier']]} · **الفئة:** {info['category']} · **المجال:** {info['area']}"

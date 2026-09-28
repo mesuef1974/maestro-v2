@@ -53,12 +53,15 @@ def classify_file(path: str) -> str:
         return "migration"
     if SECURITY_SETTINGS.search(p) or re.search(r"/auth/", p) or _security_name(p):
         return "security"
-    if p.startswith(("templates/", "static/")) or p.endswith((".html", ".css", ".js")):
-        return "visible_ui"
     if p.startswith("tests/"):
         return "tests_only"
     if p.startswith((".github/", "scripts/", ".claude/", "docker", "requirements", "Makefile")) or "docker-compose" in p:
         return "infra"
+    # امتدادُ html/css/js وحدَه لا يكفي: سكربتُ مهارةٍ في .claude/skills/*/scripts/*.js صار يُحسَب
+    # «واجهةً مرئيّة» قبل هذا الإصلاح لأنّ الفحص بالامتداد يسبق فحصَ .claude/ — اكتُشف بتشغيل
+    # evidence_pack.py فعلاً على طلب الدمج #730 (خطورةٌ متوسّطة بدل الصحيح: منخفضة)
+    if p.startswith(("templates/", "static/")) or p.endswith((".html", ".css", ".js")):
+        return "visible_ui"
     if p.endswith(".md") or p.startswith(("docs/", "AAdocs/")):
         return "docs_only"
     if p.endswith(".py"):
