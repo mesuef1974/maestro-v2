@@ -20,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from risk_tier import BASE_TEMPLATES, classify_paths  # noqa: E402
 
 FIELDS = "number,isDraft,mergeStateStatus,additions,deletions,changedFiles,headRefOid,body,files,statusCheckRollup"
-APPROVAL = re.compile(r"اعتُمد من المالك على 8500 — \d{4}-\d{2}-\d{2}")
+# نمطان: على 8500 (الأصل)، ومباشرةً بلا معاينة (D-58م، البندُ 3 — صيغةٌ موحَّدةٌ يبحث عنها الحارسُ نفسُه)
+APPROVAL = re.compile(r"اعتُمد من المالك (?:على 8500|مباشرةً بلا معاينة 8500) — \d{4}-\d{2}-\d{2}")
 EXEMPT = re.compile(r"مشمولٌ باستثناء الفلو")
 TIER_AR = {"light": "خفيفة (اعتمادٌ بكلمة)", "low": "منخفضة", "medium": "متوسّطة", "high": "عالية"}
 
