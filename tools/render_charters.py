@@ -14,7 +14,7 @@ def render(tabs: dict) -> str:
     out = ["# مواثيقُ التبويبات — مولَّدةٌ من tabs.json (لا تُحرَّر يدويّاً)", f"> {tabs['principle']}", f"> نقطتا لمس المالك: {' و'.join(tabs['owner_touchpoints'])}.", ""]
     for tab in sorted(tabs["tabs"], key=lambda t: t["order"]):
         out += [
-            f"## {tab['order']}. {tabs['group_prefix']}{tab['name']}" + (" (انتقاليّ)" if tab.get("transitional") else ""),
+            f"## {tab.get('number', tab['order'])} · {tabs['group_prefix']}{tab['name']}" + (" (انتقاليّ)" if tab.get("transitional") else ""),
             f"**الطبقة:** {tab['layer']} · **دورة الحياة:** {tab['lifecycle']} · **حدّ الجلسات:** {tab['live_cap']}",
             f"**الغرض:** {tab['purpose']}",
             "**الأهداف:** " + "؛ ".join(tab["goals"]),
