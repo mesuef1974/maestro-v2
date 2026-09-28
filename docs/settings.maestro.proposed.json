@@ -1,48 +1,7 @@
 {
-  "_note": "مقترَح — لم يُطبَّق. يُدمج في .claude/settings.local.json داخل شجرة المايسترو (غيرِ متتبَّع) بعد اختباره بأمرٍ محظورٍ عمداً. المفاتيحُ التي تبدأ بـ_ للشرح فقط ويُحذف كلُّ ما يبدأ بشرطةٍ سفليّة عند الدمج.",
+  "_note": "مقترَح — لم يُطبَّق. يُدمج في .claude/settings.local.json داخل شجرة المايسترو (غيرِ متتبَّع) بعد اختباره بالسيناريوهات في _verify. المفاتيحُ التي تبدأ بـ_ للشرح فقط وتُحذف عند الدمج.",
+  "_incident_2026_09_28": "الإصدارُ الأوّل من هذا الملفّ استعمل permissions.deny بنمط «Bash(git push:*)» ظانّاً أنّ الحظر يخصّ شجرةَ المنصّة D:/shschool_mvp وحدها. لكنّ permissions.deny يطابق نصَّ استدعاء الأداة بلا وعيٍ بالمجلّد إطلاقاً — فمنع الدفعَ والدمجَ في مستودع المايسترو الخاصّ نفسِه أيضاً، وتوقّف عملُ 0101 فوراً بين 23:03 و23:05 (أُلغي الملفُّ خلال دقيقتين). البديلُ هنا خطّافُ PreToolUse واعٍ بالمجلّد الفعليّ — لا قائمةَ حظرٍ ثابتة.",
   "permissions": {
-    "deny": [
-      "Bash(git push:*)",
-      "Bash(git commit:*)",
-      "Bash(git merge:*)",
-      "Bash(git rebase:*)",
-      "Bash(git reset:*)",
-      "Bash(git checkout:*)",
-      "Bash(git switch:*)",
-      "Bash(git stash:*)",
-      "Bash(git add:*)",
-      "Bash(gh pr merge:*)",
-      "Bash(gh pr create:*)",
-      "Bash(gh pr close:*)",
-      "Bash(gh pr edit:*)",
-      "Bash(gh pr review:*)",
-      "Bash(gh api -X:*)",
-      "Bash(gh api --method:*)",
-      "Bash(railway:*)",
-      "Bash(docker compose up:*)",
-      "Bash(docker compose down:*)",
-      "Bash(bash scripts/preview.sh up:*)",
-      "Bash(bash scripts/preview.sh down:*)",
-      "PowerShell(git push:*)",
-      "PowerShell(git commit:*)",
-      "PowerShell(git merge:*)",
-      "PowerShell(git rebase:*)",
-      "PowerShell(git reset:*)",
-      "PowerShell(git checkout:*)",
-      "PowerShell(git switch:*)",
-      "PowerShell(git stash:*)",
-      "PowerShell(git add:*)",
-      "PowerShell(gh pr merge:*)",
-      "PowerShell(gh pr create:*)",
-      "PowerShell(gh pr close:*)",
-      "PowerShell(gh pr edit:*)",
-      "PowerShell(gh pr review:*)",
-      "PowerShell(gh api -X:*)",
-      "PowerShell(gh api --method:*)",
-      "PowerShell(railway:*)",
-      "PowerShell(docker compose up:*)",
-      "PowerShell(docker compose down:*)"
-    ],
     "allow": [
       "Bash(git log:*)",
       "Bash(git status:*)",
@@ -63,6 +22,7 @@
       "Bash(python C:/Users/mesue/delivery_manager_work/tools/evidence_pack.py:*)",
       "Bash(python C:/Users/mesue/delivery_manager_work/tools/risk_tier.py:*)",
       "Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py:*)",
+      "Bash(python C:/Users/mesue/delivery_manager_work/tools/decision_add.py:*)",
       "Bash(python C:/Users/mesue/delivery_manager_work/tools/review_window.py:*)",
       "Bash(python C:/Users/mesue/delivery_manager_work/tools/archive_check.py:*)",
       "Bash(python C:/Users/mesue/delivery_manager_work/tools/validate_registry.py:*)",
@@ -70,14 +30,29 @@
       "Bash(python C:/Users/mesue/delivery_manager_work/tools/render_auto_sections.py:*)"
     ]
   },
+  "_permissions_note": "لا حقلَ permissions.deny هنا للأفعال المؤثّرة (push/commit/merge/...): جُرِّب وسبّب عطلاً حقيقيّاً (أعلاه) لأنّه لا يميّز مستودعَ المايسترو عن شجرة المنصّة. الحظرُ الآن عبر hooks.PreToolUse وحده، وهو واعٍ بالمجلّد.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash C:/Users/mesue/delivery_manager_work/tools/maestro_git_scope.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
   "_verify": [
-    "1) شغّل في شجرة المايسترو: git push --dry-run  → يجب أن يُرفض بلا سؤالٍ حتى لو كان وضعُ الصلاحيّة bypassPermissions (الوثائقُ الرسميّة: deny حظرٌ صلبٌ في كلّ الأوضاع).",
-    "2) شغّل بالصدفتين معاً (PowerShell أساساً وBash للسكربتات): git push --dry-run من كلّ واحدة — القاعدةُ الناقصة في إحداهما ثغرةٌ كاملة؛ صُحّح أعلاه لتطابق PowerShell كلَّ قاعدة Bash سطراً بسطر.",
-    "3) شغّل: bash scripts/preview.sh status → يجب أن يمرّ. (فُحص preview.sh: لا يستدعي git push ولا commit ولا merge داخليّاً، فسماحُ استدعائه آمنٌ اليوم.)",
-    "4) إن كان مجلّدُ العمل خارج الشجرة (Write إلى C:/Users/mesue/delivery_manager_*) فأضف Edit/Write لذلك المجلّد وحدَه ولا تسمح بالكتابة داخل D:/shschool_mvp.",
-    "5) بعد الدمج: شغّل python tools/watch_once.py --no-live للتأكّد أنّ أدوات الحزمة مسموحة بلا مطالبة، وأنّ أوامرَ git push وgh pr merge ما زالت محظورة.",
-    "6) تحقّق فعليّاً أين استقرّ الملفّ بأمر /status داخل الجلسة (Setting sources) — على ويندوز قد يبقى في مجلّد الـ worktree نفسِه ولا يُوجَّه إلى جذر الحزمة الأصليّة D:\\shschool_mvp؛ لا تفترض الموضع.",
+    "1) سيناريو العطل نفسُه — يجب أن يُسمح الآن: من داخل C:/Users/mesue/delivery_manager_work شغّل git merge --ff-only origin/main.",
+    "2) من شجرة المنصّة (مجلّدُ الجلسة الطبيعيّ D:/shschool_mvp/.claude/worktrees/<اسمُك>) شغّل git push --dry-run → يجب أن يُرفض برسالة «محجوبٌ خارج مستودع المايسترو».",
+    "3) كرّر 1 و2 بالصدفتين معاً (PowerShell أساساً وBash للسكربتات) — الخطّافُ واحدٌ يخدم الأداتين فلا حاجةَ لقاعدتين منفصلتين كما في permissions.deny.",
+    "4) شغّل: bash scripts/preview.sh status من شجرة المنصّة → يجب أن يمرّ (ليس فعلاً محظوراً).",
+    "5) بعد التركيب: python C:/Users/mesue/delivery_manager_work/tools/test_maestro_git_scope.py يجب أن يمرّ (17 اختباراً) — هذا لا يختبر التركيبَ الفعليّ في شجرتك، فكرّر 1 و2 يدوياً بعده.",
+    "6) تحقّق فعليّاً أين استقرّ settings.local.json بأمر /status داخل الجلسة (Setting sources) — على ويندوز قد يبقى في مجلّد الـ worktree نفسِه ولا يُوجَّه إلى جذر الحزمة الأصليّة D:\\shschool_mvp؛ لا تفترض الموضع.",
     "7) إن أنشأتَ الملفَّ يدويّاً (لا كتبه Claude Code نفسُه) فأضِفه إلى .gitignore يدويّاً — لا يُضاف تلقائيّاً إلّا حين يكتبه هو."
   ],
-  "_known_limit": "permissions.deny يطابق نصَّ استدعاء الأداة (Bash/PowerShell) لا محتوى سكربتٍ يُستدعى: أمرٌ محظورٌ مكتوبٌ داخل ملفّ .sh مسموحٍ باستدعائه لن يُصطاد. الحمايةُ الحقيقيّةُ التي لا تُخترَق من داخل السكربتات هي PreToolUse hook (كما في guard_git.sh للمنصّة نفسها) أو Sandboxing؛ هذا الملفّ طبقةُ دفاعٍ أولى معلنة، لا ضماناً مطلقاً."
+  "_known_limit": "maestro_git_scope.py يقرأ حقلَ cwd من حمولة الخطّاف مباشرةً ولا يحلّل `cd X && ...` ولا `git -C <مسار>` داخل النصّ نفسِه. أمرٌ يبدأ فعلاً من مجلّد الجلسة (الغالبُ في الاستعمال العاديّ) يُضبَط صحيحاً؛ وتحويلُ الوجهة صراحةً بـ-C أو cd داخل السطر فعلٌ متعمَّدٌ قد يفلت — خطرُه أقلّ من العطل الذي وقع، لكنّه ليس صفراً. تغطيةٌ كاملةٌ بمستوى guard_git.py (1060 سطراً يفكّ eval وbash -c والمستعارات) عملٌ منفصلٌ لم يُبنَ بعد."
 }
