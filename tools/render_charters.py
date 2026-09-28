@@ -27,6 +27,11 @@ def render(tabs: dict) -> str:
             "**الأعضاء:** " + "؛ ".join(tab["members"]),
             "",
         ]
+    if tabs.get("specialties"):
+        out += ["## الاختصاصات (مهاراتُ جلسات 04 وصلاحيّاتُها — ليست تبويبات)", tabs.get("specialties_note", ""), ""]
+        for s in tabs["specialties"]:
+            out += [f"### {s['name']} (وسم «{s.get('name_tag', '')}»)", f"**الغرض:** {s['purpose']}",
+                    "**المهارات:** " + "، ".join(f"`{k}`" for k in s["skills"]), f"**الصلاحيّات:** {s['permissions']}", ""]
     if tabs.get("pending_archive"):
         out += ["## قيد الأرشفة", *(f"- {p['title']}: {p['reason']}" for p in tabs["pending_archive"]), ""]
     out += ["## مشاريعُ أخرى", tabs["parked_other_projects"]["note"], f"المجموعةُ المقترحة: «{tabs['parked_other_projects']['suggested_group']}»", ""]

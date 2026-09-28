@@ -387,11 +387,11 @@ class Registry(unittest.TestCase):
 
     def test_session_name_carries_tab_number_and_core_must_exist(self):
         bad = json.loads(json.dumps(TABS))
-        ui = next(t for t in bad["tabs"] if t["id"] == "exec_ui")
-        ui["members"] += ["جلسةٌ بلا رقم", "0405 · في غير تبويبها", "0300 · تسلسلٌ صفريّ", "0309 · " + "اسمٌ طويلٌ جدّاً " * 4]; ui["live_cap"] = 9
+        ui = next(t for t in bad["tabs"] if t["id"] == "reference")
+        ui["members"] += ["جلسةٌ بلا رقم", "0405 · في غير مرحلتها", "0300 · تسلسلٌ صفريّ", "0309 · " + "اسمٌ طويلٌ جدّاً " * 4]; ui["live_cap"] = 9
         probs = vr.validate(bad, ROUTING)
         self.assertTrue(any("أربع خانات" in p for p in probs))
-        self.assertTrue(any("لا تطابقان رقمَ تبويبه 03" in p for p in probs))
+        self.assertTrue(any("لا تطابقان رقمَ مرحلته 03" in p for p in probs))
         self.assertTrue(any("يبدأ من 01" in p for p in probs))
         self.assertTrue(any("أطولُ من 40" in p for p in probs))
         bad2 = json.loads(json.dumps(TABS))
@@ -399,8 +399,21 @@ class Registry(unittest.TestCase):
         self.assertTrue(any("جلسةُ النواة" in p for p in vr.validate(bad2, ROUTING)))
 
     def test_empty_tab_is_allowed(self):
-        tabs = json.loads(json.dumps(TABS)); next(t for t in tabs["tabs"] if t["id"] == "exec_admin")["members"] = []
+        tabs = json.loads(json.dumps(TABS)); next(t for t in tabs["tabs"] if t["id"] == "intake")["members"] = []
         self.assertEqual(vr.validate(tabs, ROUTING), [])
+
+    def test_flexible_session_keeps_its_04_number_across_stages(self):
+        tabs = json.loads(json.dumps(TABS))
+        review = next(t for t in tabs["tabs"] if t["id"] == "review")
+        review["members"].append("0409 · جدول: مهمّةٌ انتقلت")
+        self.assertEqual(vr.validate(tabs, ROUTING), [])
+        release = next(t for t in tabs["tabs"] if t["id"] == "release")
+        release["members"].append("0309 · من مرحلةٍ لا تنتقل")
+        self.assertTrue(any("لا تطابقان رقمَ مرحلته 06" in p for p in vr.validate(tabs, ROUTING)))
+
+    def test_routes_point_to_specialties(self):
+        ids = {s["id"] for s in TABS["specialties"]}
+        self.assertTrue({"exec_ui", "exec_schedule", "exec_admin"} <= ids)
 
     def test_live_diff(self):
         p = vr.validate(TABS, ROUTING, ["جلسةٌ جديدة"])

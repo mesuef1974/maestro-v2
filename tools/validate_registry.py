@@ -23,8 +23,10 @@ def name_problems(title: str, tab_number: str, serial: dict) -> list[str]:
     if not (sep and len(head) == 4 and head.isdigit()):
         return [f"«{title}»: الاسمُ يبدأ برقمٍ من أربع خانات (رقمُ التبويب ثمّ التسلسل) ثمّ « · »"]
     problems = []
-    if head[:2] != tab_number:
-        problems.append(f"«{title}»: أوّلُ خانتين {head[:2]} لا تطابقان رقمَ تبويبه {tab_number}")
+    # الجلسةُ المرنةُ تُفتح في 04 وتحمل رقمَها وهي تنتقل إلى 05 و06 و07 (D-46م)
+    allowed = {tab_number, *serial.get("carried_from", {}).get(tab_number, [])}
+    if head[:2] not in allowed:
+        problems.append(f"«{title}»: أوّلُ خانتين {head[:2]} لا تطابقان رقمَ مرحلته {tab_number} ولا مرحلةَ فتحٍ مسموحةً فيها")
     if int(head[2:]) < 1:
         problems.append(f"«{title}»: التسلسلُ داخل التبويب يبدأ من 01")
     limit = serial.get("max_title_len", 40)
@@ -63,7 +65,8 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
             problems.append(f"جلسةُ النواة «{title}» غيرُ مسجَّلةٍ في أيّ تبويب")
     for ptype, spec in routing["problem_types"].items():
         # التوجيهُ بالتبويب؛ أسماءُ المنفّذين والملّاك مرجعٌ لا شرط (الجلساتُ تُفتح عند الطلب — D-43م)
-        if spec["tab"] not in ids and spec["tab"] != "exec_*":
+        # التوجيهُ إلى اختصاص (specialties) أو إلى مرحلة (D-46م)
+        if spec["tab"] not in ids | {s["id"] for s in tabs.get("specialties", [])} and spec["tab"] != "exec_*":
             problems.append(f"التوجيه {ptype}: تبويبٌ غيرُ موجود {spec['tab']}")
     if live_titles is not None:
         # جلساتُ المهامّ المجدولة الآليّة ليست مقاعد — تُستثنى بالبادئة
