@@ -311,10 +311,13 @@
       ]
     }
   ],
-  "pending_archive": [
+  "pending_archive": [],
+  "archived_log": [
     {
       "title": "إصلاح تذبذب test_prune_local_branches (maintenance.lock)",
-      "reason": "منتهية: طلبُها #699 مغلق والتذبذبُ أصلحه #693؛ شجرتُها ضمن الثلاث المستبدَلة (D-22) — تُعرض أرشفتُها على المالك بعد إزالة أمين المستودع للشجرة وبعد archive_check؛ لا أرشفةَ لجلسةٍ عاملة (D-27م)"
+      "at": "2026-09-28",
+      "decision": "D-40م",
+      "note": "أُرشفت لا حُذفت؛ الشجرةُ باقيةٌ لأمين المستودع (D-22)، ومرجعُ الفرع c7fb8ce6 محفوظ؛ مذكّرتُها في handover_notes/"
     }
   ],
   "parked_other_projects": {
