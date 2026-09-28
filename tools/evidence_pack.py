@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from risk_tier import classify_paths  # noqa: E402
+from risk_tier import BASE_TEMPLATES, classify_paths  # noqa: E402
 
 FIELDS = "number,isDraft,mergeStateStatus,additions,deletions,changedFiles,headRefOid,body,files,statusCheckRollup"
 APPROVAL = re.compile(r"اعتُمد من المالك على 8500 — \d{4}-\d{2}-\d{2}")
@@ -46,7 +46,7 @@ def page_hints(paths: list[str]) -> list[str]:
         p = p.replace("\\", "/")
         if p.startswith("static/css/custom/"):
             hints.append("كلُّ الصفحات (CSS عامّ) — نهاراً وليلاً وبعرض 375")
-        elif p in ("templates/base.html", "templates/login.html"):
+        elif p in BASE_TEMPLATES:
             hints.append("كلُّ الصفحات (قالبٌ أساسيّ)")
         elif p.startswith("templates/") and p.endswith(".html"):
             hints.append(f"القالب {p.removeprefix('templates/')}")

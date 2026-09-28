@@ -43,6 +43,19 @@ class RiskTier(unittest.TestCase):
     def test_empty_paths_safe(self):
         self.assertEqual(rt.classify_paths([])["tier"], "low")
 
+    def test_sensitive_files_are_high_and_base_templates_flagged(self):
+        # مسارات المنصّة الفعليّة: أمنُ الصفوف ومحوُ البيانات والاحتفاظ والإعدادات خطورتُها عالية لا متوسّطة
+        for path in ("core/middleware_rls.py", "governance/retention.py", "governance/erasure_service.py",
+                     "core/management/commands/purge_parent_consents.py", "core/models/permission_audit.py",
+                     "shschool/settings/production.py", "shschool/settings/base.py"):
+            self.assertEqual(rt.classify_paths([path])["tier"], "high", path)
+        self.assertEqual(rt.classify_paths(["shschool/settings/development.py"])["tier"], "medium")
+        self.assertEqual(rt.classify_paths(["operations/services/schedule.py"])["tier"], "medium")
+        # القالبُ الأساسيّ في templates/base/ يحمل علامةَ الأثر الواسع ويُرفَع إلى المتوسّطة على الأقلّ
+        info = rt.classify_paths(["templates/base/base.html"])
+        self.assertIn("base_template", info["flags"])
+        self.assertIn("base_template", rt.classify_paths(["templates/auth/login.html"])["flags"])
+
 
 class Ledger(unittest.TestCase):
     def setUp(self):

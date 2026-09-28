@@ -18,6 +18,20 @@ TIER = {
 }
 TIER_ORDER = ["light", "low", "medium", "high"]
 HOT_FILES = ("docs/governance/regression_guards.md", "tests/mypy_ratchet_baseline.json")
+# القوالبُ الأساسيّة في المنصّة: base في templates/base/ وصفحةُ الدخول في templates/auth/؛ والقديمان يبقيان احتياطاً
+BASE_TEMPLATES = ("templates/base/base.html", "templates/auth/login.html", "templates/base.html", "templates/login.html")
+# أسماءُ ملفّاتٍ حسّاسةٌ تُقرأ بمقاطعها المفصولة بـ«_»: صلاحيّاتٌ وأمنُ الصفوف وتشفيرٌ وموافقاتٌ ومحوٌ واحتفاظٌ وتطهير
+SECURITY_TOKENS = {"permission", "permissions", "rls", "crypto", "consent", "consents", "erasure", "retention", "purge"}
+# إعداداتُ الإنتاج وأساسُها وما بينهما تغيّر الأمنَ (CSP، DEBUG، الأسرار)؛ وإعداداتُ التطوير والاختبار لا
+SECURITY_SETTINGS = re.compile(r"(^|/)settings/(__init__|base|production|staging)\.py$")
+
+
+def _security_name(p: str) -> bool:
+    """ملفُّ بايثون اسمُه (أو أحدُ مقاطعه) من الحسّاسات: core/middleware_rls.py وgovernance/retention.py وpurge_parent_consents.py."""
+    if not p.endswith(".py"):
+        return False
+    stem = p.rsplit("/", 1)[-1][:-3]
+    return any(tok in SECURITY_TOKENS for tok in stem.split("_"))
 
 
 def classify_file(path: str) -> str:
@@ -26,7 +40,7 @@ def classify_file(path: str) -> str:
         return "roadmap_data"
     if re.search(r"/migrations/[^/]+\.py$", p):
         return "migration"
-    if re.search(r"(^|/)(permissions|rls|crypto|consent|erasure)[^/]*\.py$|/auth/", p):
+    if SECURITY_SETTINGS.search(p) or re.search(r"/auth/", p) or _security_name(p):
         return "security"
     if p.startswith(("templates/", "static/")) or p.endswith((".html", ".css", ".js")):
         return "visible_ui"
@@ -52,7 +66,7 @@ def classify_paths(paths: list[str]) -> dict:
     norm = [p.replace("\\", "/") for p in paths]
     if any(p.startswith("static/css/custom/") for p in norm):
         flags.append("global_css")
-    if any(p in ("templates/base.html", "templates/login.html") for p in norm):
+    if any(p in BASE_TEMPLATES for p in norm):
         flags.append("base_template")
     if any(p in HOT_FILES for p in norm):
         flags.append("hot_file")
