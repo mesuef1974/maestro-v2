@@ -251,12 +251,12 @@ class ArchiveCheck(unittest.TestCase):
             r = ac.evaluate({**self.FACTS, **patch}, blocked)
             self.assertFalse(r["eligible"], patch)
 
-    def test_permanent_and_transitional_are_blocked(self):
+    def test_only_core_sessions_are_blocked(self):
         blocked = ac.permanent_titles(TABS)
+        self.assertEqual(set(blocked), set(TABS["session_policy"]["core_sessions"]))
         self.assertIn("مايسترو إدارة الجلسات", blocked)
-        self.assertIn("مسار Backend والبيانات", blocked)
-        self.assertNotIn("بصريّ · محور الجوال", blocked)
-        self.assertFalse(ac.evaluate({**self.FACTS, "title": "مسار Backend والبيانات"}, blocked)["eligible"])
+        self.assertNotIn("مسار Backend والبيانات", blocked)
+        self.assertFalse(ac.evaluate({**self.FACTS, "title": "النشر على الانتاج"}, blocked)["eligible"])
 
 
 class BranchStatus(unittest.TestCase):
@@ -382,8 +382,21 @@ class Registry(unittest.TestCase):
         bad["tabs"][1]["live_cap"] = 9
         self.assertTrue(any("في تبويبَين" in p for p in vr.validate(bad, ROUTING)))
         bad_route = json.loads(json.dumps(ROUTING))
-        bad_route["problem_types"]["ui"]["executors"].append("جلسةٌ وهميّة")
-        self.assertTrue(any("غيرُ مسجَّلة" in p for p in vr.validate(TABS, bad_route)))
+        bad_route["problem_types"]["ui"]["tab"] = "no_such_tab"
+        self.assertTrue(any("تبويبٌ غيرُ موجود" in p for p in vr.validate(TABS, bad_route)))
+
+    def test_session_name_must_carry_tab_prefix_and_core_must_exist(self):
+        bad = json.loads(json.dumps(TABS))
+        ui = next(t for t in bad["tabs"] if t["id"] == "exec_ui")
+        ui["members"].append("جلسةٌ بلا بادئة"); ui["live_cap"] = 9
+        self.assertTrue(any("يبدأ بـ«واجهة · »" in p for p in vr.validate(bad, ROUTING)))
+        bad2 = json.loads(json.dumps(TABS))
+        bad2["tabs"][0]["members"].remove("الحوكمة · اختصاصات الجلسات")
+        self.assertTrue(any("جلسةُ النواة" in p for p in vr.validate(bad2, ROUTING)))
+
+    def test_empty_tab_is_allowed(self):
+        tabs = json.loads(json.dumps(TABS)); next(t for t in tabs["tabs"] if t["id"] == "exec_admin")["members"] = []
+        self.assertEqual(vr.validate(tabs, ROUTING), [])
 
     def test_live_diff(self):
         p = vr.validate(TABS, ROUTING, ["جلسةٌ جديدة"])

@@ -19,7 +19,6 @@ import session_load_v2 as sl  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-PERMANENT_LAYERS = {"قيادة", "مدخل", "تمكين"}
 
 
 def parse_cherry(output: str) -> tuple[int, int]:
@@ -29,18 +28,8 @@ def parse_cherry(output: str) -> tuple[int, int]:
 
 
 def permanent_titles(tabs: dict) -> dict[str, str]:
-    """عنوانٌ ← سببُ المنع (دائمٌ أو تجويدٌ انتقاليّ)."""
-    out = {}
-    for tab in tabs["tabs"]:
-        if tab["layer"] in PERMANENT_LAYERS:
-            reason = "جلسةٌ دائمة"
-        elif tab.get("transitional"):
-            reason = "مسارٌ انتقاليّ: " + tab.get("exit_rule", "يحتاج حارساً آليّاً وموافقةَ المالك")
-        else:
-            continue
-        for member in tab["members"]:
-            out[member] = reason
-    return out
+    """عنوانٌ ← سببُ المنع: جلساتُ النواة الثابتة وحدها (D-43م)؛ والباقي يُؤرشف حين ينتهي عملُه."""
+    return {title: "جلسةٌ ثابتةٌ من النواة" for title in tabs.get("session_policy", {}).get("core_sessions", [])}
 
 
 def evaluate(facts: dict, blocked_titles: dict[str, str]) -> dict:

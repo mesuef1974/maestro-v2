@@ -21,9 +21,11 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
     problems: list[str] = []
     seen: dict[str, str] = {}
     orders, ids = set(), set()
+    core = set(tabs.get("session_policy", {}).get("core_sessions", []))
     for tab in tabs["tabs"]:
         for key in REQUIRED_TAB_KEYS:
-            if key not in tab or tab[key] in ("", [], None):
+            # الأعضاءُ قد تكون فارغةً: الجلسةُ تُفتح عند الطلب (D-43م)
+            if key not in tab or (key != "members" and tab[key] in ("", [], None)):
                 problems.append(f"التبويب {tab.get('id', '؟')}: الحقل {key} ناقص")
         if tab.get("id") in ids:
             problems.append(f"معرّفٌ مكرَّر: {tab.get('id')}")
@@ -37,10 +39,13 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
             if member in seen:
                 problems.append(f"«{member}» في تبويبَين: {seen[member]} و{tab['id']}")
             seen[member] = tab["id"]
+            if member not in core and not member.startswith(f"{tab.get('title_prefix', '')} · "):
+                problems.append(f"«{member}»: اسمُ جلسةٍ غيرِ ثابتةٍ يبدأ بـ«{tab.get('title_prefix')} · » ثمّ مهمّتِها")
+    for title in core:
+        if title not in seen:
+            problems.append(f"جلسةُ النواة «{title}» غيرُ مسجَّلةٍ في أيّ تبويب")
     for ptype, spec in routing["problem_types"].items():
-        for who in spec["executors"] + spec["owners"]:
-            if who != "file_owner" and who not in seen:
-                problems.append(f"التوجيه {ptype}: «{who}» غيرُ مسجَّلة في أيّ تبويب")
+        # التوجيهُ بالتبويب؛ أسماءُ المنفّذين والملّاك مرجعٌ لا شرط (الجلساتُ تُفتح عند الطلب — D-43م)
         if spec["tab"] not in ids and spec["tab"] != "exec_*":
             problems.append(f"التوجيه {ptype}: تبويبٌ غيرُ موجود {spec['tab']}")
     if live_titles is not None:
