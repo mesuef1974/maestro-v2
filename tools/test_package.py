@@ -256,7 +256,7 @@ class ArchiveCheck(unittest.TestCase):
         self.assertEqual(set(blocked), set(TABS["session_policy"]["core_sessions"]))
         self.assertIn("0101 · المايسترو", blocked)
         self.assertNotIn("مسار Backend والبيانات", blocked)
-        self.assertFalse(ac.evaluate({**self.FACTS, "title": "0601 · النشر على الإنتاج"}, blocked)["eligible"])
+        self.assertFalse(ac.evaluate({**self.FACTS, "title": "0601 · النشر على الإنتاج والدمج"}, blocked)["eligible"])
 
 
 class BranchStatus(unittest.TestCase):
@@ -409,7 +409,7 @@ class Registry(unittest.TestCase):
         self.assertTrue(any("لا تطابقان رقمَ مرحلته 05" in p for p in vr.validate(tabs, ROUTING)))
 
     def test_core_to_open_is_listed_but_not_required_live(self):
-        self.assertIn("0501 · النشر على 8500", TABS["session_policy"]["core_to_open"])
+        self.assertIn("0501 · النشر على 8500 والاعتماد", TABS["session_policy"]["core_to_open"])
         self.assertEqual(vr.validate(TABS, ROUTING), [])
 
     def test_routes_point_to_specialties(self):
