@@ -32,6 +32,12 @@ def render(tabs: dict) -> str:
         for s in tabs["specialties"]:
             out += [f"### {s['name']} (وسم «{s.get('name_tag', '')}»)", f"**الغرض:** {s['purpose']}",
                     "**المهارات:** " + "، ".join(f"`{k}`" for k in s["skills"]), f"**الصلاحيّات:** {s['permissions']}", ""]
+    for title, ch in tabs.get("session_policy", {}).get("charters", {}).items():
+        out += [f"## ميثاقُ «{title}»", f"**الدور:** {ch['role']}",
+                *(f"- **{k}:** {v}" for k, v in ch["scope"].items()),
+                "**الأهداف:** " + "؛ ".join(ch["goals"]), "**المؤشّرات:** " + "؛ ".join(ch["kpis"]),
+                "**طريقةُ العمل:**", *(f"- {m}" for m in ch["method"]),
+                "**المخرجات:** " + "؛ ".join(ch["outputs"]), f"**الحدود:** {ch['boundaries']}", ""]
     if tabs.get("pending_archive"):
         out += ["## قيد الأرشفة", *(f"- {p['title']}: {p['reason']}" for p in tabs["pending_archive"]), ""]
     out += ["## مشاريعُ أخرى", tabs["parked_other_projects"]["note"], f"المجموعةُ المقترحة: «{tabs['parked_other_projects']['suggested_group']}»", ""]
