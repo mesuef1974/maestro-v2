@@ -17,6 +17,22 @@ ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_TAB_KEYS = ("id", "name", "order", "layer", "purpose", "goals", "kpis", "inputs", "outputs", "skills", "permissions", "lifecycle", "live_cap", "members")
 
 
+def name_problems(title: str, is_core: bool, prefix: str, serial: dict) -> list[str]:
+    """الاسمُ «NNN · <بادئة التبويب> · <المهمّة>»: الرقمُ يرتّب الجلسةَ داخل تبويبها (D-44م) — النواةُ في المحجوز، والباقي بأقدميّته."""
+    head, sep, rest = title.partition(" · ")
+    if not (sep and len(head) == 3 and head.isdigit()):
+        return [f"«{title}»: الاسمُ يبدأ برقمٍ من ثلاث خانات ثمّ « · »"]
+    lo, hi = serial.get("core_range", [1, 99])
+    if is_core and not lo <= int(head) <= hi:
+        return [f"«{title}»: رقمُ جلسةِ النواة خارج المحجوز {lo:03d}..{hi:03d}"]
+    if not is_core:
+        if int(head) < serial.get("task_start", 101):
+            return [f"«{title}»: رقمُ جلسة المهمّة يبدأ من {serial.get('task_start', 101)}"]
+        if not rest.startswith(f"{prefix} · "):
+            return [f"«{title}»: بعد الرقم بادئةُ التبويب «{prefix} · » ثمّ المهمّة"]
+    return []
+
+
 def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) -> list[str]:
     problems: list[str] = []
     seen: dict[str, str] = {}
@@ -39,8 +55,7 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
             if member in seen:
                 problems.append(f"«{member}» في تبويبَين: {seen[member]} و{tab['id']}")
             seen[member] = tab["id"]
-            if member not in core and not member.startswith(f"{tab.get('title_prefix', '')} · "):
-                problems.append(f"«{member}»: اسمُ جلسةٍ غيرِ ثابتةٍ يبدأ بـ«{tab.get('title_prefix')} · » ثمّ مهمّتِها")
+            problems += name_problems(member, member in core, tab.get("title_prefix", ""), tabs.get("session_policy", {}).get("serial", {}))
     for title in core:
         if title not in seen:
             problems.append(f"جلسةُ النواة «{title}» غيرُ مسجَّلةٍ في أيّ تبويب")

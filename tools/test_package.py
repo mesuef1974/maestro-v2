@@ -254,9 +254,9 @@ class ArchiveCheck(unittest.TestCase):
     def test_only_core_sessions_are_blocked(self):
         blocked = ac.permanent_titles(TABS)
         self.assertEqual(set(blocked), set(TABS["session_policy"]["core_sessions"]))
-        self.assertIn("مايسترو إدارة الجلسات", blocked)
+        self.assertIn("001 · مايسترو إدارة الجلسات", blocked)
         self.assertNotIn("مسار Backend والبيانات", blocked)
-        self.assertFalse(ac.evaluate({**self.FACTS, "title": "النشر على الانتاج"}, blocked)["eligible"])
+        self.assertFalse(ac.evaluate({**self.FACTS, "title": "005 · النشر على الإنتاج"}, blocked)["eligible"])
 
 
 class BranchStatus(unittest.TestCase):
@@ -378,7 +378,7 @@ class Registry(unittest.TestCase):
 
     def test_detects_duplicate_member_and_unknown_route(self):
         bad = json.loads(json.dumps(TABS))
-        bad["tabs"][1]["members"].append("مايسترو إدارة الجلسات")
+        bad["tabs"][1]["members"].append("001 · مايسترو إدارة الجلسات")
         bad["tabs"][1]["live_cap"] = 9
         self.assertTrue(any("في تبويبَين" in p for p in vr.validate(bad, ROUTING)))
         bad_route = json.loads(json.dumps(ROUTING))
@@ -388,10 +388,13 @@ class Registry(unittest.TestCase):
     def test_session_name_must_carry_tab_prefix_and_core_must_exist(self):
         bad = json.loads(json.dumps(TABS))
         ui = next(t for t in bad["tabs"] if t["id"] == "exec_ui")
-        ui["members"].append("جلسةٌ بلا بادئة"); ui["live_cap"] = 9
-        self.assertTrue(any("يبدأ بـ«واجهة · »" in p for p in vr.validate(bad, ROUTING)))
+        ui["members"] += ["جلسةٌ بلا رقم", "107 · جدول · في غير تبويبها", "050 · واجهة · رقمُ نواةٍ لمهمّة"]; ui["live_cap"] = 9
+        probs = vr.validate(bad, ROUTING)
+        self.assertTrue(any("ثلاث خانات" in p for p in probs))
+        self.assertTrue(any("بادئةُ التبويب «واجهة · »" in p for p in probs))
+        self.assertTrue(any("يبدأ من 101" in p for p in probs))
         bad2 = json.loads(json.dumps(TABS))
-        bad2["tabs"][0]["members"].remove("الحوكمة · اختصاصات الجلسات")
+        bad2["tabs"][0]["members"].remove("003 · الحوكمة · اختصاصات الجلسات")
         self.assertTrue(any("جلسةُ النواة" in p for p in vr.validate(bad2, ROUTING)))
 
     def test_empty_tab_is_allowed(self):
