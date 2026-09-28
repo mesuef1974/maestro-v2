@@ -409,7 +409,7 @@ class Registry(unittest.TestCase):
         self.assertTrue(any("لا تطابقان رقمَ مرحلته 05" in p for p in vr.validate(tabs, ROUTING)))
 
     def test_core_to_open_is_listed_but_not_required_live(self):
-        self.assertIn("0501 · المعاينة على 8500 والاعتماد", TABS["session_policy"]["core_to_open"])
+        self.assertIn("0501 · النشر على 8500", TABS["session_policy"]["core_to_open"])
         self.assertEqual(vr.validate(TABS, ROUTING), [])
 
     def test_routes_point_to_specialties(self):
