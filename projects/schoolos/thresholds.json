@@ -1,0 +1,71 @@
+{
+  "_note": "قيمٌ أوّليّةٌ (baseline قبل الهدف) تُضبط بعد ثلاثة أيّام قياس. كلُّ قيمةٍ تحمل مصدرَها.",
+  "memory_free_gb": {
+    "green_min": 2.0,
+    "yellow_min": 1.0,
+    "red_min": 0.5,
+    "actions": {
+      "green": "لا إجراء",
+      "yellow": "لا بطاقاتِ جلساتٍ جديدة؛ تذكيرُ الجلسات بإيقاف خوادمها الخاملة",
+      "red": "S2: رفعُ قائمةِ الأثقل سياقاً للمالك؛ لا أرشفةَ إلا بأمره أو ضمن تفويض المنتهية",
+      "critical": "S2 مفتوح: قرارٌ فوريّ من المالك؛ لا شيءَ يُبدأ"
+    }
+  },
+  "flow": {
+    "oldest_open_pr_age_h": {
+      "warn": 8,
+      "high": 24
+    },
+    "system_wip_target": {
+      "low": 7,
+      "high": 10
+    },
+    "failed_main_runs_for_s2": 2,
+    "wip_per_session": 3,
+    "heavy_context_mb": 40
+  },
+  "owner_capacity": {
+    "normal": {
+      "decisions_per_day": 12,
+      "minutes_per_day": 40,
+      "per_window": 6
+    },
+    "elevated": {
+      "decisions_per_day": 20,
+      "minutes_per_day": 70,
+      "per_window": 10,
+      "auto_return_hours": 24
+    },
+    "windows_doha": [
+      "15:30",
+      "20:30"
+    ],
+    "note": "الرفعُ يقترحه المايسترو ويعلنه المالك؛ لا يخفّف البوّابةَ ولا حزمةَ الأدلّة. المعايرةُ بزمن القرار الفعليّ في أوّل نافذتين."
+  },
+  "review_minutes_assumed": {
+    "migration": 5.0,
+    "security": 5.0,
+    "visible_ui": 3.0,
+    "backend": 2.0,
+    "infra": 1.0,
+    "roadmap_data": 0.5,
+    "tests_only": 0.5,
+    "docs_only": 0.5,
+    "with_evidence_pack": {
+      "visible_ui": 1.5,
+      "backend": 1.0,
+      "migration": 3.0,
+      "security": 3.0,
+      "infra": 0.2,
+      "roadmap_data": 0.1,
+      "tests_only": 0.1,
+      "docs_only": 0.1
+    }
+  },
+  "claude_backup": {
+    "repo": "C:/Users/mesue/.claude",
+    "branch": "scoped",
+    "max_age_h": 36,
+    "note": "نسخُ ~/.claude (ذاكرة المشاريع): تنبيهٌ إن مرّ على آخر إيداعٍ >36 س أو وُجد backups/BACKUP_FAILED.txt — حادثة 05-13←09-28"
+  }
+}
