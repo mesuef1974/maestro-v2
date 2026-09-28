@@ -9,9 +9,9 @@ from __future__ import annotations
 import re
 import sys
 
-RANK = ["migration", "security", "visible_ui", "backend", "infra", "roadmap_data", "tests_only", "docs_only"]
+RANK = ["migration", "security", "unknown", "visible_ui", "backend", "infra", "roadmap_data", "tests_only", "docs_only"]
 TIER = {
-    "migration": "high", "security": "high",
+    "migration": "high", "security": "high", "unknown": "high",
     "visible_ui": "medium", "backend": "medium",
     "infra": "low",
     "roadmap_data": "light", "tests_only": "light", "docs_only": "light",
@@ -26,6 +26,14 @@ SECURITY_TOKENS = {"permission", "permissions", "rls", "crypto", "consent", "con
 SECURITY_SETTINGS = re.compile(r"(^|/)settings/(__init__|base|production|staging)\.py$")
 
 
+# امتداداتٌ قد تحمل بياناتٍ حقيقيّةً أو أسراراً (قوائمُ طلبة، نسخُ قواعد، مفاتيح) فخطورتُها عاليةٌ أينما وُجدت
+SENSITIVE_EXT = (".csv", ".xlsx", ".xls", ".zip", ".sqlite", ".sqlite3", ".db", ".dump", ".bak", ".sql", ".pem", ".key", ".p12", ".pfx")
+# ما يُعرف أنّه بنيةٌ منخفضةُ الخطورة؛ وما سواه مجهولٌ فيُرفَع إلى «عالية» (يفشل المجهولُ مغلقاً — Zero-Trust)
+INFRA_EXT = (".txt", ".cfg", ".ini", ".toml", ".yml", ".yaml", ".json", ".lock", ".conf", ".sh", ".ps1", ".bat", ".gitkeep")
+UI_ASSET_EXT = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".woff", ".woff2", ".ttf", ".map")
+INFRA_NAMES = {"Dockerfile", "Makefile", "Procfile", "LICENSE", "Pipfile", ".gitignore", ".gitattributes", ".editorconfig", ".dockerignore"}
+
+
 def _security_name(p: str) -> bool:
     """ملفُّ بايثون اسمُه (أو أحدُ مقاطعه) من الحسّاسات: core/middleware_rls.py وgovernance/retention.py وpurge_parent_consents.py."""
     if not p.endswith(".py"):
@@ -36,6 +44,9 @@ def _security_name(p: str) -> bool:
 
 def classify_file(path: str) -> str:
     p = path.replace("\\", "/")
+    base = p.rsplit("/", 1)[-1]
+    if base.startswith(".env") or base.lower().endswith(SENSITIVE_EXT):
+        return "security"
     if p.startswith("roadmap/migrations/"):
         return "roadmap_data"
     if re.search(r"/migrations/[^/]+\.py$", p):
@@ -52,7 +63,11 @@ def classify_file(path: str) -> str:
         return "docs_only"
     if p.endswith(".py"):
         return "backend"
-    return "infra"
+    if base in INFRA_NAMES or base.lower().endswith(INFRA_EXT):
+        return "infra"
+    if base.lower().endswith(UI_ASSET_EXT):
+        return "visible_ui"
+    return "unknown"
 
 
 def classify_paths(paths: list[str]) -> dict:

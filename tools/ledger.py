@@ -8,6 +8,7 @@
     python ledger.py move W-20260926-001 in_progress
     python ledger.py list [--state ready_for_review]
     python ledger.py show W-20260926-001
+    python ledger.py tag W-20260926-001 --branch claude/<فرع> [--raise-to high --reason "..."] [--apply]   # وسمُ الخطورة والمجال؛ عرضٌ فقط بلا --apply
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -163,6 +165,44 @@ def late_items(items: dict, now: datetime | None = None) -> list[dict]:
     return [i for i in items.values() if i.get("state") in waiting and i.get("start") and datetime.fromisoformat(i["start"]) <= now]
 
 
+def _git_read(cmd: list[str]) -> str:
+    """أمرٌ قرائيٌّ على غيت أو gh؛ يفشل بصوتٍ عالٍ لا صامتاً."""
+    repo = os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=False, cwd=repo)
+    if proc.returncode != 0:
+        raise LedgerError(f"فشل: {' '.join(cmd[:4])} — {proc.stderr.strip()[:200]}")
+    return proc.stdout
+
+
+def tag_item(card: str, paths: list[str], head: str = "", pr: int | None = None, raise_to: str = "",
+             reason: str = "", apply: bool = False, path=None) -> dict:
+    """يصنّف مساراتِ العمل ويكتب خطورةَ البطاقة ومجالَها حدثَ update (يُلحَق فقط). بلا apply عرضٌ فقط. لا خفضَ للخطورة أبداً."""
+    from risk_tier import TIER_ORDER, classify_paths
+
+    if card not in reduce_state(load_events(path)):
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {card}")
+    if not paths:
+        raise LedgerError("لا مساراتٍ متغيّرة — تحقّق من اسم الفرع أو أنّ العملَ أُودِع")
+    info = classify_paths(paths)
+    tier = info["tier"]
+    if raise_to:
+        if not reason:
+            raise LedgerError("--raise-to يلزمه --reason")
+        if TIER_ORDER.index(raise_to) < TIER_ORDER.index(tier):
+            raise LedgerError(f"لا خفضَ للخطورة ({tier} ← {raise_to}): الأداةُ حدٌّ أدنى لا أعلى")
+        tier = raise_to
+    data = {"tier": tier, "category": info["category"], "area": info["area"], "flags": info["flags"], "files_changed": len(paths)}
+    if head:
+        data["head"] = head  # الإيداعُ المصنَّف: يُقارَن لاحقاً برأس الطلب قبل الدمج
+    if pr:
+        data["pr"] = pr
+    if raise_to:
+        data["tier_reason"] = check_text("note", reason)
+    if apply:
+        append_event("update", card, data, path)
+    return {"card": card, "update": data, "categories": info["categories"], "applied": apply}
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -175,6 +215,11 @@ def main() -> None:
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note")
     ls = sub.add_parser("list"); ls.add_argument("--state")
     sh = sub.add_parser("show"); sh.add_argument("id")
+    tg = sub.add_parser("tag", help="يكتب خطورةَ البطاقة ومجالها من مسارات عملها")
+    tg.add_argument("id")
+    src = tg.add_mutually_exclusive_group(required=True)
+    src.add_argument("--branch"); src.add_argument("--pr", type=int); src.add_argument("--paths", nargs="+")
+    tg.add_argument("--raise-to", default=""); tg.add_argument("--reason", default=""); tg.add_argument("--apply", action="store_true")
     args = ap.parse_args()
     try:
         if args.cmd == "add":
@@ -182,6 +227,19 @@ def main() -> None:
                            start=args.start, priority=args.priority))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note); print("ok")
+        elif args.cmd == "tag":
+            head, pr = "", None
+            if args.branch:
+                paths = _git_read(["git", "diff", "--name-only", f"origin/main...{args.branch}"]).split()
+                head = _git_read(["git", "rev-parse", "--short=8", args.branch]).strip()
+            elif args.pr:
+                data = json.loads(_git_read(["gh", "pr", "view", str(args.pr), "--json", "files,headRefOid"]))
+                paths, head, pr = [f["path"] for f in data.get("files", [])], data.get("headRefOid", "")[:8], args.pr
+            else:
+                paths = args.paths
+            out = tag_item(args.id, paths, head, pr, args.raise_to, args.reason, args.apply)
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+            print("أُلحق حدثُ update" if args.apply else "عرضٌ فقط — أضِف --apply للكتابة")
         else:
             items = reduce_state(load_events())
             if args.cmd == "show":

@@ -56,6 +56,34 @@ class RiskTier(unittest.TestCase):
         self.assertIn("base_template", info["flags"])
         self.assertIn("base_template", rt.classify_paths(["templates/auth/login.html"])["flags"])
 
+    def test_risk_fails_closed_on_sensitive_and_unknown(self):
+        # قائمةٌ ثابتة: كلُّ مسارٍ حسّاسٍ يبقى عاليةً حتى لا ينحدر التصنيفُ لاحقاً (طلبُ 0103)
+        for path in ("core/rls.py", "core/middleware_rls.py", "governance/retention.py", "governance/erasure_service.py",
+                     "core/management/commands/purge_parent_consents.py", "core/models/permission_audit.py",
+                     "api/permissions.py", "shschool/settings/production.py", "shschool/settings/base.py",
+                     "shschool/settings/staging.py", "data/students.csv", "backup/dump.sql", ".env.production",
+                     "keys/site.pem", "reports/roster.xlsx", "unknown/file.xyz"):
+            self.assertEqual(rt.classify_paths([path])["tier"], "high", path)
+        # المعروفُ منخفضُ الخطورة يبقى منخفضاً فلا يتضخّم حِملُك
+        for path in ("pyproject.toml", ".gitignore", "Makefile", "requirements/base.txt", "static/img/logo.png"):
+            self.assertNotEqual(rt.classify_paths([path])["tier"], "high", path)
+
+    def test_tag_item_writes_tier_and_never_lowers(self):
+        import ledger
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            lp = Path(d) / "events.jsonl"
+            cid = ledger.add_item("owner", "ui", "م", "أ", "ق", start="2026-09-29T09:00", priority="P2", path=lp)
+            shown = ledger.tag_item(cid, ["templates/a.html"], path=lp)
+            self.assertFalse(shown["applied"]); self.assertEqual(shown["update"]["tier"], "medium")
+            self.assertEqual(len(ledger.load_events(lp)), 1)  # العرضُ لا يكتب
+            ledger.tag_item(cid, ["core/middleware_rls.py"], head="abc12345", pr=7, apply=True, path=lp)
+            item = ledger.reduce_state(ledger.load_events(lp))[cid]
+            self.assertEqual(item["tier"], "high"); self.assertEqual(item["pr"], 7)
+            with self.assertRaises(ledger.LedgerError):
+                ledger.tag_item(cid, ["core/middleware_rls.py"], raise_to="medium", reason="خفض", path=lp)
+
 
 class Ledger(unittest.TestCase):
     def setUp(self):
