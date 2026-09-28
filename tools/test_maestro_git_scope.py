@@ -60,10 +60,38 @@ class MaestroGitScope(unittest.TestCase):
     def test_case_insensitive_drive_letter(self):
         self.assertIsNone(g.check("git push", "c:/Users/Mesue/Delivery_Manager_Work"))
 
-    def test_known_limit_inline_cd_not_tracked(self):
-        # حدٌّ معلَن: cd داخل الأمر نفسِه لا يُتتبَّع — هذا الاختبارُ يوثّق الفجوة لا يخفيها
+    def test_inline_cd_now_tracked(self):
+        # كان حدّاً معلَناً؛ صُحّح 23:35 بعد اختبار 0101 الحيّ — يجب أن يُسمح الآن
         cmd = "cd C:/Users/mesue/delivery_manager_work && git push"
-        self.assertIsNotNone(g.check(cmd, PLATFORM_TREE))  # يُحجب رغم أنّ الوجهة الفعليّة آمنة
+        self.assertIsNone(g.check(cmd, PLATFORM_TREE))
+
+    def test_101_exact_incident_2_reproduction(self):
+        # الصيغةُ الحرفيّة التي يستعملها 0101 دائماً: cd بمسار MSYS ثمّ && ثمّ الفعل، وcwd المُبلَّغ شجرةُ المنصّة
+        cmd = "cd /c/Users/mesue/delivery_manager_work && git merge --ff-only -q origin/main"
+        self.assertIsNone(g.check(cmd, PLATFORM_TREE))
+
+    def test_cd_then_multiple_denied_segments(self):
+        cmd = "cd /c/Users/mesue/delivery_manager_work && git add tools/x.py && git commit -m y && git push"
+        self.assertIsNone(g.check(cmd, PLATFORM_TREE))
+
+    def test_cd_platform_then_maestro_command_still_denied(self):
+        # cd إلى شجرة المنصّة صراحةً من مجلّدٍ آخر: الفعلُ بعده يُحجب رغم أنّ cwd المُبلَّغ آمن
+        cmd = "cd D:/shschool_mvp && git push"
+        self.assertIsNotNone(g.check(cmd, MAESTRO))
+
+    def test_dash_c_inline_overrides_cwd(self):
+        self.assertIsNone(g.check("git -C C:/Users/mesue/delivery_manager_work push", PLATFORM_TREE))
+        self.assertIsNone(g.check("git -CC:/Users/mesue/delivery_manager_work push", PLATFORM_TREE))
+        self.assertIsNotNone(g.check("git -C D:/shschool_mvp push", MAESTRO))
+
+    def test_second_cd_in_chain_overrides_first(self):
+        cmd = "cd C:/Users/mesue/delivery_manager_work && cd D:/shschool_mvp && git push"
+        self.assertIsNotNone(g.check(cmd, MAESTRO))
+
+    def test_cd_relative_path_fails_closed(self):
+        # حدٌّ معلَنٌ: cd بمسارٍ نسبيّ (لا كاملٍ) لا يُحلّ إلى المستودع الحاليّ — يبقى نصّاً خاماً فيفشل مغلَقاً
+        cmd = "cd /c/Users/mesue/delivery_manager_work && cd tools && git push"
+        self.assertIsNotNone(g.check(cmd, PLATFORM_TREE))
 
     def test_env_wrapper_stripped(self):
         self.assertIsNotNone(g.check("env FOO=bar git push", PLATFORM_TREE))
