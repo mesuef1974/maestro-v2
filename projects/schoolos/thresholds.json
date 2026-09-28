@@ -21,6 +21,9 @@
       "high": 10
     },
     "failed_main_runs_for_s2": 2,
+    "deferred_prs": {
+      "631": "مؤجَّلٌ بقرار (بلاغ 0203، W-013) — يُستثنى من عمر أقدم طلب؛ احذفه من هنا متى استؤنف"
+    },
     "wip_per_session": 3,
     "heavy_context_mb": 40
   },
@@ -63,6 +66,12 @@
       "docs_only": 0.1
     }
   },
+  "production_health": {
+    "url": "https://shschoolmvp-production.up.railway.app/health/",
+    "timeout_s": 10,
+    "note": "كانت 0203 تفحصها يدويّاً بـcurl (09-28)؛ غيرُ 200 أو تعذّرُ الاتّصال ⇒ high"
+  },
+  "security_repo": "sh-school/shschool_mvp",
   "claude_backup": {
     "repo": "C:/Users/mesue/.claude",
     "branch": "scoped",

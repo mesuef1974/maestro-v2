@@ -430,6 +430,45 @@ class Watch(unittest.TestCase):
     def test_offline_collect_runs(self):
         self.assertIsInstance(wo.collect(TH, live=False), list)
 
+    def test_tasklist_aggregates_by_image(self):
+        text = '"chrome.exe","1","Console","1","204,800 K"\n"chrome.exe","2","Console","1","102,400 K"\n"py.exe","3","Console","1","51,200 K"\nتالف\n'
+        self.assertEqual(wo.aggregate_tasklist(text, 2), [("chrome.exe", 300), ("py.exe", 50)])
+
+    def test_memory_alert_names_heaviest_only_when_not_green(self):
+        th = TH["memory_free_gb"]
+        self.assertIsNone(wo.memory_alert(3, th, [("x.exe", 1)]))
+        a = wo.memory_alert(0.7, th, [("docker.exe", 2048)])
+        self.assertEqual(a["severity"], "high")
+        self.assertIn("docker.exe 2048", a["message"])
+
+    def test_health(self):
+        cfg = {"url": "https://example.invalid/health/"}
+        self.assertEqual(wo.health_alerts(cfg, lambda u, t: (200, "")), [])
+        self.assertEqual(wo.health_alerts(cfg, lambda u, t: (503, ""))[0]["severity"], "high")
+        self.assertIn("URLError", wo.health_alerts(cfg, lambda u, t: (None, "URLError"))[0]["message"])
+        self.assertEqual(wo.health_alerts(None), [])
+
+    def test_security_alerts(self):
+        data = {"dependabot": [{"security_advisory": {"severity": "high"}}],
+                "code-scanning": [{"rule": {"security_severity_level": "medium"}}, {"rule": {"severity": "warning"}}],
+                "secret-scanning": []}
+        out = wo.security_alerts("o/r", data.get)
+        self.assertEqual([(a["code"], a["severity"]) for a in out], [("security_alerts", "high")])
+        quiet = wo.security_alerts("o/r", {"dependabot": [], "code-scanning": [{"rule": {"security_severity_level": "low"}}], "secret-scanning": []}.get)
+        self.assertEqual(quiet[0]["severity"], "info")
+        partial = wo.security_alerts("o/r", {"dependabot": [], "code-scanning": None, "secret-scanning": [{}]}.get)
+        self.assertEqual([(a["code"], a["severity"]) for a in partial], [("security_alerts", "high"), ("security_unavailable", "warn")])
+
+    def test_deferred_pr_excluded_from_age(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 9, 29, tzinfo=timezone.utc)
+        prs = [{"number": 631, "isDraft": False, "createdAt": "2026-09-25T00:00:00Z"},
+               {"number": 700, "isDraft": False, "createdAt": "2026-09-28T22:00:00Z"},
+               {"number": 701, "isDraft": True, "createdAt": "2026-09-20T00:00:00Z"}]
+        self.assertAlmostEqual(wo.open_pr_age_hours(prs, {631}, now), 2.0)
+        self.assertIsNone(wo.open_pr_age_hours(prs[:1], {631}, now))
+        self.assertIn("631", TH["flow"]["deferred_prs"])
+
 
 class Registry(unittest.TestCase):
     def test_shipped_registry_is_consistent(self):
