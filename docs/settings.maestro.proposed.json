@@ -26,8 +26,22 @@
       "PowerShell(git push:*)",
       "PowerShell(git commit:*)",
       "PowerShell(git merge:*)",
+      "PowerShell(git rebase:*)",
+      "PowerShell(git reset:*)",
+      "PowerShell(git checkout:*)",
+      "PowerShell(git switch:*)",
+      "PowerShell(git stash:*)",
+      "PowerShell(git add:*)",
       "PowerShell(gh pr merge:*)",
-      "PowerShell(railway:*)"
+      "PowerShell(gh pr create:*)",
+      "PowerShell(gh pr close:*)",
+      "PowerShell(gh pr edit:*)",
+      "PowerShell(gh pr review:*)",
+      "PowerShell(gh api -X:*)",
+      "PowerShell(gh api --method:*)",
+      "PowerShell(railway:*)",
+      "PowerShell(docker compose up:*)",
+      "PowerShell(docker compose down:*)"
     ],
     "allow": [
       "Bash(git log:*)",
@@ -57,10 +71,13 @@
     ]
   },
   "_verify": [
-    "1) شغّل في شجرة المايسترو: git push --dry-run  → يجب أن يُرفض قبل التنفيذ.",
-    "2) شغّل: bash scripts/preview.sh status → يجب أن يمرّ.",
-    "3) تحقّق أنّ PowerShell(...) تطابق فعلاً؛ وإلا فاحذف قواعدَه واحجب أداة PowerShell للأوامر المحظورة بقاعدةٍ أوسع.",
+    "1) شغّل في شجرة المايسترو: git push --dry-run  → يجب أن يُرفض بلا سؤالٍ حتى لو كان وضعُ الصلاحيّة bypassPermissions (الوثائقُ الرسميّة: deny حظرٌ صلبٌ في كلّ الأوضاع).",
+    "2) شغّل بالصدفتين معاً (PowerShell أساساً وBash للسكربتات): git push --dry-run من كلّ واحدة — القاعدةُ الناقصة في إحداهما ثغرةٌ كاملة؛ صُحّح أعلاه لتطابق PowerShell كلَّ قاعدة Bash سطراً بسطر.",
+    "3) شغّل: bash scripts/preview.sh status → يجب أن يمرّ. (فُحص preview.sh: لا يستدعي git push ولا commit ولا merge داخليّاً، فسماحُ استدعائه آمنٌ اليوم.)",
     "4) إن كان مجلّدُ العمل خارج الشجرة (Write إلى C:/Users/mesue/delivery_manager_*) فأضف Edit/Write لذلك المجلّد وحدَه ولا تسمح بالكتابة داخل D:/shschool_mvp.",
-    "5) بعد الدمج: شغّل python tools/watch_once.py --no-live للتأكّد أنّ أدوات الحزمة مسموحة بلا مطالبة، وأنّ أوامرَ git push وgh pr merge ما زالت محظورة."
-  ]
+    "5) بعد الدمج: شغّل python tools/watch_once.py --no-live للتأكّد أنّ أدوات الحزمة مسموحة بلا مطالبة، وأنّ أوامرَ git push وgh pr merge ما زالت محظورة.",
+    "6) تحقّق فعليّاً أين استقرّ الملفّ بأمر /status داخل الجلسة (Setting sources) — على ويندوز قد يبقى في مجلّد الـ worktree نفسِه ولا يُوجَّه إلى جذر الحزمة الأصليّة D:\\shschool_mvp؛ لا تفترض الموضع.",
+    "7) إن أنشأتَ الملفَّ يدويّاً (لا كتبه Claude Code نفسُه) فأضِفه إلى .gitignore يدويّاً — لا يُضاف تلقائيّاً إلّا حين يكتبه هو."
+  ],
+  "_known_limit": "permissions.deny يطابق نصَّ استدعاء الأداة (Bash/PowerShell) لا محتوى سكربتٍ يُستدعى: أمرٌ محظورٌ مكتوبٌ داخل ملفّ .sh مسموحٍ باستدعائه لن يُصطاد. الحمايةُ الحقيقيّةُ التي لا تُخترَق من داخل السكربتات هي PreToolUse hook (كما في guard_git.sh للمنصّة نفسها) أو Sandboxing؛ هذا الملفّ طبقةُ دفاعٍ أولى معلنة، لا ضماناً مطلقاً."
 }
