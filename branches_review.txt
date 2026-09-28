@@ -1,0 +1,51 @@
+backup-2026-09-13-before-pii-fix | ahead=3 unique=['.gitignore', 'AAdocs/ministry_data/2026_2027/01_policies_general.md', 'AAdocs/ministry_data/2026_2027/01b_policies_deep.md', 'AAdocs/ministry_data/2026_2027/06_attendance_performance_review.md', 'AAdocs/ministry_data/2026_2027/07_forms_catalog.md', 'AAdocs/ministry_data/2026_2027/08_conduct_policy_2026.md', 'AAdocs/ministry_data/2026_2027/index.md'] remote=False age=353.0
+   reason: متقدّمٌ 3 وفيه 7 تغييراً غيرَ موجودٍ في main: .gitignore، AAdocs/ministry_data/2026_2027/01_policies_general.md، AAdocs/ministry_data/2026_2027/01b_policies_deep.md
+   evidence: 
+claude/dbt11-undelivered-no-dlq | ahead=6 unique=['docs/governance/regression_guards.md'] remote=False age=38.4
+   reason: متقدّمٌ 6 وفيه 1 تغييراً غيرَ موجودٍ في main: docs/governance/regression_guards.md
+   evidence: 
+claude/observation-pdf-a4-logo | ahead=1 unique=['docs/governance/regression_guards.md'] remote=False age=43.8
+   reason: متقدّمٌ 1 وفيه 1 تغييراً غيرَ موجودٍ في main: docs/governance/regression_guards.md
+   evidence: 
+claude/observation-pdf-identity | ahead=1 unique=['quality/observation_views.py', 'templates/quality/observation_pdf.html', 'tests/test_observation_pdf_form.py'] remote=False age=37.0
+   reason: متقدّمٌ 1 وفيه 3 تغييراً غيرَ موجودٍ في main: quality/observation_views.py، templates/quality/observation_pdf.html، tests/test_observation_pdf_form.py
+   evidence: 
+claude/preview-integration | ahead=3 unique=['docs/governance/regression_guards.md'] remote=False age=40.9
+   reason: متقدّمٌ 3 وفيه 1 تغييراً غيرَ موجودٍ في main: docs/governance/regression_guards.md
+   evidence: 
+claude/print-frame-base | ahead=1 unique=['core/print_frame.py', 'core/templatetags/print_frame.py', 'docs/governance/regression_guards.md', 'templates/components/print/frame_footer.html', 'tests/print_frame_baseline.json', 'tests/test_print_frame.py', 'tests/test_print_frame_render.py'] remote=False age=32.8
+   reason: متقدّمٌ 1 وفيه 7 تغييراً غيرَ موجودٍ في main: core/print_frame.py، core/templatetags/print_frame.py، docs/governance/regression_guards.md
+   evidence: 
+claude/print-frame-migration-tmp2 | ahead=3 unique=['tests/print_frame_baseline.json', 'tests/test_ministry_vision_footer.py'] remote=False age=12.3
+   reason: متقدّمٌ 3 وفيه 2 تغييراً غيرَ موجودٍ في main: tests/print_frame_baseline.json، tests/test_ministry_vision_footer.py
+   evidence: 
+claude/roadmap-sync-0037 | ahead=2 unique=['tests/test_roadmap_sync_migration.py'] remote=True age=47.0
+   reason: متقدّمٌ 2 وفيه 1 تغييراً غيرَ موجودٍ في main: tests/test_roadmap_sync_migration.py
+   evidence: 
+claude/roadmap-sync-0039 | ahead=3 unique=['tests/test_roadmap_sync_migration.py'] remote=True age=45.3
+   reason: متقدّمٌ 3 وفيه 1 تغييراً غيرَ موجودٍ في main: tests/test_roadmap_sync_migration.py
+   evidence: 
+claude/schedule-a3-t1-font | ahead=10 unique=['operations/templatetags/week_tags.py', 'templates/schedule/pdf/matrix_footer_boxes.html', 'templates/schedule/pdf/matrix_sub.html (حذفٌ لم يبلغ main)', 'templates/schedule/print_schedule.html', 'tests/test_ministry_vision_footer.py', 'tests/test_schedule_a3_sheet.py', 'tests/test_week_paper.py'] remote=False age=25.9
+   reason: متقدّمٌ 10 وفيه 7 تغييراً غيرَ موجودٍ في main: operations/templatetags/week_tags.py، templates/schedule/pdf/matrix_footer_boxes.html، templates/schedule/pdf/matrix_sub.html (حذفٌ لم يبلغ main)
+   evidence: 
+claude/vi30a-export-center | ahead=5 unique=['docs/governance/regression_guards.md'] remote=False age=39.4
+   reason: متقدّمٌ 5 وفيه 1 تغييراً غيرَ موجودٍ في main: docs/governance/regression_guards.md
+   evidence: 
+claude/vigorous-proskuriakova-b2a903 | ahead=15 unique=['behavior/conduct_2026.py', 'tests/test_violation_ladder_json.py'] remote=False age=40.0
+   reason: متقدّمٌ 15 وفيه 2 تغييراً غيرَ موجودٍ في main: behavior/conduct_2026.py، tests/test_violation_ladder_json.py
+   evidence: 
+tmp-p1 | ahead=4 unique=['docs/governance/regression_guards.md', 'templates/base/base.html', 'tests/test_css_budget.py'] remote=False age=45.0
+   reason: متقدّمٌ 4 وفيه 3 تغييراً غيرَ موجودٍ في main: docs/governance/regression_guards.md، templates/base/base.html، tests/test_css_budget.py
+   evidence: 
+tmp-p2 | ahead=8 unique=['docs/governance/regression_guards.md', 'templates/base/base.html', 'tests/test_css_budget.py'] remote=False age=45.0
+   reason: متقدّمٌ 8 وفيه 3 تغييراً غيرَ موجودٍ في main: docs/governance/regression_guards.md، templates/base/base.html، tests/test_css_budget.py
+   evidence: 
+tmp-phase1 | ahead=3 unique=['docs/governance/regression_guards.md', 'templates/base/base.html', 'tests/test_css_budget.py'] remote=False age=45.7
+   reason: متقدّمٌ 3 وفيه 3 تغييراً غيرَ موجودٍ في main: docs/governance/regression_guards.md، templates/base/base.html، tests/test_css_budget.py
+   evidence: 
+tmp-phase2 | ahead=6 unique=['docs/governance/regression_guards.md', 'templates/base/base.html', 'tests/test_css_budget.py'] remote=False age=45.7
+   reason: متقدّمٌ 6 وفيه 3 تغييراً غيرَ موجودٍ في main: docs/governance/regression_guards.md، templates/base/base.html، tests/test_css_budget.py
+   evidence: 
+worktree-kpi-cards-fit | ahead=1 unique=['static/css/custom/32-modules-3.css'] remote=False age=26.3
+   reason: متقدّمٌ 1 وفيه 1 تغييراً غيرَ موجودٍ في main: static/css/custom/32-modules-3.css
+   evidence: 

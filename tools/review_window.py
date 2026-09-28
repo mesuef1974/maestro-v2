@@ -42,8 +42,11 @@ def build_bundles(items: list[dict]) -> list[dict]:
             "score": max(ledger.wsjf(m) for m in members),
             "oldest": min(m.get("state_ts") or m["created"] for m in members),
             "urgent": any(m.get("urgent") for m in members),
+            "priority": min((m.get("priority", "P3") for m in members), key=lambda x: ledger.PRIORITIES.index(x) if x in ledger.PRIORITIES else 9),
         })
-    bundles.sort(key=lambda b: (not b["urgent"], -b["score"], b["oldest"]))
+    # الأولويّةُ أوّلاً (قرارُ المالك 09-28)، ثمّ الاستعجال، ثمّ WSJF، ثمّ الأقدم
+    rank = lambda pr: ledger.PRIORITIES.index(pr) if pr in ledger.PRIORITIES else 9
+    bundles.sort(key=lambda b: (rank(b["priority"]), not b["urgent"], -b["score"], b["oldest"]))
     return bundles
 
 
@@ -72,7 +75,7 @@ def render(items: list[dict], level: str = "normal", window: str = "", flow_vers
         lines += [
             f"## {n}. {title}" + (" ⚡ استعجال" if b["urgent"] else "") + (" ⚠ خطورةٌ عالية — تُعتمد بذكر رقمها صراحةً" if b["tier"] == "high" else ""),
             f"- **الطلبات:** {', '.join('#' + str(p) for p in b['prs']) or '—'} ({len(b['items'])})",
-            f"- **الخطورة:** {b['tier']} · **WSJF:** {b['score']} · **ينتظر منذ:** {b['oldest'][:16]}",
+            f"- **الأولويّة:** {b['priority']} · **الخطورة:** {b['tier']} · **WSJF:** {b['score']} · **ينتظر منذ:** {b['oldest'][:16]}",
             "- **القرارُ المطلوب:** اعتماد / ملاحظات — التفاصيلُ في حزمة الأدلّة لكلّ طلب",
             "",
         ]

@@ -4,11 +4,11 @@ description: |
   يقرّر بين توجيهٍ لمقعدٍ قائمٍ أو إعادةِ فتحٍ أو استحداثِ جلسةٍ جديدةٍ داخل تبويب الاختصاص، ويعدّ بطاقةَ الاستحداث BLUF بعد فحص الذاكرة.
   استخدمها عند: نتيجةُ التوجيه request_spawn أو wake_or_spawn، أو «أنشئ جلسة لـ…». Trigger on: new session, spawn, wake session.
 disable-model-invocation: true
-allowed-tools: Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/routing.py:*), Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/watch_once.py:*), Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/session_load_v2.py:*), Read, Write
+allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/routing.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/watch_once.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/session_load_v2.py:*), Read, Write
 ---
 
 # الاستحداث
-القالبُ وقاعدةُ القرار: `C:/Users/mesue/delivery_manager_v2_work/templates/spawn_card_template.md`.
+القالبُ وقاعدةُ القرار: `C:/Users/mesue/delivery_manager_work/templates/spawn_card_template.md`.
 1. `routing.py` ← إن كان `assign` فوجّه ولا تستحدث.
 2. مقعدٌ خاملٌ/مؤرشفٌ في الاختصاص ← أعِد فتحَه (`unarchive_session`) قبل الإنشاء.
 3. `python …/watch_once.py --no-live` ← الذاكرةُ أحمر/حرج ⇒ **لا استحداث**.

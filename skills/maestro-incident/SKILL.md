@@ -4,11 +4,11 @@ description: |
   قيادةُ الحادث كمنسّق: يصنّف الدرجة (S1/S2/S3)، يعلن، يشغّل قائمةَ التحقّق المناسبة، يبلّغ بإيقاع ثابت، ثمّ يفتح مراجعةً بلا لوم.
   استخدمها عند: «الطابور أحمر»، «الإنتاج متوقّف»، «الذاكرة حرجة»، «المعاينة لا تعمل»، أو أيّ عطلٍ يوقف الدفع. Trigger on: incident, outage, red queue, memory critical.
 disable-model-invocation: true
-allowed-tools: Bash(gh pr list:*), Bash(gh run list:*), Bash(gh run view:*), Bash(bash scripts/preview.sh status:*), Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/session_load_v2.py:*), Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/watch_once.py:*), Read, Write
+allowed-tools: Bash(gh pr list:*), Bash(gh run list:*), Bash(gh run view:*), Bash(bash scripts/preview.sh status:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/session_load_v2.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/watch_once.py:*), Read, Write
 ---
 
 # الحادث
-1. المرجعُ: `C:/Users/mesue/delivery_manager_v2_work/docs/incident_runbook.md` — اقرأه قبل أوّل إجراء.
+1. المرجعُ: `C:/Users/mesue/delivery_manager_work/docs/incident_runbook.md` — اقرأه قبل أوّل إجراء.
 2. صنّف: S1 (إنتاجٌ/بياناتٌ/أمن)، S2 (معاينةٌ/طابورٌ/CI/ذاكرةٌ حمراء)، S3 (جلسةٌ عالقة). سجّل الوقتَ **من الأداة** (الدوحة).
 3. نفّذ قائمةَ الدرجة بالترتيب؛ **الاستعادةُ قبل التشخيص**؛ الرجوعُ عن الإنتاج بيد «النشر على الانتاج» وبإذن المالك النصّيّ في محادثتها.
 4. أبلغ المالكَ بسطرٍ فوراً ثمّ بالإيقاع (S1 كلَّ 15 د، S2 كلَّ 30 د)؛ الجلساتُ بأسمائها بسطرٍ مكتفٍ بنفسه.

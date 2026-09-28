@@ -44,6 +44,9 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
         if spec["tab"] not in ids and spec["tab"] != "exec_*":
             problems.append(f"التوجيه {ptype}: تبويبٌ غيرُ موجود {spec['tab']}")
     if live_titles is not None:
+        # جلساتُ المهامّ المجدولة الآليّة ليست مقاعد — تُستثنى بالبادئة
+        prefixes = tuple(tabs.get("scheduled_task_title_prefixes", []))
+        live_titles = [t for t in live_titles if not (prefixes and t.startswith(prefixes))]
         known = set(seen) | {p["title"] for p in tabs.get("pending_archive", [])}
         for title in live_titles:
             if title not in known:

@@ -3,7 +3,7 @@ name: maestro-handover
 description: |
   يحدّث مذكّرةَ التسليم ويدوّر السجلَّ اليوميّ ويُلحق قراراتِ المالك الجديدة بـdecisions.md ويُحدّث flow_changelog عند تغيّر الفلو.
   استخدمها في آخر كلّ نافذةِ مراجعةٍ وبعد كلّ حادثٍ وقبل أيّ ضغطٍ للسياق، أو حين يقول المالك «حدّث الذاكرة/اللوحة». Trigger on: handover, update board, log rotation, decision log.
-allowed-tools: Read, Write, Edit, Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/render_auto_sections.py:*)
+allowed-tools: Read, Write, Edit, Bash(python C:/Users/mesue/delivery_manager_work/tools/render_auto_sections.py:*)
 ---
 
 # التسليمُ والتدوير

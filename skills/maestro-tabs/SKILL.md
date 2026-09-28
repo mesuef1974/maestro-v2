@@ -4,7 +4,7 @@ description: |
   يدير تبويبات الشريط (مجموعات الجلسات) وفق سجلّ tabs.json: تدقيقُ الاتّساق، إنشاءُ المجموعات وتسميتُها ونقلُ الجلسات، وتوليدُ مواثيق التبويبات.
   استخدمها عند: «رتّب الشريط»، «انقل الجلسة إلى تبويب اختصاصها»، «عدّل التبويبات»، أو قبل أيّ استحداثٍ لتحديد التبويب. Trigger on: sidebar, groups, tabs, move session.
 disable-model-invocation: true
-allowed-tools: Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/validate_registry.py:*), Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/render_charters.py:*), Read, Write, Edit
+allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/validate_registry.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/render_charters.py:*), Read, Write, Edit
 ---
 
 # التبويبات

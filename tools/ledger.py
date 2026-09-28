@@ -3,7 +3,8 @@
 
 اللوحةُ عرضٌ مُولَّد؛ لا يُحرَّر يدويّاً. حمايةُ PDPPL في الكود: لا نصَّ خامّاً طويلاً ولا أرقامَ هويّةٍ ولا بريداً في أيّ حقل.
 
-    python ledger.py add --source owner --type ui --problem "..." --impact "..." --accept "..." [--files a b] [--urgent]
+    python ledger.py add --source owner --type ui --problem "..." --impact "..." --accept "..." --start 2026-09-29T08:00 --priority P1 [--files a b] [--urgent]
+    (زمنُ البدء والأولويّة إلزاميّان — قرارُ المالك 2026-09-28)
     python ledger.py move W-20260926-001 in_progress
     python ledger.py list [--state ready_for_review]
     python ledger.py show W-20260926-001
@@ -28,6 +29,7 @@ STATES = [
 ]
 SOURCES = ("owner", "intake", "roadmap", "kpi_guard", "alert", "advisor", "repo_keeper", "discovery")
 TEXT_FIELDS = ("problem", "impact", "accept", "note")
+PRIORITIES = ("P0", "P1", "P2", "P3")  # P0 استعجال · P1 هذا الأسبوع · P2 هذا الشهر · P3 لاحقاً مؤرَّخ
 _PII = re.compile(r"\b\d{9,}\b|[\w.+-]+@[\w-]+\.[\w.]+")
 
 
@@ -49,6 +51,19 @@ def check_text(name: str, value: str) -> str:
     if _PII.search(value):
         raise LedgerError(f"الحقل {name} يبدو فيه رقمُ هويّةٍ أو بريد — تُمنع البياناتُ الشخصيّة في السجلّ")
     return value.strip()
+
+
+def parse_start(value: str) -> str:
+    """زمنُ البدء الفعليّ إلزاميّ (قرارُ المالك 2026-09-28: «لا شيءَ بدون زمن»). يُقبل ISO بتوقيت الدوحة أو بمنطقةٍ صريحة."""
+    if not value:
+        raise LedgerError("زمنُ البدء إلزاميّ — لا مهمّةَ بلا زمن (مثال: 2026-09-29T08:00)")
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise LedgerError(f"زمنُ بدءٍ غيرُ صالح: {value}") from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=DOHA)
+    return dt.astimezone(DOHA).isoformat(timespec="minutes")
 
 
 def load_events(path=None) -> list[dict]:
@@ -96,11 +111,16 @@ def new_id(events: list[dict], today: str | None = None) -> str:
 
 
 def add_item(source: str, problem_type: str, problem: str, impact: str, accept: str,
-             files: list[str] | None = None, urgent: bool = False, path=None, scores: dict | None = None) -> str:
+             files: list[str] | None = None, urgent: bool = False, path=None, scores: dict | None = None,
+             start: str = "", priority: str = "") -> str:
     if source not in SOURCES:
         raise LedgerError(f"مصدرٌ غيرُ معروف: {source} (المسموح: {', '.join(SOURCES)})")
+    if priority not in PRIORITIES:
+        raise LedgerError(f"الأولويّة إلزاميّة، واحدةٌ من {', '.join(PRIORITIES)}")
+    if urgent and priority != "P0":
+        raise LedgerError("الاستعجالُ أولويّتُه P0")
     data = {
-        "source": source, "type": problem_type,
+        "source": source, "type": problem_type, "priority": priority, "start": parse_start(start),
         "problem": check_text("problem", problem), "impact": check_text("impact", impact),
         "accept": check_text("accept", accept), "files": [f[:200] for f in (files or [])][:20],
         "urgent": bool(urgent), "scores": scores or {},
@@ -130,6 +150,19 @@ def wsjf(item: dict) -> float:
     return round((value + urgency + risk) / size, 2)
 
 
+def order_key(item: dict) -> tuple:
+    """الأولويّةُ أوّلاً، ثمّ زمنُ البدء الأقرب، ثمّ WSJF الأعلى."""
+    pr = item.get("priority", "P3")
+    return (PRIORITIES.index(pr) if pr in PRIORITIES else len(PRIORITIES), item.get("start", "9999"), -wsjf(item))
+
+
+def late_items(items: dict, now: datetime | None = None) -> list[dict]:
+    """مهامُّ حان زمنُ بدئها ولم تبدأ (ما زالت captured/verified/routed)."""
+    now = now or datetime.now(DOHA)
+    waiting = ("captured", "verified", "routed")
+    return [i for i in items.values() if i.get("state") in waiting and i.get("start") and datetime.fromisoformat(i["start"]) <= now]
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -138,13 +171,15 @@ def main() -> None:
     a.add_argument("--source", required=True); a.add_argument("--type", required=True)
     a.add_argument("--problem", required=True); a.add_argument("--impact", required=True); a.add_argument("--accept", required=True)
     a.add_argument("--files", nargs="*", default=[]); a.add_argument("--urgent", action="store_true")
+    a.add_argument("--start", required=True, help="زمنُ البدء الفعليّ ISO بتوقيت الدوحة"); a.add_argument("--priority", required=True, choices=PRIORITIES)
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note")
     ls = sub.add_parser("list"); ls.add_argument("--state")
     sh = sub.add_parser("show"); sh.add_argument("id")
     args = ap.parse_args()
     try:
         if args.cmd == "add":
-            print(add_item(args.source, args.type, args.problem, args.impact, args.accept, args.files, args.urgent))
+            print(add_item(args.source, args.type, args.problem, args.impact, args.accept, args.files, args.urgent,
+                           start=args.start, priority=args.priority))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note); print("ok")
         else:
@@ -152,9 +187,9 @@ def main() -> None:
             if args.cmd == "show":
                 print(json.dumps(items.get(args.id), ensure_ascii=False, indent=2))
             else:
-                for it in sorted(items.values(), key=lambda i: -wsjf(i)):
+                for it in sorted(items.values(), key=order_key):
                     if not args.state or it["state"] == args.state:
-                        print(f"{it['id']}  {it['state']:16} wsjf={wsjf(it):<5} {it['type']:16} {it['problem'][:60]}")
+                        print(f"{it['id']}  {it.get('priority','—')}  بدء={it.get('start','—')[:16]}  {it['state']:16} {it['type']:16} {it['problem'][:50]}")
     except LedgerError as exc:
         sys.exit(f"رُفض: {exc}")
 

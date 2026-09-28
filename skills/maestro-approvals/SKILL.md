@@ -3,11 +3,11 @@ name: maestro-approvals
 description: |
   يلتقط قرارَ المالك (اعتماد/ملاحظات/تأجيل/رفع السعة/استعجال) ويسجّله أثراً قابلاً للتدقيق ويبلّغ الجلساتِ به، مع ما لا يُنقَل عبر المايسترو.
   استخدمها عند: أيّ ردٍّ من المالك على نافذة مراجعة، أو قوله «اعتمدت»/«ادفعوا»/«ارفع السعة». Trigger on: approve, feedback, capacity, expedite.
-allowed-tools: Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/review_window.py:*), Bash(python C:/Users/mesue/delivery_manager_v2_work/tools/ledger.py:*), Read, Write, Edit
+allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/review_window.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py:*), Read, Write, Edit
 ---
 
 # قراراتُ المالك
-المرجعُ: `C:/Users/mesue/delivery_manager_v2_work/docs/approvals_policy.md`.
+المرجعُ: `C:/Users/mesue/delivery_manager_work/docs/approvals_policy.md`.
 1. **اعتماد/ملاحظات/تأجيل:** مرِّر نصَّه حرفيّاً إلى `review_window.py apply` (مهارة `maestro-review-window`)؛ لا تفسّر صمتاً ولا تقديراً اعتماداً.
 2. **إبلاغُ الجلسات:** اعتماد ← «اعتُمد — ادفع وأضف سطر «اعتُمد من المالك على 8500 — <التاريخ>» وأبلغ النشر»؛ ملاحظات ← تعود لصاحبها بنصّه؛ تأجيل ← تبقى محلّيّة.
 3. **رفعُ السعة:** إن أعلنه المالكُ: `--level elevated` للنافذة التالية؛ يعود تلقائيّاً بعد النافذة أو 24 ساعة. **لا أرفعها وحدي**، أقترح فقط (أقدمُ بندٍ >8 س، أو قبل إقلاعٍ).

@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 ledger/events.jsonl
 ledger/windows/
+*.tmp

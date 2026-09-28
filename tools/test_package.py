@@ -49,7 +49,8 @@ class Ledger(unittest.TestCase):
         self.path = Path(tempfile.mkdtemp()) / "e.jsonl"
 
     def add(self, **kw):
-        base = dict(source="owner", problem_type="ui", problem="زرٌّ مقصوص", impact="صفحةٌ واحدة", accept="يظهر كاملاً", path=self.path)
+        base = dict(source="owner", problem_type="ui", problem="زرٌّ مقصوص", impact="صفحةٌ واحدة", accept="يظهر كاملاً", path=self.path,
+                    start="2026-09-29T08:00", priority="P2")
         base.update(kw)
         return ledger.add_item(**base)
 
@@ -76,6 +77,34 @@ class Ledger(unittest.TestCase):
             self.add(source="whatsapp")
         with self.assertRaises(ledger.LedgerError):
             ledger.move(self.add(), "flying", path=self.path)
+
+    def test_start_and_priority_are_mandatory(self):
+        with self.assertRaises(ledger.LedgerError):
+            self.add(start="")
+        with self.assertRaises(ledger.LedgerError):
+            self.add(priority="")
+        with self.assertRaises(ledger.LedgerError):
+            self.add(start="غداً")
+        with self.assertRaises(ledger.LedgerError):
+            self.add(urgent=True, priority="P2")  # الاستعجالُ P0
+
+    def test_start_normalized_to_doha(self):
+        item_id = self.add(start="2026-09-29T05:00+00:00")
+        st = ledger.reduce_state(ledger.load_events(self.path))[item_id]
+        self.assertEqual(st["start"], "2026-09-29T08:00+03:00")
+
+    def test_order_priority_then_start(self):
+        a = {"priority": "P2", "start": "2026-09-29T08:00+03:00"}; b = {"priority": "P1", "start": "2026-10-05T08:00+03:00"}
+        c = {"priority": "P1", "start": "2026-09-30T08:00+03:00"}
+        self.assertEqual(sorted([a, b, c], key=ledger.order_key), [c, b, a])
+
+    def test_late_items(self):
+        from datetime import datetime
+        i = self.add(start="2026-09-01T08:00")
+        late = ledger.late_items(ledger.reduce_state(ledger.load_events(self.path)), now=datetime.fromisoformat("2026-09-28T12:00+03:00"))
+        self.assertEqual([x["id"] for x in late], [i])
+        ledger.move(i, "in_progress", path=self.path)
+        self.assertEqual(ledger.late_items(ledger.reduce_state(ledger.load_events(self.path)), now=datetime.fromisoformat("2026-09-28T12:00+03:00")), [])
 
     def test_wsjf_urgent_raises_urgency(self):
         base = {"scores": {"value": 3, "urgency": 1, "risk": 3, "size": 3}}
@@ -112,9 +141,13 @@ class Routing(unittest.TestCase):
 
 
 class ReviewWindow(unittest.TestCase):
-    def item(self, i, tier, cat, area, pr, urgent=False, size=3):
-        return {"id": i, "tier": tier, "category": cat, "area": area, "pr": pr, "urgent": urgent,
+    def item(self, i, tier, cat, area, pr, urgent=False, size=3, priority="P2"):
+        return {"id": i, "tier": tier, "category": cat, "area": area, "pr": pr, "urgent": urgent, "priority": priority,
                 "created": "2026-09-26T10:00:00+03:00", "scores": {"size": size}}
+
+    def test_priority_orders_bundles_first(self):
+        items = [self.item("low", "medium", "backend", "a", 1, priority="P3", size=1), self.item("hi", "medium", "backend", "b", 2, priority="P1", size=5)]
+        self.assertEqual(rw.build_bundles(items)[0]["items"], ["hi"])
 
     def test_light_items_form_single_bundle(self):
         items = [self.item(f"L{n}", "light", "docs_only", "docs", n) for n in range(5)]
@@ -164,8 +197,8 @@ class ReviewWindow(unittest.TestCase):
 
     def test_apply_reply_records_trail(self):
         path = Path(tempfile.mkdtemp()) / "e.jsonl"
-        a = ledger.add_item("owner", "ui", "س", "ص", "ع", path=path)
-        b = ledger.add_item("owner", "ui", "س", "ص", "ع", path=path)
+        a = ledger.add_item("owner", "ui", "س", "ص", "ع", path=path, start="2026-09-29T08:00", priority="P1")
+        b = ledger.add_item("owner", "ui", "س", "ص", "ع", path=path, start="2026-09-29T08:00", priority="P2")
         done = rw.apply_reply({"approve": [1], "notes": {2: "غيّر اللون"}, "defer": []}, {"1": [a], "2": [b]}, path)
         st = ledger.reduce_state(ledger.load_events(path))
         self.assertEqual((st[a]["state"], st[b]["state"]), ("approved", "notes"))
@@ -355,6 +388,11 @@ class Registry(unittest.TestCase):
     def test_live_diff(self):
         p = vr.validate(TABS, ROUTING, ["جلسةٌ جديدة"])
         self.assertTrue(any("غيرُ مسجَّلة" in x for x in p) and any("بلا جلسةٍ حيّة" in x for x in p))
+
+    def test_scheduled_task_sessions_are_ignored(self):
+        tabs = json.loads(json.dumps(TABS)); tabs["scheduled_task_title_prefixes"] = ["قراءة RK"]
+        seats = [m for t in tabs["tabs"] for m in t["members"]]
+        self.assertEqual(vr.validate(tabs, ROUTING, seats + ["قراءة RK1..RK3 الأسبوعيّة"]), [])
 
     def test_charters_render_all_tabs(self):
         import render_charters

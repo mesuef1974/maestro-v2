@@ -100,11 +100,25 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
         if len(failed) >= th["flow"]["failed_main_runs_for_s2"]:
             alerts.append(alert("main_red", "high", f"{len(failed)} فحوصٍ فاشلة على main في آخر {len(runs)}", "أعلن S2 وأبلغ «النشر على الانتاج»"))
     alerts.extend(backup_alerts(th.get("claude_backup")))
+    alerts.extend(late_start_alerts())
     try:
         alerts.extend(orphan_alerts(project))
     except Exception as exc:  # noqa: BLE001 — المراقبُ لا يسقط بسبب فحصٍ فرعيّ
         alerts.append(alert("watch_error", "warn", f"فشل فحصُ الأشجار: {exc.__class__.__name__}", "شغّل session_load_v2 يدويّاً"))
     return alerts
+
+
+def late_start_alerts() -> list[dict]:
+    """مهامُّ السجلّ التي حان زمنُ بدئها ولم تبدأ — «لا شيءَ بدون زمن» (قرارُ المالك 09-28)."""
+    sys.path.insert(0, str(HERE))
+    import ledger
+    late = ledger.late_items(ledger.reduce_state(ledger.load_events()))
+    if not late:
+        return []
+    worst = min(late, key=ledger.order_key)
+    return [alert("late_start", "high" if any(i.get("priority") in ("P0", "P1") for i in late) else "warn",
+                  f"{len(late)} مهمّةً حان بدؤها ولم تبدأ؛ أعلاها {worst['id']} ({worst.get('priority')}، بدء {worst.get('start','')[:16]})",
+                  "وجّهها الآن أو أعِد جدولتها بقرارٍ مسجَّل")]
 
 
 def backup_age_severity(age_h: float | None, failed: bool, max_age_h: float) -> str | None:

@@ -1,5 +1,5 @@
 # حزمةُ «مايسترو إدارة الجلسات» — v2 (جاهزةٌ للاعتماد، غيرُ مُطبَّقة)
-> أُعدّت 2026-09-26 ~21:45 الدوحة في `C:\Users\mesue\delivery_manager_v2_work`. **لم يُمسّ:** ملفّاتُ المايسترو الأصليّة، المستودع، أيُّ جلسةٍ أو مجموعةٍ أو إعداد. لا commit ولا push. الملفّاتُ خارجَ المستودع (PDPPL).
+> أُعدّت 2026-09-26 ~21:45 الدوحة في `C:\Users\mesue\delivery_manager_work`. **لم يُمسّ:** ملفّاتُ المايسترو الأصليّة، المستودع، أيُّ جلسةٍ أو مجموعةٍ أو إعداد. لا commit ولا push. الملفّاتُ خارجَ المستودع (PDPPL).
 
 ## الفكرة في سطر
 المالكُ يخاطب المايسترو وحدَه ويلمس **الالتقاطَ والاعتماد** فقط؛ الباقي آليٌّ (كودٌ وCI ومراقباتٌ) والجلساتُ للحكم، والتبويباتُ **وحداتُ سياسةٍ** بحسب الاختصاص، وسعةُ المالك **مرنة**.
@@ -31,7 +31,7 @@
 
 ## التشغيل
 ```
-cd C:\Users\mesue\delivery_manager_v2_work\tools
+cd C:\Users\mesue\delivery_manager_work\tools
 python -m unittest test_package test_session_load_v2     # 53 اختباراً
 python validate_registry.py --sessions ..\projects\schoolos\sessions_snapshot.json
 python session_load_v2.py --no-fetch                      # حِملُ الجلسات
