@@ -37,6 +37,14 @@ def next_id() -> str:
     return f"D-{(max(nums) + 1) if nums else 1}م"
 
 
+DATE_TWICE = re.compile(r"^- D-\d+م? \| (\d\d-\d\d) \1(?![\d/])")
+
+
+def format_problems(text: str) -> list[str]:
+    """أسطرٌ يتكرّر فيها التاريخُ («09-29 09-29 16:10») — عيبٌ يقع حين يُكتب السطرُ يدويّاً لا بالأداة."""
+    return [f"السطر {n}: التاريخُ مكرَّر" for n, line in enumerate(text.splitlines(), 1) if DATE_TWICE.match(line)]
+
+
 def append_row(did: str, ts: datetime, text: str, effect: str, reference: str) -> str:
     row = f"- {did} | {ts:%m-%d %H:%M} | {text} | {effect} | {reference}\n"
     with DECISIONS.open("a", encoding="utf-8", newline="\n") as f:
@@ -109,6 +117,13 @@ def cmd_coverage(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check(_: argparse.Namespace) -> int:
+    """فحصُ تنسيق decisions.md (قراءةٌ فقط): رمزُ الخروج 1 إن وُجد سطرٌ معيب."""
+    problems = format_problems(DECISIONS.read_text(encoding="utf-8")) if DECISIONS.is_file() else []
+    print("\n".join(problems) if problems else "تنسيقُ decisions.md سليم")
+    return 1 if problems else 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -136,6 +151,9 @@ def main() -> int:
 
     cov = sub.add_parser("coverage", help="ملخّصٌ رقميّ فقط للوحة 0702")
     cov.set_defaults(func=cmd_coverage)
+
+    chk = sub.add_parser("check", help="فحصُ تنسيق decisions.md (تاريخٌ مكرَّر)")
+    chk.set_defaults(func=cmd_check)
 
     args = p.parse_args()
     return args.func(args)

@@ -27,6 +27,12 @@ class DecisionAddTests(unittest.TestCase):
         m.ROOT, m.DECISIONS, m.META = self._root, self._dec, self._meta
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_format_problems_catches_repeated_date_only(self):
+        bad = "- D-65م | 09-29 09-29 16:10 | نصّ | أثر | مرجع\n"
+        good = "- D-66م | 09-29 16:33 | نصّ | أثر | مرجع\n- D-15 | 09-26/27 22:24 | نصّ | | مرجع\n"
+        self.assertEqual(m.format_problems(bad), ["السطر 1: التاريخُ مكرَّر"])
+        self.assertEqual(m.format_problems(good), [])
+
     def test_add_writes_row_and_meta(self):
         rc = m.cmd_add(argparse.Namespace(text="نصٌّ", effect="أثرٌ", reference="مرجعٌ"))
         self.assertEqual(rc, 0)
