@@ -207,6 +207,7 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
     alerts.extend(health_alerts(th.get("production_health")))
     alerts.extend(security_alerts(th.get("security_repo")))
     alerts.extend(late_start_alerts())
+    alerts.extend(pr_watch_alerts())
     try:
         alerts.extend(orphan_alerts(project))
     except Exception as exc:  # noqa: BLE001 — المراقبُ لا يسقط بسبب فحصٍ فرعيّ
@@ -225,6 +226,19 @@ def late_start_alerts() -> list[dict]:
     return [alert("late_start", "high" if any(i.get("priority") in ("P0", "P1") for i in late) else "warn",
                   f"{len(late)} مهمّةً حان بدؤها ولم تبدأ؛ أعلاها {worst['id']} ({worst.get('priority')}، بدء {worst.get('start','')[:16]})",
                   "وجّهها الآن أو أعِد جدولتها بقرارٍ مسجَّل")]
+
+
+def pr_watch_alerts(now: datetime | None = None, age_min: float | None = -1.0) -> list[dict]:
+    """مراقبُ الطلبات توقّف (مهلةُ Monitor 30 د أو موتُ الجلسة) — والصمتُ يُقرأ نجاحاً. لا تنبيهَ قبل أوّل نبضة ولا ليلاً (23:00 حتى 07:00)."""
+    sys.path.insert(0, str(HERE))
+    import pr_watch
+    now = now or datetime.now(timezone.utc)
+    if age_min == -1.0:  # القيمةُ الحيّة؛ غيرُها للاختبار
+        age_min = pr_watch.heartbeat_age(now)
+    if age_min is None or not 7 <= now.astimezone(DOHA).hour < 23 or age_min <= pr_watch.HEARTBEAT_STALE_MIN:
+        return []
+    return [alert("pr_watch_dead", "warn", f"مراقبُ الطلبات متوقّفٌ منذ {int(age_min)} د",
+                  "0601: أعِد تسليحَه بأداة Monitor: python C:/Users/mesue/delivery_manager_work/tools/pr_watch.py --loop")]
 
 
 def backup_age_severity(age_h: float | None, failed: bool, max_age_h: float) -> str | None:

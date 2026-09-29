@@ -4,3 +4,4 @@ ledger/events.jsonl
 ledger/windows/
 *.tmp
 ledger/spawn_reservations.json
+ledger/pr_watch_heartbeat.json
