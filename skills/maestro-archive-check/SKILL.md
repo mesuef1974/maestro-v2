@@ -4,7 +4,6 @@ description: |
   Use before archiving any Claude Code session of the SchoolOS project: decides eligibility with tools/archive_check.py (core sessions blocked, open PRs, branch judged by its PR state in gh not by rev-list because merges are squashed, uncommitted files, running, handover note, shared worktree) and produces the exact approval reason for archive_session. Trigger on: archive session, archive_session, finished/idle session, sidebar cleanup, "is this session done", unarchive, "أرشف"، «نظّف الشريط»، «الجلسة خلصت»، «من يُؤرشف؟»، «الخاملة تُؤرشف»، ولو لم يُذكر الفحص.
   استخدمها قبل أيّ طلبِ أرشفةٍ لجلسةٍ في مشروع المدرسة، وعند سؤال «هل انتهت هذه الجلسة؟»، وبعد اندماج عمل جلسةٍ مرنةٍ في 04 ونشره.
   ليست لـ: حذفِ جلسة (ممنوعٌ أبداً)، ولا إزالةِ الأشجار أو الفروع (أمينُ المستودع)، ولا فتحِ الجلسات وتسميتها (maestro-spawn وschoolos-flow)، ولا جلساتِ المشاريع الأخرى (بأمرٍ باسمها فقط)، ولا نقلِ الجلسات بين التبويبات (maestro-tabs).
-disable-model-invocation: true
 allowed-tools: Read, Write, mcp__ccd_session_mgmt__list_sessions, Bash(python .claude/skills/maestro-archive-check/scripts/archive_inputs.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/archive_check.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/validate_registry.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/watch_once.py:*), Bash(bash scripts/preview.sh status)
 ---
 
