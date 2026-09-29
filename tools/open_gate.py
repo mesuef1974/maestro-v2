@@ -22,11 +22,13 @@ import spawn_preflight as sp  # noqa: E402
 import watch_once as wo  # noqa: E402
 
 
-def assignable_with_tag(sessions: list[dict], tag: str) -> list[dict]:
-    """جلساتُ 04 الصالحةُ للإسناد بوسمٍ واحد — الوسمُ يُقرأ من الاسم «04SS · <وسم>: <مهمّة>»."""
+def assignable_with_tag(sessions: list[dict], tag: str, live_titles: set[str] | None = None) -> list[dict]:
+    """جلساتُ 04 الصالحةُ للإسناد بوسمٍ واحد — الوسمُ يُقرأ من الاسم «04SS · <وسم>: <مهمّة>»؛ وتُستبعد المؤرشفةُ (ليست في members)."""
     out = []
     for s in sessions:
         name = s.get("session", "")
+        if live_titles is not None and name not in live_titles:
+            continue
         head, _, rest = name.partition(" · ")
         if head[:2] == "04" and rest.startswith(f"{tag}:") and s.get("assignable"):
             out.append(s)
@@ -70,7 +72,8 @@ def main() -> None:
     free = wo.free_memory_gb()
     pre = sp.preflight(None, args.tag, args.task, args.code, "", tabs, th, free)
     band = pre["memory"]["band"] if pre["memory"] else None
-    result = decide(pre, assignable_with_tag(load_sessions(), args.tag), band, args.priority)
+    live = set(next(t for t in tabs["tabs"] if t.get("number") == "04")["members"])
+    result = decide(pre, assignable_with_tag(load_sessions(), args.tag, live), band, args.priority)
     result.update({"title": pre["title"], "memory": pre["memory"], "live_04": f"{pre['live_04']}/{pre['live_cap_04']}",
                    "measure": "قِس الذاكرة مرّتين بعد أيّ فتح: فوراً، ثمّ بعد 10 دقائق (العبءُ يظهر عند أوّل عملٍ فعليّ)"})
     print(json.dumps(result, ensure_ascii=False, indent=2))

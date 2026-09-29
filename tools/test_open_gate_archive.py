@@ -29,6 +29,11 @@ class Gate(unittest.TestCase):
                 {"session": "0405 · واجهة: ج (W-3)", "assignable": False}]
         self.assertEqual([r["session"] for r in og.assignable_with_tag(rows, "واجهة")], ["0404 · واجهة: ب (W-2)"])
 
+    def test_archived_session_is_not_assignable(self):
+        rows = [{"session": "0405 · إدارة: أ (W-1)", "assignable": True}]
+        self.assertEqual(og.assignable_with_tag(rows, "إدارة", {"0404 · واجهة: ب (W-2)"}), [])
+        self.assertEqual(len(og.assignable_with_tag(rows, "إدارة", {"0405 · إدارة: أ (W-1)"})), 1)
+
 
 class Archive(unittest.TestCase):
     def test_stopped_hours(self):
