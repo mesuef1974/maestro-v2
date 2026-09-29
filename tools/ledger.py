@@ -133,11 +133,30 @@ def add_item(source: str, problem_type: str, problem: str, impact: str, accept: 
     return item_id
 
 
+# مراحلُ حياة البطاقة: الحالةُ الهدف ← الحالاتُ السابقةُ المقبولة (بوّاباتٌ لا يُقفز فوقها)
+GATES = {
+    "pushed": {"approved"},
+    "merged": {"pushed"},
+    "published": {"merged"},
+}
+
+
+def check_transition(current: str, state: str, note: str | None) -> None:
+    """يرفض القفزَ فوق بوّابات الفلو: لا دفعَ بلا اعتماد، ولا دمجَ بلا دفع، ولا نشرَ بلا دمج، ولا اعتمادَ بلا ملاحظةٍ تسمّي من اعتمد وأين."""
+    allowed = GATES.get(state)
+    if allowed and current not in allowed:
+        raise LedgerError(f"لا قفزَ فوق مراحل البطاقة: «{current}» ← «{state}» ممنوع؛ الحالةُ السابقةُ المطلوبة: {'، '.join(sorted(allowed))}")
+    if state == "approved" and not note:
+        raise LedgerError("الاعتمادُ يلزمه --note يسمّي من اعتمد وأين ومتى (سطرُ الاعتماد الرسميّ v2.12)")
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
-    if item_id not in reduce_state(load_events(path)):
+    items = reduce_state(load_events(path))
+    if item_id not in items:
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    check_transition(items[item_id]["state"], state, note)
     append_event("state", item_id, {"state": state}, path)
     if note:
         append_event("note", item_id, {"text": check_text("note", note)}, path)
