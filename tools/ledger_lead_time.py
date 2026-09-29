@@ -37,14 +37,27 @@ def first_times(events: list[dict]) -> dict[str, dict[str, datetime]]:
     return times
 
 
+def skipped_cards(events: list[dict]) -> list[str]:
+    """بطاقاتٌ قفزت بوّابةً من بوّابات الفلو (كنشرٍ بلا دمجٍ أو دفع): زمنُ نشرها مسجَّلٌ متأخّراً بالدفعة لا وقتَ حدوثه (D-73م)."""
+    bad = []
+    for cid, s in first_times(events).items():
+        for target, prevs in ledger.GATES.items():
+            if target in s and not any(p in s and s[p] <= s[target] for p in prevs):
+                bad.append(cid)
+                break
+    return sorted(bad)
+
+
 def stage_hours(events: list[dict]) -> dict[str, list[float]]:
+    """أزمنةُ كلّ مرحلة؛ والبطاقاتُ القافزةُ تُستبعَد من المراحل المنتهيةِ بالنشر وحدَها (مرحلةُ الاعتماد سليمةٌ)."""
     times = first_times(events)
+    skipped = set(skipped_cards(events))
     out: dict[str, list[float]] = {}
     for key, start, end, _label in STAGES:
         out[key] = [
             (s[end] - s[start]).total_seconds() / 3600
-            for s in times.values()
-            if start in s and end in s and s[end] >= s[start]
+            for cid, s in times.items()
+            if start in s and end in s and s[end] >= s[start] and not (end == "published" and cid in skipped)
         ]
     return out
 
@@ -65,10 +78,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
-    summary = summarize(stage_hours(ledger.load_events()))
+    events = ledger.load_events()
+    summary = summarize(stage_hours(events))
+    skipped = skipped_cards(events)
     if args.json:
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        print(json.dumps({"stages": summary, "skipped_cards": skipped}, ensure_ascii=False, indent=2))
         return
+    print(f"بطاقاتٌ قفزت مراحلَها (مستبعَدةٌ من مراحل النشر): {len(skipped)} — {'، '.join(skipped) or 'لا شيء'}")
     for key, _start, _end, label in STAGES:
         s = summary[key]
         print(f"{label}: " + (f"وسيط {s['median']} س | متوسّط {s['mean']} س | عدد {s['n']}" if s else "غيرُ مقيس (لا بطاقةَ بلغت الحالتين)"))

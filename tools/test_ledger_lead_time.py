@@ -14,7 +14,15 @@ CARD = [
     ev("2026-09-29T09:00:00+03:00", "W-1", "state", "routed"),
     ev("2026-09-29T12:00:00+03:00", "W-1", "state", "ready_for_review"),
     ev("2026-09-29T12:30:00+03:00", "W-1", "state", "approved"),
+    ev("2026-09-29T12:40:00+03:00", "W-1", "state", "pushed"),
+    ev("2026-09-29T13:00:00+03:00", "W-1", "state", "merged"),
     ev("2026-09-29T20:00:00+03:00", "W-1", "state", "published"),
+]
+JUMPER = [
+    ev("2026-09-29T08:00:00+03:00", "W-9", "created"),
+    ev("2026-09-29T12:00:00+03:00", "W-9", "state", "ready_for_review"),
+    ev("2026-09-29T12:30:00+03:00", "W-9", "state", "approved"),
+    ev("2026-09-30T17:00:00+03:00", "W-9", "state", "published"),
 ]
 
 
@@ -31,6 +39,16 @@ class LeadTime(unittest.TestCase):
         h = llt.stage_hours(events)
         self.assertEqual(h["capture_to_route"], [1.0])
         self.assertEqual(h["capture_to_publish"], [])
+
+    def test_jumping_card_is_listed_and_excluded_from_publish_stages_only(self):
+        events = CARD + JUMPER
+        self.assertEqual(llt.skipped_cards(events), ["W-9"])
+        h = llt.stage_hours(events)
+        self.assertEqual(h["capture_to_publish"], [12.0])
+        self.assertEqual(sorted(h["review_to_approve"]), [0.5, 0.5])
+
+    def test_clean_card_is_not_flagged(self):
+        self.assertEqual(llt.skipped_cards(CARD), [])
 
     def test_summary_median_and_unmeasured(self):
         s = llt.summarize({"a": [1.0, 3.0, 5.0], "b": []})
