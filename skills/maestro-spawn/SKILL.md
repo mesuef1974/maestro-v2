@@ -24,6 +24,7 @@ allowed-tools: Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/tools/ro
    python -X utf8 C:/Users/mesue/delivery_manager_work/skills/maestro-spawn/scripts/spawn_preflight.py \
      --tag واجهة --task "فراغ بطاقة الغياب" --code W-018          # أو --title "<اسمٌ كامل>" ، و--slice "1 من 3"
    ```
+   **عند إصدار بطاقة spawn_task أضِف `--reserve`** — يحجز رقمَ العنوان 12 ساعة (`ledger/spawn_reservations.json`) فلا تأخذه بطاقةٌ ثانيةٌ قبل أن تُفتح الأولى؛ لأنّ `per_tab_next` لا يزيد إلّا عند الفتح (تصادم «0408» مرّتين 09-29). وبلا `--reserve` الفحصُ قراءةٌ فقط.
    يبني الاسمَ بالرقم التالي ويدقّقه بقواعد `validate_registry.name_problems` نفسِها، ويقرأ أعضاءَ 04 مقابل `live_cap`، والذاكرةَ بعتبات `thresholds.json`. `ok: false` (رمز 1) = مانع: اسمٌ مخالف، وسمٌ غيرُ معروف، رقمٌ أُعطي من قبل، أو 04 ممتلئة. `warnings` لا تمنع.
 3. **الذاكرةُ تنبيهٌ لا مانع (D-51م):** أحمرُ أو حرجٌ ← أبلغ المالكَ برقمها (غيغا ووقتها) وافتح جلسةً واحدةً ثمّ انتظر حتى تستقرّ قبل التالية. ولا أكثرَ من جلستين أو ثلاثٍ عاملةٍ في آنٍ واحد (`handover.md` §5 بعد حادثة 20:24).
 4. **البطاقة (BLUF):** بالقالب المصحَّح في `references/00-card-and-first-message.md` — القرارُ المطلوب، لماذا لا يكفي التوجيه (بأرقام الحِمل)، السعة، الأسطرُ الأربعة، المهاراتُ والصلاحيّاتُ من `specialties` للوسم، شرطُ الأرشفة، والرسالةُ الأولى.

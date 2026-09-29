@@ -94,7 +94,9 @@ def main() -> None:
     tabs = json.loads((base / "tabs.json").read_text(encoding="utf-8"))
     th = json.loads((base / "thresholds.json").read_text(encoding="utf-8"))
     free = wo.free_memory_gb()
-    pre = sp.preflight(None, args.tag, args.task, args.code, "", tabs, th, free)
+    per_tab = tabs["session_policy"]["serial"]["per_tab_next"]["04"]
+    reserved = {r["number"]: r["title"] for r in sp.active_reservations(per_tab)}  # بطاقاتٌ صدرت ولم تُفتح بعد
+    pre = sp.preflight(None, args.tag, args.task, args.code, "", tabs, th, free, reserved)
     band = pre["memory"]["band"] if pre["memory"] else None
     live = set(next(t for t in tabs["tabs"] if t.get("number") == "04")["members"])
     live = live - busy_titles()

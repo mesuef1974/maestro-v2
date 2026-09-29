@@ -3,3 +3,4 @@ __pycache__/
 ledger/events.jsonl
 ledger/windows/
 *.tmp
+ledger/spawn_reservations.json
