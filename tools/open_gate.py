@@ -49,6 +49,30 @@ def decide(pre: dict, assignable: list[dict], band: str | None, priority: str | 
     return {"verdict": "افتح الآن", "why": ["لا جلسةَ صالحةٌ للإسناد بالوسم، والذاكرةُ تسمح"]}
 
 
+def busy_titles(max_open: int = 1) -> set[str]:
+    """عناوينُ الجلسات التي عندها أكثرُ من max_open بطاقةٍ غيرِ منتهية في السجلّ — لا تُقترَح للإسناد (الوسمُ وحدَه لا يكفي)."""
+    import re
+    import ledger
+    final = {"closed", "merged", "published", "deferred"}
+    counts: dict[str, int] = {}
+    for item in ledger.reduce_state(ledger.load_events()).values():
+        if item.get("state") in final:
+            continue
+        for title in _titles_for(item):
+            counts[title] = counts.get(title, 0) + 1
+    return {t for t, n in counts.items() if n > max_open}
+
+
+def _titles_for(item: dict) -> list[str]:
+    """جلساتُ 04 الحيّة التي يذكر عنوانُها رمزَ البطاقة الأخير (W-003 ← -003)."""
+    import re
+    base = MAESTRO / "projects" / "schoolos"
+    tabs = json.loads((base / "tabs.json").read_text(encoding="utf-8"))
+    members = next(t for t in tabs["tabs"] if t.get("number") == "04")["members"]
+    tail = item["id"].rsplit("-", 1)[-1]
+    return [m for m in members if re.search(rf"W-{tail}|/{tail}", m)]
+
+
 def load_sessions() -> list[dict]:
     proc = subprocess.run([sys.executable, str(MAESTRO / "tools" / "session_load_v2.py"), "--json", "--no-fetch"],
                           capture_output=True, encoding="utf-8", errors="replace", check=False)
@@ -73,6 +97,7 @@ def main() -> None:
     pre = sp.preflight(None, args.tag, args.task, args.code, "", tabs, th, free)
     band = pre["memory"]["band"] if pre["memory"] else None
     live = set(next(t for t in tabs["tabs"] if t.get("number") == "04")["members"])
+    live = live - busy_titles()
     result = decide(pre, assignable_with_tag(load_sessions(), args.tag, live), band, args.priority)
     result.update({"title": pre["title"], "memory": pre["memory"], "live_04": f"{pre['live_04']}/{pre['live_cap_04']}",
                    "measure": "قِس الذاكرة مرّتين بعد أيّ فتح: فوراً، ثمّ بعد 10 دقائق (العبءُ يظهر عند أوّل عملٍ فعليّ)"})
