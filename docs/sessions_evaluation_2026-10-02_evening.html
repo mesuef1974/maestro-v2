@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تقييم الجلسات — مساء 2026-10-02</title>
+<style>
+:root{--bg:#faf8f5;--fg:#1f1b16;--mut:#6b6359;--card:#fff;--line:#e4ddd2;--maroon:#7a1f3d;--gold:#b88a2e;--ok:#1f7a4d;--mid:#b07a12;--bad:#b3261e;--info:#2b5d8a}
+@media (prefers-color-scheme:dark){:root{--bg:#17140f;--fg:#f0ebe3;--mut:#a39a8c;--card:#211d17;--line:#3a3329;--maroon:#d98aa5;--gold:#e0b25a;--ok:#5fcf9b;--mid:#e0b25a;--bad:#ff8a80;--info:#8ab8e6}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:Tajawal,"Segoe UI",system-ui,sans-serif;line-height:1.75}
+.wrap{max-width:1100px;margin:0 auto;padding:24px 16px 64px}
+h1{color:var(--maroon);margin:0 0 4px;font-size:1.7rem}
+h2{color:var(--maroon);border-bottom:2px solid var(--gold);padding-bottom:6px;margin-top:40px;font-size:1.3rem}
+h3{margin:22px 0 6px;font-size:1.05rem}
+.sub{color:var(--mut);margin:0 0 20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:16px 0}
+.k{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.k b{display:block;font-size:1.5rem;color:var(--maroon)}
+.k span{color:var(--mut);font-size:.9rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:12px 0}
+.card h3{margin:0 0 4px}
+.tag{display:inline-block;padding:1px 10px;border-radius:99px;font-size:.82rem;font-weight:700;margin-inline-start:8px;border:1px solid currentColor}
+.t-ok{color:var(--ok)}.t-mid{color:var(--mid)}.t-bad{color:var(--bad)}.t-info{color:var(--info)}
+.row{display:grid;grid-template-columns:110px 1fr;gap:8px;margin:2px 0}
+.row .l{color:var(--mut);font-size:.9rem}
+.num{unicode-bidi:isolate;direction:ltr;display:inline-block}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:.93rem}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:start;vertical-align:top}
+th{background:rgba(122,31,61,.08);color:var(--maroon)}
+.note{background:rgba(184,138,46,.12);border-inline-start:4px solid var(--gold);padding:10px 14px;border-radius:6px;margin:14px 0}
+.bad-note{background:rgba(179,38,30,.1);border-inline-start:4px solid var(--bad)}
+@media (max-width:640px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>تقييم عمل الجلسات — أهدافها وأعمالها</h1>
+<p class="sub">0102 · تقييم المايسترو — مساء 2026-10-02 (21:45 بتوقيت الدوحة) — كلُّ الجلسات الدائمة والمرنة (04) — مصادر القياس: الدفتر، <span class="num">gh pr list</span>، <span class="num">deposits_feed</span>، <span class="num">session_load_v2</span>، <span class="num">owner_asks_audit</span>، <span class="num">violations.md</span></p>
+
+<div class="grid">
+  <div class="k"><b class="num">44</b><span>طلبَ دمجٍ مدموجاً في 3 أيّام (≈14.7 يوميّاً)</span></div>
+  <div class="k"><b class="num">1.26–1.71 س</b><span>وسيط «فتح الطلب←دمجه» (24 س / 7 أيّام)</span></div>
+  <div class="k"><b class="num">63</b><span>سؤالٌ مباشرٌ للمالك في آخر 24 س (0101: 39، 0601: 13، 0102: 10)</span></div>
+  <div class="k"><b class="num">16</b><span>سجلُّ مخالفاتٍ اليوم (كلُّها بإقرارٍ ذاتيٍّ أو بقياس، لا بإخفاء)</span></div>
+</div>
+
+<div class="note"><b>الحُكم العامّ:</b> المنظومةُ <b>تنتج فعلاً</b> — 44 دمجاً في ثلاثة أيّام بدورةٍ وسيطُها ساعةٌ ونصف، وكلُّ بوّابات الفلو (اعتمادٌ برأسٍ، تسريعُ الدمج، إخطارُ ما بعد النشر) رُكّبت في يومٍ واحد. وعلّتُها الأولى <b>ليست السرعة بل الانضباط</b>: عودةُ الجلسات إلى المالك بأسئلةٍ لا تلزمه (63 سؤالاً)، وإيداعاتٌ محلّيّةٌ <b>بلا طلب</b> تتراكم أياماً (أقدمُها 434 ساعة)، وثقلُ عددٍ من الجلسات على الذاكرة. وأقوى الجلسات أثراً: 0601 و0701 و0501 و0402 و0414؛ وأضعفُها تسليماً: 0403 وsilly-villani و0301.</div>
+
+<div class="note bad-note"><b>تصحيحٌ لتقريري السابق:</b> أبلغتُ 0101 قبل ساعاتٍ بأربع بطاقاتٍ «معتمَدةٍ لم تُدفع» (W-20260929-005 و-015 و-016 و W-20261001-024). قراءةُ الدفتر الآن: <b>ثلاثٌ منها <span class="num">merged</span></b> (سجّلها 0101 عند <span class="num">14:14</span>) — فكان التنبيهُ إنذاراً كاذباً من <b>تأخّر تسجيل الدفتر</b> لا من تأخّر الدفع؛ والرابعةُ (<span class="num">W-20261001-024</span>) ما زالت <span class="num">approved</span> منذ <span class="num">12:36</span>. وهذا يدعم نتيجةً أهمّ: <b>الدفتر يتأخّر عن الواقع</b> فلا يصحّ الحكمُ بالدفتر وحدَه (قاعدةُ <span class="num">ground_truth</span>).</div>
+
+<h2>أولاً — الجلسات الدائمة</h2>
+
+<div class="card"><h3>0101 · المايسترو <span class="tag t-mid">جيّد، مثقَل</span></h3>
+<div class="row"><span class="l">الهدف</span><span>التوجيهُ والإسنادُ والقراراتُ وبوّابةُ الفلو.</span></div>
+<div class="row"><span class="l">ما أنجز</span><span>قراراتٌ حتى <span class="num">D-146م</span> وإصدارُ الفلو <span class="num">v2.23</span>؛ أقرّت تصميمَ ربط الاعتماد بالرأس في دقائق؛ سجّلت <span class="num">0042→0048</span> وأدارت تسريعَ الدمج الثمانية؛ سجّلت دفتراً للأربعة والثلاثين طلباً مدموجاً.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span><b>39</b> سؤالاً مباشراً للمالك في 24 ساعة (الأعلى) بينها سؤالُ إذنٍ بإرسالٍ وتصحيح؛ <b>5021</b> حدثاً اليوم (ثقيل 85MB) — نقطةُ اختناقٍ مفردة؛ تسجيلُ الدفتر يتأخّر عن الدمج (البطاقاتُ الثلاث).</span></div>
+<div class="row"><span class="l">توصية</span><span>توزيعُ بعض التوجيه على 0601/0501 بقواعد الفلو، وتسجيلُ الدفتر في اللحظة نفسها لا بالجملة.</span></div></div>
+
+<div class="card"><h3>0102 · تقييم المايسترو (أنا) <span class="tag t-mid">جيّد، بأخطاءٍ مسجَّلة</span></h3>
+<div class="row"><span class="l">الهدف</span><span>تقييمٌ مستقلّ، ومراقبةُ الادّعاءات، وصلاحيّةُ الوقف.</span></div>
+<div class="row"><span class="l">ما أنجز</span><span>إصلاحُ النسخ الاحتياطيّ (فشلٌ كاذبٌ ثلاثاً) واختبارُ 0801؛ <span class="num">ledger --by</span> والمسجِّلون المأذونون؛ <span class="num">deposits_feed</span> و<span class="num">approval_check</span>؛ <b>ربطُ الاعتماد برأس الإيداع</b> (<span class="num">v2.23</span>، 191 اختباراً)؛ تقارير الجلسات ومراجعةُ الفلو؛ ردّي في تصميم الخادمين.</span></div>
+<div class="row"><span class="l">أخطائي</span><span>تسلسلٌ ونسبةٌ خاطئان في <span class="num">D-94م</span>؛ ادّعاءٌ خاطئ عن <span class="num">capability_grants</span>؛ فحصٌ استثنى <span class="num">tool_result</span> فظلمتُ 0601؛ أوصافُ أدواتٍ بالإنجليزيّة (مسجَّلة)؛ وتنبيهُ «اعتمادٌ بلا دفع» بنيتُه على الدفتر وحدَه فجاء ثلاثةٌ منه كاذباً (أعلاه). <b>10</b> أسئلةٍ للمالك، أكثرُها قبل D-130م.</span></div>
+<div class="row"><span class="l">توصية</span><span>كلُّ تنبيهٍ يُقاطَع بـ<span class="num">gh</span> قبل إرساله؛ وتحديثُ <span class="num">approved_not_pushed</span> ليقارن بـ<span class="num">gh pr</span>.</span></div></div>
+
+<div class="card"><h3>0103 · الحوكمة <span class="tag t-ok">جيّد</span></h3>
+<div class="row"><span class="l">الهدف</span><span>سجلُّ الهويّة/CSS، المواثيق، ملفُّ CLAUDE.md.</span></div>
+<div class="row"><span class="l">ما أنجز</span><span>#784 (تصحيحُ CLAUDE.md: تثبيتُ 8500 لـ0501 وفتحُ الطلبات لـ0601) مدموج؛ #794 مفتوحٌ (زمنُ prepush المقيس)؛ نقلَ أمرَ المالك عن الإبلاغ التلقائيّ بدقّةٍ وطلبَ تحديثَ الذاكرة المشتركة.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span>سبعةُ أوصافِ أدواتٍ بالإنجليزيّة (مسجَّلة)؛ 8 إيداعاتٍ منها 7 قبل #794.</span></div></div>
+
+<div class="card"><h3>0104 · العصف الذهني <span class="tag t-ok">جيّد جدّاً</span></h3>
+<div class="row"><span class="l">الهدف</span><span>عصفٌ ذهنيٌّ منظّم، وقراراتٌ بدائلها مدروسة (V2، قيود الجدول).</span></div>
+<div class="row"><span class="l">ما أنجز</span><span>عصفُ <b>بطء الدمج</b> أنتج ثمانيةَ إصلاحاتٍ بمؤشّرٍ وأساسٍ ومهلةِ قياس (وسيط 1.35 س) نُفّذ منها 8500 كلَّ 10 دقائق (#788) وحماية <span class="num">strict=false</span> (تحقّقتُ منها بنفسي)؛ وتصحيحُ مواصفة قيود V2.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span>سألت المالكَ عن تشغيل <span class="num">watch</span> وهو من عمل 0601 فاعترض — وصحّحت بالتزامٍ مكتوب؛ و16 إيداعاً غيرُ مدموج.</span></div></div>
+
+<div class="card"><h3>0105 · الأمان والثغرات <span class="tag t-mid">جيّد، حديثُ الميثاق</span></h3>
+<div class="row"><span class="l">الهدف</span><span>مراجعةٌ أمنيّةٌ إلزاميّة، وتنبيهاتُ CodeQL، ومسارُ الإبلاغ عن الخروقات.</span></div>
+<div class="row"><span class="l">ما أنجز</span><span>إغلاقُ تنبيهات CodeQL (#772 مدموج)، <span class="num">sensitive_paths.json v2</span>، شروطُ الأمان على بنود تسريع الدمج (٢ و٥ و٦) مُلزِمة، فحصُ تقارير 0102 الأمنيّ.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span>أودعت <span class="num">8f5a79dc</span> <b>قبل اعتماد ميثاقها</b> وأقرّت أنّها لم تقرأه؛ إيداعٌ حاليٌّ (إغلاقُ py/path-injection، عمره 14 س) <b>بلا طلب</b> وغيرُ مسلَّم للمعاينة؛ 26 مخالفةَ لغةٍ في قياس 12 س.</span></div></div>
+
+<div class="card"><h3>0201 · أمين البلاغات / 0203 · الرصد والإنذارات / 0204 · البوّابة الموحّدة <span class="tag t-info">عملٌ خفيف — يصعب الحكم</span></h3>
+<div class="row"><span class="l">الأحداث</span><span>0204: 471 اليوم، 0201: 148، 0203: 127 — حِملٌ منخفضٌ جدّاً بلا إيداعاتٍ ولا طلبات.</span></div>
+<div class="row"><span class="l">الحكم</span><span>لا أرى <b>مخرجاً</b> مقيساً لأيٍّ منها اليوم (لا بطاقةَ مدموجةً منسوبة). قد يكون عملُها استقبالاً وإنذاراً غيرَ مقيس. 0202 أُرشفت ودُمجت في 0204 (D-112م).</span></div>
+<div class="row"><span class="l">توصية</span><span>مؤشّرٌ لكلٍّ منها: عددُ البلاغات المحوَّلة، وزمنُ التوجيه، وإنذاراتٌ صحيحةٌ/كاذبة — وإلّا يُبحث دمجُ 0201 في 0204.</span></div></div>
+
+<div class="card"><h3>0301 · المستشار: التصنيف والتسمية <span class="tag t-bad">يحتاج تحسيناً</span></h3>
+<div class="row"><span class="l">الهدف</span><span>التصنيفُ والتسمية وبوّابةُ المنطق في الميثاق.</span></div>
+<div class="row"><span class="l">الملاحظ</span><span><b>23</b> إيداعاً غيرَ مسلَّم بعد دمج طلبها، وآخرُها <span class="num">Merge remote-tracking branch</span> (دمجٌ داخليّ بدل إعادة أساس)؛ ثقيلةٌ 67MB؛ 16 مخالفةَ لغةٍ؛ ظهرت جلسةٌ بلا اعتمادها (<span class="num">c380bd</span>) بينما هي «خاملةٌ لا معطّلة».</span></div>
+<div class="row"><span class="l">توصية</span><span>تسليمُ الإيداعات أو التخلّي عنها صراحةً؛ وجرد ما تبقّى من التسمية.</span></div></div>
+
+<div class="card"><h3>0501 · النشر على 8500 والاعتماد <span class="tag t-ok">قويّ</span></h3>
+<div class="row"><span class="l">ما أنجز</span><span>7 اعتماداتٍ مسجَّلةً في الدفتر (الأكثرُ بين المسجِّلين)؛ تثبيتُ 8500 وتكاملُه مطابقٌ لـ<span class="num">/health/</span>؛ طبّقت v2.23 فور صدوره.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span>ثلاثةُ أسئلةٍ نصّيّةٍ للمالك عن إرسالٍ (مخالفةٌ مسجَّلة: سألت «ما نصُّ ملاحظتك؟» بدل نقلها).</span></div></div>
+
+<div class="card"><h3>0601 · النشر على الإنتاج والدمج <span class="tag t-ok">قويّ جدّاً، ثقيل</span></h3>
+<div class="row"><span class="l">ما أنجز</span><span>9 نشراتٍ و8 دمجاً مسجَّلة؛ كشفت ثغرةَ الاعتماد غيرِ المربوط برأس (#781) فصارت D-146م؛ تحقّقت مستقلّةً من <span class="num">strict=false</span>؛ ركّبت حلقةَ 8500.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span>13 سؤالاً للمالك (بعضُها حقيقيّ: لقطاتٌ بصريّةٌ وADR بلا سطر اعتماد)؛ 14 ملفّاً غيرَ مودَع؛ 113MB و4000 حدث — ثقلٌ يقتضي تخفيفَ السياق (D-133م مؤجَّل).</span></div></div>
+
+<div class="card"><h3>0701 · تحديث الخارطة <span class="tag t-ok">منتظِم</span></h3>
+<div class="row"><span class="l">ما أنجز</span><span>هجراتُ الخارطة <span class="num">0042→0048</span> (#755 #771 #778 #780 مدموجة، #792 مفتوح) — الأكثرُ انتظاماً في مسارٍ واحد.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span>خالفت D-130م بسؤال المالك «هل تأذن بدفعها؟» مراراً في اليوم نفسه (مسجَّلة). تصحيحُها: <span class="num">approval_check</span> ثمّ 0101.</span></div></div>
+
+<div class="card"><h3>0702 · مراقبات الجودة <span class="tag t-ok">جيّد</span></h3>
+<div class="row"><span class="l">ما أنجز</span><span>مقاييسُ الجودة والأساس (تحقّقتُ منه بنفسي)، قواعدُ flow v2.19؛ بطاقةُ pytest المضاعف W-20261002-025.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span>18 مخالفةَ لغةٍ (أوصاف أدواتٍ بالإنجليزيّة).</span></div></div>
+
+<div class="card"><h3>0801 · أتمتة الجدولة في الكود <span class="tag t-ok">جيّد</span></h3>
+<div class="row"><span class="l">ما أنجز</span><span>اختبارُ سكربت النسخ الاحتياطيّ (4 اختبارات) ومركزُ قيادة الجودة (#787 مفتوح، 6 إيداعات)؛ مسارُ البار سلفر فاتح وتقريبُ التسمية.</span></div>
+<div class="row"><span class="l">ضعفٌ</span><span>علّقت «جاهزٌ للمعاينة» على سؤال المالك (مسجَّلة، وصحّحتها فوراً).</span></div></div>
+
+<h2>ثانياً — الجلسات المرنة (04)</h2>
+<table>
+<thead><tr><th>الجلسة</th><th>الهدف / البطاقة</th><th>ما سُلِّم (دليل)</th><th>الإيداعاتُ المعلّقة</th><th>التقييم</th></tr></thead>
+<tbody>
+<tr><td>0402 · حرّاس التوازي</td><td>W-001: حرّاسُ التوازي (PR-1..3)</td><td>#724 #729 مدموجان؛ #789 مفتوح؛ وطلباتُ ساعة داخل التوليد (W-033)</td><td>1 + شجرةٌ ثانيةٌ 96MB</td><td><span class="tag t-ok">قويّ</span> لكن الشجرتان ثقيلتان</td></tr>
+<tr><td>0403 · حرّاس المولّد</td><td>W-002: حرّاسُ المولّد وفحصُ جدوى الإسناد (046)</td><td>#774 (فحص الجدوى) مدموج</td><td><b>16 + 5 بلا طلب</b>، أقدمُها 196 س</td><td><span class="tag t-bad">تسليمٌ ضعيف</span></td></tr>
+<tr><td>0404 · قرار الطباعة</td><td>W-003/004: إلغاءُ الطباعة المباشرة</td><td>#725 #726 #731 مدموجة (الطلبُ الرابعُ والأخير)</td><td>9</td><td><span class="tag t-ok">منجَز</span> — مرشّحةٌ للأرشفة بقرار 0101</td></tr>
+<tr><td>0406 · شحنٌ ودمجٌ آليّان</td><td>W-015</td><td>#739 مدموج؛ #793 مفتوح (تتمّةُ حكم 0105)</td><td>3</td><td><span class="tag t-ok">جيّد</span></td></tr>
+<tr><td>0407 · منشوراتُ اليوم</td><td>W-017: لوحةُ «ما نُشر اليوم»</td><td>#738 مدموج؛ #781 مفتوحٌ منذ 12 س (D-128م)</td><td><b>25</b> (الأعلى)</td><td><span class="tag t-mid">متوسّط</span> — طلبٌ طويلُ العمر</td></tr>
+<tr><td>0408 · هامشُ ميزانيّة CSS</td><td>W-033</td><td>#751 مدموج (هامش 269KB)؛ أداةُ prepush #785 مدموجة</td><td>0</td><td><span class="tag t-ok">جيّد</span> — سأل المالكَ «أدفعهما الآن؟» مرّتين</td></tr>
+<tr><td>0409 · الفروعُ اليتيمة</td><td>W-020 (قديم)</td><td>لا مخرجَ حيّاً</td><td>0</td><td><span class="tag t-info">منتهية — للأرشفة</span></td></tr>
+<tr><td>0410 · عارضُ md المركزيّ</td><td>W-002 (docs_viewer)</td><td>#746 و#763 مدموجان</td><td>21</td><td><span class="tag t-mid">متوسّط</span> — 24 مخالفةَ لغة</td></tr>
+<tr><td>0412 · صلاحيّاتُ السكرتير</td><td>W-026</td><td>#758 مدموج، و#783 (استيرادُ كشف البصمة + لوحةُ رصد الحضور)</td><td>18</td><td><span class="tag t-ok">جيّد</span> — خالفت «لا تسأل المالك» (مسجَّلة)</td></tr>
+<tr><td>0414 · فحصُ الجدوى</td><td>W-046</td><td>#774 مدموجٌ بوصل مسار الإدخال</td><td>6</td><td><span class="tag t-ok">جيّد</span></td></tr>
+<tr><td>w031-ci</td><td>W-031: تسريعُ البوّابة</td><td>#786 مدموج؛ #790 #791 تجريبيّان لقياس الشروط</td><td>1</td><td><span class="tag t-ok">قويّ</span> — أثرُه ظاهر في مؤشّر الدمج</td></tr>
+<tr><td>w020-teacher-attendance</td><td>W-020: رصدُ حضور المعلّم (D-125م)</td><td>6 إيداعاتٍ (4/n: المحوُ تحت RLS والسباق) لم تُسلَّم بعد</td><td>6 بلا طلب</td><td><span class="tag t-mid">جارٍ</span> — بلا اسمٍ مسجَّل</td></tr>
+<tr><td>silly-villani-965979</td><td>غيرُ معروف (جودة؟)</td><td>لا شيء مسلَّم</td><td><b>14 منذ 434 س</b></td><td><span class="tag t-bad">يتيمة</span> — قرارٌ للمالك عبر 0101</td></tr>
+</tbody></table>
+<p class="sub">ملاحظةٌ منهجيّة: «إيداعاتٌ معلّقة» من <span class="num">deposits_feed</span> تعدّ إيداعاتِ الفرع غيرَ المدموجة، وقد تحوي إيداعاتٍ مسلَّمة في طلبٍ مفتوح؛ فاقرأ عمودَ «بلا طلب» بحذر. والمخرجُ منسوبٌ بالفرع/البطاقة لا بسجلٍّ رسميٍّ للجلسة (الدفتر لا يحمل الجلسة).</p>
+
+<h2>ثالثاً — ما يربط الجلسات (قراءةٌ منظوميّة)</h2>
+<ul>
+<li><b>الإنتاجيّة:</b> 44 دمجاً في ثلاثة أيّام (≈14.7 يوميّاً)؛ الدورة: وسيط 1.26 س، <span class="num">p90</span> = 10.8 س، أقصى 18 س. أطولُ الاختناقات: الانتظارُ البشريّ وتأخّر الدفع بعد الاعتماد (وسيط 1.8 س، أقصى 44 س).</li>
+<li><b>أسئلة المالك:</b> 63 في 24 س، مجمعها في 0101 و0601 و0102 — أمّا بعد D-130م فلا يُسأل إلّا قرارٌ سياسيّ أو إنتاجيّ أو اعتمادُه؛ وهذا ما لا يتحقّق في 12 سؤالاً نصّيّاً عن فعلٍ آليّ (0101: 3، 0501: 5، 0408: 2، 0104: 1، 0102: 1).</li>
+<li><b>انضباط اللغة:</b> 16 مخالفةً مسجَّلةً أغلبُها أوصافُ أدواتٍ بالإنجليزيّة؛ قياسُ 12 س: 0102 = 56، 0105 = 26، 0410 = 24، 0702 = 18، 0301 = 16.</li>
+<li><b>الدفتر:</b> 145 بطاقةً: 66 <span class="num">captured</span> (45%) لم تُسنَد، و35 منشورة، و11 مدموجة؛ ويتأخّر تسجيلُه عن الواقع (ثلاثُ بطاقاتٍ في هذا التقرير).</li>
+<li><b>الموارد:</b> سبعُ جلساتٍ «ثقيلة مثقلة» بحسب <span class="num">session_load_v2</span> (0101 و0601 و0102 و0402 و0701 و0301 وشجرةُ silly-villani)، والمتاحُ من الذاكرة كان 0.38 غ مساءً — فالتخفيفُ أنفعُ من إضافة خادمٍ أو جلسة.</li>
+</ul>
+
+<h2>رابعاً — توصياتٌ مرتَّبة بالأثر</h2>
+<table><thead><tr><th>#</th><th>الإجراء</th><th>المسؤول</th><th>الأثر</th></tr></thead><tbody>
+<tr><td>1</td><td>حسمُ الإيداعات بلا طلب (0403 و0301 و0105 وw020 وsilly-villani): تسليمٌ أو تخلٍّ صريح</td><td>0101 + أصحابها</td><td>عمالةٌ مبذولةٌ لا تصل المالك</td></tr>
+<tr><td>2</td><td>تسجيلُ الدفتر لحظيّاً عند الدمج، وتعديلُ <span class="num">approved_not_pushed</span> ليُقاطع <span class="num">gh pr</span></td><td>0101 + 0102</td><td>يمنع إنذاراً كاذباً ويضمن مصدراً واحداً</td></tr>
+<tr><td>3</td><td>أرشفةُ المنتهية (0404 و0409 و0406 بعد #793) بقرارِ 0101</td><td>0101</td><td>ذاكرةٌ وسياقٌ</td></tr>
+<tr><td>4</td><td>مؤشّراتُ مخرجٍ لـ0201/0203/0204 أو دمجُها</td><td>0101 + 0103</td><td>يزيل غموضَ التقييم</td></tr>
+<tr><td>5</td><td>تخفيفُ السياق (0601 و0402 و0101 و0301) وإيقافُ حاوياتٍ خاملة</td><td>0101 + المالك (للأرشفة)</td><td>ذاكرة 1.6 غ</td></tr>
+<tr><td>6</td><td>تدقيقٌ أسبوعيٌّ: <span class="num">owner_asks_audit</span> + <span class="num">lang_audit</span> + مؤشّرُ الدمج (10-09)</td><td>0102</td><td>قياسٌ بعد التسريع</td></tr>
+</tbody></table>
+
+<p class="sub" style="margin-top:32px">حدودُ هذا التقرير: التقييمُ مبنيٌّ على ما تُظهره الأدواتُ الآن؛ لم أقرأ محادثاتِ كلّ جلسةٍ كاملةً، ولا أحكمُ على جودة الكود الداخليّة (ذلك لمراجعي الطلبات). وأرقامُ «الأحداث» تقديرٌ لحجم النشاط لا للجودة.</p>
+</div>
+</body>
+</html>
