@@ -47,6 +47,17 @@ def render(tabs: dict) -> str:
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     project = sys.argv[1] if len(sys.argv) > 1 else "schoolos"
+    import hashlib
+
     tabs = json.loads((ROOT / "projects" / project / "tabs.json").read_text(encoding="utf-8"))
-    (ROOT / "docs" / "tab_charters.md").write_text(render(tabs), encoding="utf-8")
+    target = ROOT / "docs" / "tab_charters.md"
+    sidecar = ROOT / "docs" / ".tab_charters.sha"
+    # حارسٌ: تعديلٌ يدويٌّ على الملفّ المولَّد كان يضيع صامتاً عند إعادة التوليد (ضاعت بنودُ STOP وبوّابة المنطق وD-88م — 2026-10-02)
+    if target.exists() and sidecar.exists() and "--force" not in sys.argv:
+        on_disk = hashlib.sha256(target.read_bytes()).hexdigest()
+        if on_disk != sidecar.read_text().strip():
+            sys.exit("docs/tab_charters.md عُدِّل يدويّاً منذ آخر توليد — أيُّ تعديلٍ يجب أن يكون في tabs.json (المصدر). انقل التعديلَ إليه ثمّ أعد التشغيل (أو --force لتجاهل الحارس).")
+    text = render(tabs)
+    target.write_text(text, encoding="utf-8")
+    sidecar.write_text(hashlib.sha256(target.read_bytes()).hexdigest())
     print("docs/tab_charters.md ✔")
