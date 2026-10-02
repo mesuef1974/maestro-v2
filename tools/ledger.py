@@ -227,6 +227,37 @@ def _git(args: list[str], repo: str | None = None) -> str:
     return p.stdout.strip()
 
 
+# اختباراتُ الحراسة الأمنيّة: لا يُعفى إقرارُ تعديلها (D-155م) — قائمةٌ ثابتةٌ تُراجَع مع 0105؛ محافظةٌ عمداً: أيُّ مطابقةٍ تُعرض على المالك
+GUARD_TEST_FILES = {
+    "test_every_route_is_guarded.py", "test_security_gate.py", "test_deploy_safety_guards.py", "test_uploads_are_photo_cleaned.py",
+}
+GUARD_TEST_RE = re.compile(
+    r"(guard|security|permission|rbac|rls|erasure|audit|consent|encrypt|csp|auth|redirect|pdppl|personal_data|purge|health_record|"
+    r"export|immutab|deploy_safety|route|photo_cleaned|gate|conftest)", re.I)
+
+
+def is_guard_test(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return name in GUARD_TEST_FILES or bool(GUARD_TEST_RE.search(path))
+
+
+def check_tests_only(approved: str, new: str, repo: str | None = None) -> list[str]:
+    """«إصلاحُ اختبارٍ لفشل CI» (D-155م): الفرقُ عن المعتمَد في tests/ وحدَها وليس فيه اختبارُ حراسةٍ أمنيّة؛ والإيداعُ يتلو المعتمَد."""
+    cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", approved, new], cwd=cwd, capture_output=True).returncode != 0:
+        raise LedgerError("الإيداعُ الجديد لا يتلو الرأسَ المعتمَد — لا يُعفى")
+    changed = [f for f in _git(["diff", "--name-only", approved, new], repo).split("\n") if f]
+    if not changed:
+        raise LedgerError("لا فرقَ عن الرأس المعتمَد — لا حاجةَ لاستثناء")
+    outside = [f for f in changed if not f.startswith("tests/")]
+    if outside:
+        raise LedgerError(f"ملفّاتٌ خارج tests/: {outside[:5]}")
+    guards = [f for f in changed if is_guard_test(f)]
+    if guards:
+        raise LedgerError(f"اختباراتُ حراسةٍ أمنيّةٍ تُعرض على المالك: {guards[:5]}")
+    return changed
+
+
 def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[str]:
     """يتحقّق آلياً أنّ الإيداعَ الجديد «دمجُ main فقط» (D-154م): لا كودَ من الجلسة بعد الرأس المعتمَد.
 
@@ -271,6 +302,9 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     if kind == "main-merge":
         check_main_merge(item["approved_head"], new_head, repo)
         reason = f"دمجُ main فقط (تحقّق آليّ) — {reason}"
+    elif kind == "tests-only":
+        check_tests_only(item["approved_head"], new_head, repo)
+        reason = f"إصلاحُ اختباراتٍ فقط بلا حراسةٍ أمنيّة (تحقّق آليّ) — {reason}"
     elif kind == "docs":
         if changed is None:
             changed = _git_read(["git", "diff", "--name-only", item["approved_head"], new_head]).split()
@@ -278,7 +312,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge")
+        raise LedgerError("--kind: docs أو main-merge أو tests-only")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -358,7 +392,7 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only"])
     ls = sub.add_parser("list"); ls.add_argument("--state")
     sh = sub.add_parser("show"); sh.add_argument("id")
     tg = sub.add_parser("tag", help="يكتب خطورةَ البطاقة ومجالها من مسارات عملها")
