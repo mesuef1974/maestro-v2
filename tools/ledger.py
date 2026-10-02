@@ -219,10 +219,47 @@ def raise_priority(item_id: str, priority: str, reason: str, by: str, path=None)
     append_event("note", item_id, {"text": check_text("note", f"رفعُ الأولويّة {item.get('priority')}→{priority} بتسجيل {by}: {reason}")}, path)
 
 
+def _git(args: list[str], repo: str | None = None) -> str:
+    repo = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    p = subprocess.run(["git", *args], capture_output=True, encoding="utf-8", errors="replace", check=False, cwd=repo)
+    if p.returncode != 0:
+        raise LedgerError(f"فشل git {' '.join(args[:3])}: {p.stderr.strip()[:160]}")
+    return p.stdout.strip()
+
+
+def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[str]:
+    """يتحقّق آلياً أنّ الإيداعَ الجديد «دمجُ main فقط» (D-154م): لا كودَ من الجلسة بعد الرأس المعتمَد.
+
+    الشروط: (١) الإيداعُ دمجٌ بأبوين، أوّلُهما الرأسُ المعتمَد أو تالٍ له؛ (٢) كلُّ ملفٍّ تغيّر بين المعتمَد والجديد
+    **مطابقٌ بمحتواه** لما في أبيه الثاني (جهةِ main) — فلا شيءَ من عمل الجلسة اختلط؛ ويرفض غيرَ ذلك. يعيد قائمةَ الملفّات المغيَّرة."""
+    parents = _git(["rev-list", "--parents", "-n", "1", new], repo).split()[1:]
+    if len(parents) != 2:
+        raise LedgerError(f"ليس دمجاً بأبوين ({len(parents)}): لا يُعفى إلا «دمجُ main فقط»")
+    first, second = parents
+    if subprocess.run(["git", "merge-base", "--is-ancestor", approved, first], cwd=repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp"),
+                      capture_output=True).returncode != 0:
+        raise LedgerError("الأبُ الأوّل ليس الرأسَ المعتمَد أو تالياً له — فيه إيداعاتٌ لا نعرفها")
+    changed = _git(["diff", "--name-only", approved, new], repo).split("\n")
+    changed = [f for f in changed if f]
+    bad = []
+    for f in changed:
+        ours = subprocess.run(["git", "rev-parse", "-q", "--verify", f"{new}:{f}"], capture_output=True, encoding="utf-8",
+                              cwd=repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")).stdout.strip()
+        theirs = subprocess.run(["git", "rev-parse", "-q", "--verify", f"{second}:{f}"], capture_output=True, encoding="utf-8",
+                                cwd=repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")).stdout.strip()
+        if ours != theirs:
+            bad.append(f)
+    if bad:
+        raise LedgerError(f"ملفّاتٌ تختلف عن جهة main (عملُ جلسةٍ مختلط): {bad[:5]}")
+    if not changed:
+        raise LedgerError("لا فرقَ عن الرأس المعتمَد — لا حاجةَ لاستثناء")
+    return changed
+
+
 WAIVER_BY = {"0501"}
 
 
-def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None) -> None:
+def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None) -> None:
     """استثناءٌ صريحٌ مسجَّلٌ لا ضمنيّ: تعديلٌ تافهٌ (وثائق أو .md) بعد الاعتماد بتوقيع 0501؛ لا كودَ ولا صلاحيّاتٍ ولا هجرات."""
     if by not in WAIVER_BY:
         raise LedgerError(f"الاستثناءُ لـ{sorted(WAIVER_BY)} وحدَها")
@@ -231,11 +268,17 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     item = reduce_state(load_events(path)).get(item_id)
     if not item or not item.get("approved_head"):
         raise LedgerError("لا اعتمادَ مربوطاً برأسٍ لهذه البطاقة")
-    if changed is None:
-        changed = _git_read(["git", "diff", "--name-only", item["approved_head"], new_head]).split()
-    bad = [f for f in changed if not (f.startswith("docs/") or f.endswith(".md"))]
-    if not changed or bad:
-        raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
+    if kind == "main-merge":
+        check_main_merge(item["approved_head"], new_head, repo)
+        reason = f"دمجُ main فقط (تحقّق آليّ) — {reason}"
+    elif kind == "docs":
+        if changed is None:
+            changed = _git_read(["git", "diff", "--name-only", item["approved_head"], new_head]).split()
+        bad = [f for f in changed if not (f.startswith("docs/") or f.endswith(".md"))]
+        if not changed or bad:
+            raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
+    else:
+        raise LedgerError("--kind: docs أو main-merge")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -315,7 +358,7 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True)
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge"])
     ls = sub.add_parser("list"); ls.add_argument("--state")
     sh = sub.add_parser("show"); sh.add_argument("id")
     tg = sub.add_parser("tag", help="يكتب خطورةَ البطاقة ومجالها من مسارات عملها")
@@ -335,7 +378,7 @@ def main() -> None:
         elif args.cmd == "park":
             park(args.id, args.decision, args.reason); print("ok")
         elif args.cmd == "waive-head":
-            waive_head(args.id, args.head, args.by, args.reason); print("ok")
+            waive_head(args.id, args.head, args.by, args.reason, kind=args.kind); print("ok")
         elif args.cmd == "tag":
             head, pr = "", None
             if args.branch:

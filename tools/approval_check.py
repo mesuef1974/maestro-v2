@@ -59,6 +59,9 @@ def card_evidence(card: str, pr_head: str | None = None) -> list[tuple[str, str]
     for a in d.get("approvals", []):
         ev.append((f"الدفتر: اعتمادٌ by={a.get('by')} via={a.get('via', '')} {a.get('ts', '')[:16]}", st))
     for n in d.get("notes", []):
+        txt = str(n.get("note", n.get("text", "")))
+        if txt.startswith("استثناءُ رأس"):
+            ev.append((f"الدفتر: تنازلٌ مسجَّل {n.get('ts', '')[:16]}: {txt[:110]}", st))
         if "اعتمد" in str(n.get("note", n.get("text", ""))):
             ev.append((f"الدفتر: ملاحظةٌ {n.get('ts', '')[:16]}: {str(n.get('note', n.get('text', '')))[:100]}", st))
     return ev
