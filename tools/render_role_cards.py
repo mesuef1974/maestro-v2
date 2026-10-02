@@ -40,9 +40,15 @@ def card(title: str, ch: dict, tab: dict | None) -> str:
             "## مداي ومصادري", *[f"- **{k}:** {v}" for k, v in ch["scope"].items()], "",
             "## مخرجاتي", *[f"- {o}" for o in ch["outputs"]], "",
             "## حدودي (ما لا أفعله)", ch["boundaries"], ""]
-    if tab:
-        out += ["## صلاحيّاتي وقدراتي", f"- **الصلاحيّات:** {tab['permissions']}",
-                "- **المهارات:** " + "، ".join(f"`{s}`" for s in tab["skills"]), ""]
+    shared = bool(tab) and len(tab["members"]) > 1  # تبويبٌ مشتركٌ بين عدّة جلساتٍ: صلاحيّاتُه ومهاراتُه ليست لكلّ عضو
+    perms = ch.get("permissions") or (None if shared else (tab or {}).get("permissions"))
+    skills = ch.get("skills") or (None if shared else (tab or {}).get("skills"))
+    out += ["## صلاحيّاتي وقدراتي"]
+    perm_in_scope = any(k.startswith("الصلاحيّات") for k in ch["scope"])
+    out += [f"- **الصلاحيّات:** {perms}" if perms else ("- **الصلاحيّات:** انظر «مداي» و«حدودي» أعلاه." if perm_in_scope else "- **الصلاحيّات:** كما في «حدودي» أعلاه؛ والتبويبُ مشتركٌ بين عدّة جلساتٍ فلا تُنسب إليّ صلاحيّاتُه كلُّها.")]
+    in_scope = any(k.startswith("المهارات") for k in ch["scope"])
+    out += ["- **المهارات:** " + "، ".join(f"`{x}`" for x in skills) if skills else ("- **المهارات:** انظر «مداي» أعلاه." if in_scope else "- **المهارات:** غيرُ محدَّدةٍ بعدُ في ميثاقي؛ لا أستعمل مهاراتِ جلسةٍ أخرى في التبويب.")]
+    out += [""]
     if ch.get("goals_status"):
         out += ["## حالةُ الأهداف", ch["goals_status"], ""]
     out += [COMMON]
