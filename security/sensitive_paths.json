@@ -4,37 +4,92 @@
   "reader": "0501 يدويّاً عند إعداد نافذة المراجعة حتى تُبنى أداةٌ تقرؤه (بطاقة W-20261002-005)",
   "mandatory_review_when_diff_touches": {
     "authorization_identity": [
-      "core/permissions*.py", "core/capabilities.py", "core/capability_grants.py",
-      "core/admin_access.py", "core/developer_access.py", "core/auth_identity.py",
-      "core/mfa_session.py", "core/views_auth.py", "core/urls/auth.py",
-      "core/middleware*.py", "core/rls.py", "core/models/access.py",
-      "core/models/permission_audit.py", "core/management/commands/provision_rls_role.py",
-      "operations/absence_policy.py", "**/rbac*", "**/rls*", "**/policies*"
+      "core/permissions*.py",
+      "core/capabilities.py",
+      "core/capability_grants.py",
+      "core/admin_access.py",
+      "core/developer_access.py",
+      "core/auth_identity.py",
+      "core/mfa_session.py",
+      "core/views_auth.py",
+      "core/urls/auth.py",
+      "core/middleware*.py",
+      "core/rls.py",
+      "core/models/access.py",
+      "core/models/permission_audit.py",
+      "core/management/commands/provision_rls_role.py",
+      "operations/absence_policy.py",
+      "**/rbac*",
+      "**/rls*",
+      "**/policies*"
     ],
     "encryption_and_personal_data": [
-      "core/models/crypto.py", "clinic/encryption_audit.py", "core/parent_consent.py",
-      "governance/erasure_service.py", "api/views_erasure.py", "breach/**",
-      "**/management/commands/populate_phone_encryption*", "**/management/commands/classify_health_record_encryption*",
+      "core/models/crypto.py",
+      "clinic/encryption_audit.py",
+      "core/parent_consent.py",
+      "governance/erasure_service.py",
+      "api/views_erasure.py",
+      "breach/**",
+      "**/management/commands/populate_phone_encryption*",
+      "**/management/commands/classify_health_record_encryption*",
       "**/management/commands/purge_parent_consents*"
     ],
-    "external_surface_and_api": ["api/**", "**/api_urls.py", "**/rum_urls.py", "notifications/**", "parents/**"],
+    "external_surface_and_api": [
+      "api/**",
+      "**/api_urls.py",
+      "**/rum_urls.py",
+      "notifications/**",
+      "parents/**"
+    ],
     "file_io_and_rendering": [
-      "docs_viewer/**", "**/*upload*", "**/*import*", "**/*export*",
-      "core/pdf_utils.py", "core/excel_safety.py", "core/export_utils.py", "core/exports/**",
-      "core/ministry_import.py", "core/initial_passwords.py", "core/templatetags/ui.py"
+      "docs_viewer/**",
+      "**/*upload*",
+      "**/*import*",
+      "**/*export*",
+      "core/pdf_utils.py",
+      "core/excel_safety.py",
+      "core/export_utils.py",
+      "core/exports/**",
+      "core/ministry_import.py",
+      "core/initial_passwords.py",
+      "core/templatetags/ui.py"
     ],
     "production_config_and_deploy": [
-      "shschool/settings/**", "**/csp*", "Dockerfile", "docker-compose*.yml", "nginx/**",
-      ".env.railway.example", "DEPLOYMENT-RAILWAY.md", ".github/workflows/**",
-      "scripts/deploy*", "scripts/railway-*.sh", ".pre-commit-config.yaml", ".dockerignore"
+      "shschool/settings/**",
+      "**/csp*",
+      "Dockerfile",
+      "docker-compose*.yml",
+      "nginx/**",
+      ".env.railway.example",
+      "DEPLOYMENT-RAILWAY.md",
+      ".github/workflows/**",
+      "scripts/deploy*",
+      "scripts/railway-*.sh",
+      ".pre-commit-config.yaml",
+      ".dockerignore"
     ],
-    "automation": [".claude/hooks/**", "scripts/auto_merge_gate.py", "scripts/check_personal_data.py"],
-    "security_tables_migrations": ["**/migrations/*: جداولُ الصلاحيّات والموافقة والمحو والخرق"]
+    "automation": [
+      ".claude/hooks/**",
+      "scripts/auto_merge_gate.py",
+      "scripts/check_personal_data.py",
+      "scripts/ci_needs_gate.py",
+      "scripts/ci_docs_only.py",
+      "tests/test_ci_gate_needs.py"
+    ],
+    "security_tables_migrations": [
+      "**/migrations/*: جداولُ الصلاحيّات والموافقة والمحو والخرق"
+    ]
   },
   "mandatory_review_when_diff_content_matches": {
     "note": "فحصٌ بمحتوى الفرق (grep على الأسطر المضافة) لا بمسارٍ فقط — لا يُقرأ بصيغة glob",
-    "redirects": ["redirect\\(request\\.(GET|POST)", "get_full_path\\(", "[?&]next="],
-    "new_external_input_endpoints": ["سطرٌ مضافٌ يحوي path( أو re_path( في **/urls*.py ومنها core/urls/*"]
+    "redirects": [
+      "redirect\\(request\\.(GET|POST)",
+      "get_full_path\\(",
+      "[?&]next="
+    ],
+    "new_external_input_endpoints": [
+      "سطرٌ مضافٌ يحوي path( أو re_path( في **/urls*.py ومنها core/urls/*"
+    ]
   },
   "retired_patterns": {
     "railway*.toml": "لا يطابق شيئاً في المستودع (لا ملفَّ toml لـRailway في الجذر)؛ استُبدل بقائمة production_config_and_deploy (0105 + تحقّق المايسترو)"
