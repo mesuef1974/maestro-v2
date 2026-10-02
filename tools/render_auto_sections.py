@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """يولّد الأقسامَ [آلي] من لوحة الحالة (2 التدفّق، 3 الحِمل) إلى stdout — لا يكتب أيَّ ملفّ (ألصِقها في board_state.md).
 
-    python render_auto_sections.py [--no-fetch]
+    python render_auto_sections.py [--no-fetch] [--write]
+
+--write: يستبدل القسمين 2 و3 داخل board_state.md نفسِه (ويُبقي الأقسامَ اليدويّةَ كما هي) فلا تبقى اللوحةُ «الحيّةُ» قديمة.
 """
 
 from __future__ import annotations
@@ -24,7 +26,34 @@ def tool(script: str, *extra: str) -> dict:
 
 
 def main() -> None:
-    sys.stdout.reconfigure(encoding="utf-8")  # طرفيّةُ ويندوز (cp1256) تُسقط الطباعةَ عند العربيّة وبعض الرموز
+    if "--write" in sys.argv:
+        write_board()
+        return
+    render()
+
+
+def write_board() -> None:
+    import contextlib
+    import io
+    import re
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        render()
+    board = HERE.parent / "board_state.md"
+    text = board.read_text(encoding="utf-8")
+    new = buf.getvalue().rstrip("\n") + "\n\n"
+    out, n = re.subn(r"## 2\) التدفّق.*?(?=## 4\))", lambda _m: new, text, count=1, flags=re.S)
+    if n != 1:
+        sys.exit("لم أجد القسمين 2 و3 في board_state.md — لم أكتب شيئاً")
+    board.write_text(out, encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+    print("board_state.md ✔ (القسمان 2 و3 مُحدَّثان)")
+
+
+def render() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")  # طرفيّةُ ويندوز (cp1256) تُسقط الطباعةَ عند العربيّة وبعض الرموز
     flow = tool("flow_metrics.py", "--days", "3")
     load = tool("session_load_v2.py", *(["--no-fetch"] if "--no-fetch" in sys.argv else []))
     c = flow["cycle_h"]
