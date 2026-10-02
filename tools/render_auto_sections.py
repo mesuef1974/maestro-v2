@@ -49,6 +49,9 @@ def write_board() -> None:
     board.write_text(out, encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
     print("board_state.md ✔ (القسمان 2 و3 مُحدَّثان)")
+    import render_owner_orders as ro  # owner_orders_auto.md يتجدّد مع اللوحة: تغذّي مراجعةَ 0204 بعد دمج 0202 (D-112م)
+
+    ro.main()
 
 
 def args_repo() -> str:
