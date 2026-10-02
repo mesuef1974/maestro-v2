@@ -211,6 +211,7 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
     try:
         alerts.extend(approved_stall_alerts())
         alerts.extend(p0_captured_alerts())
+        alerts.extend(pr_red_alerts())
         alerts.extend(deposit_alerts(project))
         alerts.extend(orphan_alerts(project))
     except Exception as exc:  # noqa: BLE001 — المراقبُ لا يسقط بسبب فحصٍ فرعيّ
@@ -285,6 +286,20 @@ def deposit_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp
         alert("unreported_deposit", "info", f"{r['session']}: {r['commits']} إيداعاً ({r['label']}) منذ {r['age_h']} س — {r['latest'][:60]}", "وجّه الجلسةَ لتسليم «جاهزٌ للمعاينة» أو افتح طلباً")
         for r in data["rows"] if r["stale_no_pr"] and r["named"]
     ]
+
+
+def pr_red_alerts(with_log: bool = True) -> list[dict]:
+    """أحمرٌ حقيقيٌّ في الطلبات المفتوحة بتفاصيله (الفحصُ الفاشل وسببُه والبطاقةُ والجلسةُ المنفِّذة) — للمايسترو فوراً (طلبُ المالك 10-02)."""
+    sys.path.insert(0, str(HERE))
+    import pr_red
+
+    out = []
+    for pr in pr_red.open_prs():
+        rep = pr_red.report_for(pr, with_log=with_log)
+        if rep:
+            out.append(alert("pr_red", "high", pr_red.render(rep),
+                             f"أبلغ المنفِّذة ({rep['session'] or 'غيرَ مُسنَدة'}) بالفحص الفاشل وسببه؛ لا تُدخل الطلبَ الطابور وهو أحمر"))
+    return out
 
 
 P0_STALL_MINUTES = 60.0  # مبدئيّ (قرار 0101، يُضبط بالقياس)

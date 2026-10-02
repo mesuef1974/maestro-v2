@@ -32,20 +32,22 @@ APPROVAL = re.compile(r"اعتُمد من المالك|اعتمد من الما�
 EXEMPT = re.compile(r"مزامنةُ خارطةٍ")
 NO_APPROVAL_MIN, GREEN_WAIT_MIN, PUSHED_NO_PR_MIN, REPEAT_MIN = 10, 30, 15, 60
 RED = {"FAILURE", "CANCELLED", "TIMED_OUT", "ERROR", "STARTUP_FAILURE", "ACTION_REQUIRED"}
-AR = {"green": "أخضر", "red": "أحمر", "pending": "قيدَ التشغيل"}
+AR = {"green": "أخضر", "red": "أحمر", "pending": "قيدَ التشغيل", "cancelled": "ملغى بلا بديل"}
 
 
 def check_state(rollup: list[dict] | None) -> str:
-    """أخضر / أحمر / معلّق من statusCheckRollup (CheckRun وStatusContext)."""
-    pending = False
-    for c in rollup or []:
-        outcome = (c.get("conclusion") or c.get("state") or "").upper()
-        status = (c.get("status") or "").upper()
-        if outcome in RED:
-            return "red"
-        if outcome in ("PENDING", "EXPECTED") or (not outcome and status != "COMPLETED"):
-            pending = True
-    return "pending" if pending else "green"
+    """أخضر / أحمر (فشلٌ حقيقيّ فقط) / ملغى (بلا بديلٍ أحدث) / معلّق من statusCheckRollup.
+
+    الملغى الذي حلّ محلَّه تشغيلٌ أحدثُ لا يُحسب (pr_red.classify)؛ فلا يُقرأ إلغاءُ التزامنِ أحمرَ كاذباً.
+    """
+    import pr_red
+
+    cls = pr_red.classify(rollup)
+    if cls["failed"]:
+        return "red"
+    if cls["pending"]:
+        return "pending"
+    return "cancelled" if cls["cancelled"] else "green"
 
 
 def normalize(pr: dict) -> dict:
