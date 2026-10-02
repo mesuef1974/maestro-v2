@@ -60,6 +60,22 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
                 problems.append(f"«{member}» في تبويبَين: {seen[member]} و{tab['id']}")
             seen[member] = tab["id"]
             problems += name_problems(member, tab.get("number", ""), tabs.get("session_policy", {}).get("serial", {}))
+    # تبويبٌ فيه أكثرُ من جلسةٍ ثابتة: لا ترث جلسةٌ صلاحيّاتِه ومهاراتِه — يلزم تصريحٌ في ميثاقها نفسِه
+    # (خللُ ليلة 10-01/02: وَرِثت 0101..0105 «لا دفع» ومهاراتِ المايسترو من التبويب 01).
+    charters = tabs.get("session_policy", {}).get("charters", {})
+    for tab in tabs["tabs"]:
+        fixed = [m for m in tab.get("members", []) if m in core]
+        if len(fixed) < 2:
+            continue
+        for member in fixed:
+            ch = charters.get(member)
+            if ch is None:
+                problems.append(f"«{member}» في تبويبٍ مشترَك ({tab['id']}) بلا ميثاقٍ يصرّح بصلاحيّاتها ومهاراتها")
+                continue
+            # القالبُ (render_role_cards) لا يورّث الصلاحيّاتِ من تبويبٍ مشترَك بعد إصلاح 0102؛ فيكفي أن يحوي
+            # الميثاقُ حدودَه صراحةً كي لا تُنسب إليها حدودُ غيرها.
+            if not ch.get("boundaries"):
+                problems.append(f"«{member}»: التبويبُ {tab['id']} مشترَك ولا «حدودَ» صريحةً في ميثاقها")
     for title in core:
         if title not in seen:
             problems.append(f"جلسةُ النواة «{title}» غيرُ مسجَّلةٍ في أيّ تبويب")
