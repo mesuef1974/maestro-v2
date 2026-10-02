@@ -61,7 +61,10 @@ def confirmations_evidence(key: str) -> list[str]:
     f = ROOT / "owner_confirmations.md"
     if not f.exists():
         return []
-    return [f"owner_confirmations.md: {ln.strip()[:120]}" for ln in f.read_text(encoding="utf-8").splitlines() if key in ln]
+    return [
+        f"owner_confirmations.md: {ln.strip()[:120]}" + (" ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else "")
+        for ln in f.read_text(encoding="utf-8").splitlines() if key in ln
+    ]
 
 
 def main() -> int:
