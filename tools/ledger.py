@@ -95,6 +95,8 @@ def reduce_state(events: list[dict]) -> dict[str, dict]:
         if item is None:
             continue
         if ev["kind"] == "state":
+            if data.get("head"):
+                item["approved_head"] = data["head"]  # رأسُ الإيداع الذي رآه المالكُ وقتَ الاعتماد (v2.23)
             item["state"] = data["state"]
             item["state_ts"] = ev["ts"]
             item["state_by"] = data.get("by", "—")
@@ -165,17 +167,51 @@ def check_transition(current: str, state: str, note: str | None) -> None:
         raise LedgerError("الاعتمادُ يلزمه --note يسمّي من اعتمد وأين ومتى (سطرُ الاعتماد الرسميّ v2.12)")
 
 
-def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None) -> None:
+HEAD_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def check_head(state: str, head: str | None) -> str | None:
+    """الاعتمادُ يُربَط برأس الإيداع الذي عاينه المالكُ؛ فإيداعٌ لاحقٌ لا يرث اعتماداً لم يره (v2.23، D-139م)."""
+    if state != "approved":
+        return None
+    if not head or not HEAD_RE.match(head):
+        raise LedgerError("الاعتمادُ يلزمه --head <sha8> رأسُ الإيداع الذي عاينه المالكُ (git rev-parse --short=8 <الفرع>)")
+    return head[:8]
+
+
+def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
+    head = check_head(state, head)
     items = reduce_state(load_events(path))
     if item_id not in items:
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
     check_transition(items[item_id]["state"], state, note)
     check_recorder(state, by)
-    append_event("state", item_id, {"state": state, "by": by or "غير مُعلَن"}, path)
+    append_event("state", item_id, {"state": state, "by": by or "غير مُعلَن", **({"head": head} if head else {})}, path)
     if note:
         append_event("note", item_id, {"text": check_text("note", note)}, path)
+
+
+WAIVER_BY = {"0501"}
+
+
+def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None) -> None:
+    """استثناءٌ صريحٌ مسجَّلٌ لا ضمنيّ: تعديلٌ تافهٌ (وثائق أو .md) بعد الاعتماد بتوقيع 0501؛ لا كودَ ولا صلاحيّاتٍ ولا هجرات."""
+    if by not in WAIVER_BY:
+        raise LedgerError(f"الاستثناءُ لـ{sorted(WAIVER_BY)} وحدَها")
+    if not HEAD_RE.match(new_head):
+        raise LedgerError("--head غيرُ صالح")
+    item = reduce_state(load_events(path)).get(item_id)
+    if not item or not item.get("approved_head"):
+        raise LedgerError("لا اعتمادَ مربوطاً برأسٍ لهذه البطاقة")
+    if changed is None:
+        changed = _git_read(["git", "diff", "--name-only", item["approved_head"], new_head]).split()
+    bad = [f for f in changed if not (f.startswith("docs/") or f.endswith(".md"))]
+    if not changed or bad:
+        raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
+    append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
+    append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
 
 def wsjf(item: dict) -> float:
@@ -247,7 +283,9 @@ def main() -> None:
     a.add_argument("--problem", required=True); a.add_argument("--impact", required=True); a.add_argument("--accept", required=True)
     a.add_argument("--files", nargs="*", default=[]); a.add_argument("--urgent", action="store_true")
     a.add_argument("--start", required=True, help="زمنُ البدء الفعليّ ISO بتوقيت الدوحة"); a.add_argument("--priority", required=True, choices=PRIORITIES)
-    m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة")
+    m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)")
+    wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
     sh = sub.add_parser("show"); sh.add_argument("id")
     tg = sub.add_parser("tag", help="يكتب خطورةَ البطاقة ومجالها من مسارات عملها")
@@ -261,7 +299,9 @@ def main() -> None:
             print(add_item(args.source, args.type, args.problem, args.impact, args.accept, args.files, args.urgent,
                            start=args.start, priority=args.priority))
         elif args.cmd == "move":
-            move(args.id, args.state, note=args.note, by=args.by); print("ok")
+            move(args.id, args.state, note=args.note, by=args.by, head=args.head); print("ok")
+        elif args.cmd == "waive-head":
+            waive_head(args.id, args.head, args.by, args.reason); print("ok")
         elif args.cmd == "tag":
             head, pr = "", None
             if args.branch:

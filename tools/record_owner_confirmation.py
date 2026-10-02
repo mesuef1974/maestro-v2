@@ -21,10 +21,10 @@ DOHA = timezone(timedelta(hours=3))
 SESSION = re.compile(r"^0[1-8]\d\d$|^0[1-8]\d\d ·")
 
 
-def row(session: str, target: str, quote: str, question: str, now: datetime | None = None) -> str:
+def row(session: str, target: str, quote: str, question: str, now: datetime | None = None, head: str = "") -> str:
     now = now or datetime.now(DOHA)
     esc = lambda t: t.replace("|", "/").replace("\n", " ").strip()  # noqa: E731
-    return f"| {now:%Y-%m-%d %H:%M} | {esc(session)} (إفادةُ جلسة) | {esc(question) or 'أمرٌ مباشر'} | «{esc(quote)}» | {esc(target)} |\n"
+    return f"| {now:%Y-%m-%d %H:%M} | {esc(session)} (إفادةُ جلسة) | {esc(question) or 'أمرٌ مباشر'} | «{esc(quote)}» | {esc(target)}{' @' + head[:8] if head else ''} |\n"
 
 
 def main() -> int:
@@ -33,13 +33,16 @@ def main() -> int:
     ap.add_argument("--target", required=True, help="رمزُ البطاقة أو رقمُ الطلب (مثل W-20261002-013 أو #772)")
     ap.add_argument("--quote", required=True, help="نصُّ المالك الحرفيّ كما كتبه")
     ap.add_argument("--question", default="")
+    ap.add_argument("--head", default="", help="رأسُ الإيداع الذي عاينه المالك (sha8) — يربط الاعتمادَ به (v2.23)")
     a = ap.parse_args()
     if len(a.quote.strip()) < 2:
         sys.exit("النصُّ الحرفيُّ للمالك مطلوب (لا وصفٌ ولا فراغ)")
+    if not re.fullmatch(r"[0-9a-f]{7,40}", a.head or ""):
+        sys.exit("--head إلزاميّ: رأسُ الإيداع المعاين (git rev-parse --short=8 <الفرع>)")
     if not SESSION.match(a.session):
         sys.exit("--session رقمُ جلسةٍ من أربع خانات (مثل 0408)")
     with FILE.open("a", encoding="utf-8") as f:
-        f.write(row(a.session, a.target, a.quote, a.question))
+        f.write(row(a.session, a.target, a.quote, a.question, head=a.head))
     print("سُجّل في owner_confirmations.md — يتحقّق منه approval_check.py")
     return 0
 
