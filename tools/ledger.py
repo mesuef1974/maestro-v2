@@ -206,6 +206,19 @@ def park(item_id: str, decision: str, reason: str, path=None) -> None:
     append_event("update", item_id, {"parked": {"decision": decision, "reason": check_text("reason", reason)}}, path)
 
 
+def raise_priority(item_id: str, priority: str, reason: str, by: str, path=None) -> None:
+    """رفعُ الأولويّة فقط (P3→P2…) بحدثِ update وملاحظةٍ تسمّي السبب والقرار؛ لا خفضَ بهذا الأمر (الخفضُ قرارُ المايسترو بتسجيلٍ آخر)."""
+    if priority not in PRIORITIES:
+        raise LedgerError(f"الأولويّةُ واحدةٌ من {', '.join(PRIORITIES)}")
+    item = reduce_state(load_events(path)).get(item_id)
+    if not item:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    if PRIORITIES.index(priority) >= PRIORITIES.index(item.get("priority", "P3")):
+        raise LedgerError(f"ليس رفعاً: {item.get('priority')} ← {priority} (هذا الأمرُ للرفع فقط)")
+    append_event("update", item_id, {"priority": priority}, path)
+    append_event("note", item_id, {"text": check_text("note", f"رفعُ الأولويّة {item.get('priority')}→{priority} بتسجيل {by}: {reason}")}, path)
+
+
 WAIVER_BY = {"0501"}
 
 
@@ -299,6 +312,8 @@ def main() -> None:
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)")
     pk = sub.add_parser("park", help="وسمُ بطاقةٍ مركونةٍ بقرارٍ مسجَّل")
     pk.add_argument("id"); pk.add_argument("--decision", required=True); pk.add_argument("--reason", required=True)
+    rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
+    rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
     wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
@@ -315,6 +330,8 @@ def main() -> None:
                            start=args.start, priority=args.priority))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head); print("ok")
+        elif args.cmd == "raise-priority":
+            raise_priority(args.id, args.priority, args.reason, args.by); print("ok")
         elif args.cmd == "park":
             park(args.id, args.decision, args.reason); print("ok")
         elif args.cmd == "waive-head":

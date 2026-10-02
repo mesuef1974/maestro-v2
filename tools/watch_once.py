@@ -210,6 +210,7 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
     alerts.extend(pr_watch_alerts())
     try:
         alerts.extend(approved_stall_alerts())
+        alerts.extend(p0_captured_alerts())
         alerts.extend(deposit_alerts(project))
         alerts.extend(orphan_alerts(project))
     except Exception as exc:  # noqa: BLE001 — المراقبُ لا يسقط بسبب فحصٍ فرعيّ
@@ -284,6 +285,31 @@ def deposit_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp
         alert("unreported_deposit", "info", f"{r['session']}: {r['commits']} إيداعاً ({r['label']}) منذ {r['age_h']} س — {r['latest'][:60]}", "وجّه الجلسةَ لتسليم «جاهزٌ للمعاينة» أو افتح طلباً")
         for r in data["rows"] if r["stale_no_pr"] and r["named"]
     ]
+
+
+P0_STALL_MINUTES = 60.0  # مبدئيّ (قرار 0101، يُضبط بالقياس)
+
+
+def p0_captured_alerts(minutes: float = P0_STALL_MINUTES, now: datetime | None = None) -> list[dict]:
+    """بطاقةُ P0 ما زالت captured/routed ولم تتحرّك خلال N دقيقة — قبل أن تصير late فيُنبَّه المايسترو (لا المالكُ) فوراً.
+
+    «لم تتحرّك» = منذ آخر تغيّرِ حالةٍ (state_ts) وإلّا منذ إنشائها (D-66م: لا مُطلِقَ زمنيّاً عند 0204/0203).
+    """
+    sys.path.insert(0, str(HERE))
+    import ledger as lg
+
+    now = now or datetime.now(DOHA)
+    out = []
+    for item in lg.reduce_state(lg.load_events(None)).values():
+        if item.get("priority") != "P0" or item.get("state") not in ("captured", "routed"):
+            continue
+        since = datetime.fromisoformat(item.get("state_ts") or item["created"])
+        age_min = (now - since).total_seconds() / 60
+        if age_min >= minutes:
+            out.append(alert("p0_captured", "high",
+                             f"{item['id']} P0 ({item['state']}) لم تتحرّك منذ {age_min:.0f} د — {str(item.get('problem', ''))[:60]}",
+                             "للمايسترو: أسندها الآن أو أبلغ 0204؛ P0 لا تنتظر فحصاً يدويّاً"))
+    return out
 
 
 def pr_states_for_card(card: str, repo: str = "D:/shschool_mvp") -> list[dict] | None:
