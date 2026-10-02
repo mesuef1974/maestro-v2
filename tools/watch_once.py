@@ -209,6 +209,7 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
     alerts.extend(late_start_alerts())
     alerts.extend(pr_watch_alerts())
     try:
+        alerts.extend(approved_stall_alerts())
         alerts.extend(deposit_alerts(project))
         alerts.extend(orphan_alerts(project))
     except Exception as exc:  # noqa: BLE001 — المراقبُ لا يسقط بسبب فحصٍ فرعيّ
@@ -283,6 +284,24 @@ def deposit_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp
         alert("unreported_deposit", "info", f"{r['session']}: {r['commits']} إيداعاً ({r['label']}) منذ {r['age_h']} س — {r['latest'][:60]}", "وجّه الجلسةَ لتسليم «جاهزٌ للمعاينة» أو افتح طلباً")
         for r in data["rows"] if r["stale_no_pr"] and r["named"]
     ]
+
+
+def approved_stall_alerts(minutes: float = 45.0, now: datetime | None = None) -> list[dict]:
+    """بطاقاتٌ اعتُمدت ولم تُدفع بعد فوق العتبة — أطولُ تأخّرٍ يمكن التحكّم به (قياس 10-02: وسيط 1.8 س، أقصى 44 س بين approved وpushed)."""
+    sys.path.insert(0, str(HERE))
+    import ledger as lg
+
+    now = now or datetime.now(DOHA)
+    out = []
+    for item in lg.reduce_state(lg.load_events(None)).values():
+        if item.get("state") != "approved" or not item.get("state_ts"):
+            continue
+        age_min = (now - datetime.fromisoformat(item["state_ts"])).total_seconds() / 60
+        if age_min >= minutes:
+            out.append(alert("approved_not_pushed", "warn" if age_min >= 180 else "info",
+                             f"{item['id']} معتمَدةٌ منذ {age_min / 60:.1f} س ولم تُدفع — {str(item.get('problem', ''))[:60]}",
+                             "ذكّر الجلسةَ المنفِّذة بالدفع (بعد الاعتماد الدفعُ من الفلو) أو تحقّق من أنّها حيّة"))
+    return out
 
 
 def orphan_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp")) -> list[dict]:
