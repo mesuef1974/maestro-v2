@@ -193,6 +193,19 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         append_event("note", item_id, {"text": check_text("note", note)}, path)
 
 
+FALSE_ALARM_NOTE = "إنذارٌ كاذب"  # النصُّ الثابتُ عند إغلاق إنذارٍ كاذب (D-150م) — يقيسه intake_kpis
+
+
+def park(item_id: str, decision: str, reason: str, path=None) -> None:
+    """وسمُ «مركونٌ بقرار»: بطاقةٌ captured مؤجَّلةٌ بقرارٍ مسجَّل (لا خمولاً) — فلا تُحسب «راكدةً» في مؤشّرات 0204."""
+    items = reduce_state(load_events(path))
+    if item_id not in items:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    if not re.fullmatch(r"D-\d+م", decision):
+        raise LedgerError("--decision رقمُ قرارٍ من decisions.md مثل D-120م")
+    append_event("update", item_id, {"parked": {"decision": decision, "reason": check_text("reason", reason)}}, path)
+
+
 WAIVER_BY = {"0501"}
 
 
@@ -284,6 +297,8 @@ def main() -> None:
     a.add_argument("--files", nargs="*", default=[]); a.add_argument("--urgent", action="store_true")
     a.add_argument("--start", required=True, help="زمنُ البدء الفعليّ ISO بتوقيت الدوحة"); a.add_argument("--priority", required=True, choices=PRIORITIES)
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)")
+    pk = sub.add_parser("park", help="وسمُ بطاقةٍ مركونةٍ بقرارٍ مسجَّل")
+    pk.add_argument("id"); pk.add_argument("--decision", required=True); pk.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
     wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
@@ -300,6 +315,8 @@ def main() -> None:
                            start=args.start, priority=args.priority))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head); print("ok")
+        elif args.cmd == "park":
+            park(args.id, args.decision, args.reason); print("ok")
         elif args.cmd == "waive-head":
             waive_head(args.id, args.head, args.by, args.reason); print("ok")
         elif args.cmd == "tag":
