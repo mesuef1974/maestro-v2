@@ -233,7 +233,32 @@ GUARD_TEST_FILES = {
 }
 GUARD_TEST_RE = re.compile(
     r"(guard|security|permission|rbac|rls|erasure|audit|consent|encrypt|csp|auth|redirect|pdppl|personal_data|purge|health_record|"
-    r"export|immutab|deploy_safety|route|photo_cleaned|gate|conftest)", re.I)
+    r"export|immutab|deploy_safety|route|photo_cleaned|gate|conftest|"
+    # توسيعُ 0105 (10-02): حراسةٌ أمنيّةٌ لا يطابقها الاسمُ الأوّل — الأمنُ يصعّد ولا يخفّف
+    r"scope|tenant|jwt|csrf|cookie|password|lockout|mfa|secret|pii|privacy|sentry|ratelimit|runtime|settings|capabilit|"
+    r"developer|unrestricted|breach|injection|middleware|ci_|migration_linter)", re.I)
+
+ASSERT_LINE = re.compile(r"^\s*(assert\b|self\.assert\w*\(|with pytest\.raises|pytest\.raises\()")
+WEAKEN_LINE = re.compile(r"(pytest\.mark\.(skip|skipif|xfail)|\bskip\(|importorskip|@unittest\.skip|\bxfail\b)")
+
+
+def weakened_assertions(diff_text: str) -> list[str]:
+    """تعديلٌ داخل اختبارٍ عاديٍّ يُضعف تأكيداً: حذفُ assert أكثرَ مما أُضيف، أو إضافةُ skip/xfail (ملاحظةُ حدٍّ من 0105)."""
+    removed = added = 0
+    weak = []
+    for ln in diff_text.splitlines():
+        if ln.startswith("---") or ln.startswith("+++"):
+            continue
+        if ln.startswith("-") and ASSERT_LINE.match(ln[1:]):
+            removed += 1
+        elif ln.startswith("+"):
+            if ASSERT_LINE.match(ln[1:]):
+                added += 1
+            if WEAKEN_LINE.search(ln[1:]):
+                weak.append(ln[1:].strip()[:80])
+    if removed > added:
+        weak.append(f"حُذف {removed - added} تأكيدٌ بلا بديل")
+    return weak
 
 
 def is_guard_test(path: str) -> bool:
@@ -255,6 +280,9 @@ def check_tests_only(approved: str, new: str, repo: str | None = None) -> list[s
     guards = [f for f in changed if is_guard_test(f)]
     if guards:
         raise LedgerError(f"اختباراتُ حراسةٍ أمنيّةٍ تُعرض على المالك: {guards[:5]}")
+    weak = weakened_assertions(_git(["diff", "-U0", approved, new, "--", "tests/"], repo))
+    if weak:
+        raise LedgerError(f"تعديلٌ يُضعف تأكيداً (يُراجَع مع 0105): {weak[:3]}")
     return changed
 
 
