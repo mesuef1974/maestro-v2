@@ -31,3 +31,20 @@ class Gates(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRecorders(unittest.TestCase):
+    def test_duplicate_approval_is_rejected(self):
+        from ledger import ALREADY_APPROVED, LedgerError, check_transition
+        for cur in ALREADY_APPROVED:
+            with self.assertRaises(LedgerError):
+                check_transition(cur, "approved", "اعتمد المالك")
+
+    def test_only_allowed_sessions_record_states(self):
+        from ledger import LedgerError, check_recorder
+        check_recorder("approved", "0501")
+        check_recorder("merged", None)  # بلا --by: انتقالٌ لطيف
+        with self.assertRaises(LedgerError):
+            check_recorder("approved", "0408")
+        with self.assertRaises(LedgerError):
+            check_recorder("merged", "0404")

@@ -51,6 +51,10 @@ def write_board() -> None:
     print("board_state.md ✔ (القسمان 2 و3 مُحدَّثان)")
 
 
+def args_repo() -> str:
+    return "D:/shschool_mvp"
+
+
 def render() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # طرفيّةُ ويندوز (cp1256) تُسقط الطباعةَ عند العربيّة وبعض الرموز
@@ -75,6 +79,10 @@ def render() -> None:
         print(f"- أشجارٌ بلا اسم (أضِفها إلى session_names.json): {load['unnamed_trees']}")
     for w in load["warnings"]:
         print(f"- ⚠ {w}")
+    import deposits_feed as df  # إيداعاتُ الجلسات آليّاً: لا تُسأل الجلساتُ ولا المالكُ «هل أُبلغ المايسترو؟»
+
+    print()
+    print(df.render(df.collect(Path(args_repo()), "schoolos", False, 3.0)))
 
 
 if __name__ == "__main__":

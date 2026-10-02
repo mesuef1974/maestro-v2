@@ -97,6 +97,7 @@ def reduce_state(events: list[dict]) -> dict[str, dict]:
         if ev["kind"] == "state":
             item["state"] = data["state"]
             item["state_ts"] = ev["ts"]
+            item["state_by"] = data.get("by", "—")
         elif ev["kind"] == "update":
             item.update(data)
         elif ev["kind"] == "approval":
@@ -141,23 +142,38 @@ GATES = {
 }
 
 
+# من يحقّ له تسجيل الحالة (أمر المالك 2026-10-02: تداخلاتُ الأدوار بين الجلسات في الدفتر): `approved` لـ0501 (بعد المعاينة) أو 0101 (اعتمادٌ مباشرٌ
+# في محادثتها)؛ و`merged` و`published` لـ0601. بلا --by تُسجَّل «غيرُ مُعلَن» وتمرّ (انتقالٌ لطيف) ويحصيها `approval_check`؛ و--by غيرُ المأذون يُرفض.
+RECORDERS = {"approved": {"0501", "0101"}, "merged": {"0601", "0101"}, "published": {"0601", "0101"}}
+ALREADY_APPROVED = {"approved", "pushed", "merged", "published"}
+
+
+def check_recorder(state: str, by: str | None) -> None:
+    allowed = RECORDERS.get(state)
+    if allowed and by and by not in allowed:
+        raise LedgerError(f"«{by}» لا يسجّل الحالة «{state}»: المأذونُ لهم {sorted(allowed)} (تداخلُ أدوار — سجّل الطلبَ عند صاحب الدور)")
+
+
 def check_transition(current: str, state: str, note: str | None) -> None:
     """يرفض القفزَ فوق بوّابات الفلو: لا دفعَ بلا اعتماد، ولا دمجَ بلا دفع، ولا نشرَ بلا دمج، ولا اعتمادَ بلا ملاحظةٍ تسمّي من اعتمد وأين."""
     allowed = GATES.get(state)
     if allowed and current not in allowed:
         raise LedgerError(f"لا قفزَ فوق مراحل البطاقة: «{current}» ← «{state}» ممنوع؛ الحالةُ السابقةُ المطلوبة: {'، '.join(sorted(allowed))}")
+    if state == "approved" and current in ALREADY_APPROVED:
+        raise LedgerError(f"اعتمادٌ مكرَّر: البطاقةُ في «{current}» أصلاً — لا يُعاد تسجيلُ الاعتماد (أعد القراءةَ بـshow)")
     if state == "approved" and not note:
         raise LedgerError("الاعتمادُ يلزمه --note يسمّي من اعتمد وأين ومتى (سطرُ الاعتماد الرسميّ v2.12)")
 
 
-def move(item_id: str, state: str, path=None, note: str | None = None) -> None:
+def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
     items = reduce_state(load_events(path))
     if item_id not in items:
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
     check_transition(items[item_id]["state"], state, note)
-    append_event("state", item_id, {"state": state}, path)
+    check_recorder(state, by)
+    append_event("state", item_id, {"state": state, "by": by or "غير مُعلَن"}, path)
     if note:
         append_event("note", item_id, {"text": check_text("note", note)}, path)
 
@@ -231,7 +247,7 @@ def main() -> None:
     a.add_argument("--problem", required=True); a.add_argument("--impact", required=True); a.add_argument("--accept", required=True)
     a.add_argument("--files", nargs="*", default=[]); a.add_argument("--urgent", action="store_true")
     a.add_argument("--start", required=True, help="زمنُ البدء الفعليّ ISO بتوقيت الدوحة"); a.add_argument("--priority", required=True, choices=PRIORITIES)
-    m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note")
+    m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة")
     ls = sub.add_parser("list"); ls.add_argument("--state")
     sh = sub.add_parser("show"); sh.add_argument("id")
     tg = sub.add_parser("tag", help="يكتب خطورةَ البطاقة ومجالها من مسارات عملها")
@@ -245,7 +261,7 @@ def main() -> None:
             print(add_item(args.source, args.type, args.problem, args.impact, args.accept, args.files, args.urgent,
                            start=args.start, priority=args.priority))
         elif args.cmd == "move":
-            move(args.id, args.state, note=args.note); print("ok")
+            move(args.id, args.state, note=args.note, by=args.by); print("ok")
         elif args.cmd == "tag":
             head, pr = "", None
             if args.branch:

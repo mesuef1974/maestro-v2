@@ -209,6 +209,7 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
     alerts.extend(late_start_alerts())
     alerts.extend(pr_watch_alerts())
     try:
+        alerts.extend(deposit_alerts(project))
         alerts.extend(orphan_alerts(project))
     except Exception as exc:  # noqa: BLE001 — المراقبُ لا يسقط بسبب فحصٍ فرعيّ
         alerts.append(alert("watch_error", "warn", f"فشل فحصُ الأشجار: {exc.__class__.__name__}", "شغّل session_load_v2 يدويّاً"))
@@ -270,6 +271,18 @@ ORPHAN_ACTION = {
     "work_after_merge": "عملٌ جديدٌ فوق طلبٍ مدموج: اسأل صاحبها أيُدفع طلباً جديداً",
     "merged_dirty": "اندمج عملُها وبقيت ملفّاتٌ غيرُ مودَعة: تُراجَع قبل إزالة الشجرة",
 }
+
+
+def deposit_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp")) -> list[dict]:
+    """إيداعاتُ الجلسات المسمّاة التي لم تُسلَّم للمعاينة (بلا طلبٍ) فوق العتبة — يبلغ المايسترو آليّاً لا بسؤال الجلسات (أمر المالك 2026-10-02)."""
+    sys.path.insert(0, str(HERE))
+    import deposits_feed as df
+
+    data = df.collect(repo, project, False, 3.0)
+    return [
+        alert("unreported_deposit", "info", f"{r['session']}: {r['commits']} إيداعاً ({r['label']}) منذ {r['age_h']} س — {r['latest'][:60]}", "وجّه الجلسةَ لتسليم «جاهزٌ للمعاينة» أو افتح طلباً")
+        for r in data["rows"] if r["stale_no_pr"] and r["named"]
+    ]
 
 
 def orphan_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp")) -> list[dict]:
