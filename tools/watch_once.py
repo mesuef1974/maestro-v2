@@ -286,8 +286,23 @@ def deposit_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp
     ]
 
 
-def approved_stall_alerts(minutes: float = 45.0, now: datetime | None = None) -> list[dict]:
-    """بطاقاتٌ اعتُمدت ولم تُدفع بعد فوق العتبة — أطولُ تأخّرٍ يمكن التحكّم به (قياس 10-02: وسيط 1.8 س، أقصى 44 س بين approved وpushed)."""
+def pr_states_for_card(card: str, repo: str = "D:/shschool_mvp") -> list[dict] | None:
+    """طلباتُ الدمج التي تذكر البطاقةَ (عنواناً أو وصفاً) بحالتها الفعليّة من GitHub؛ None إن تعذّرت القراءة."""
+    p = subprocess.run(["gh", "pr", "list", "--state", "all", "--search", card, "--json", "number,state,title"],
+                       cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if p.returncode != 0:
+        return None
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        return None
+
+
+def approved_stall_alerts(minutes: float = 45.0, now: datetime | None = None, pr_lookup=pr_states_for_card) -> list[dict]:
+    """بطاقاتٌ اعتُمدت ولم تُدفع بعد فوق العتبة — تُقاطَع بحالة الطلب الفعليّة (10-02: ثلاثُ بطاقاتٍ «معتمَدة» كانت مدموجةً فتأخّر الدفتر لا الدفع).
+
+    مدموجٌ فعلاً ← تنبيهُ تأخّر تسجيل الدفتر (ledger_lag)؛ طلبٌ مفتوحٌ ← معلومةٌ لا تأخّر دفع؛ لا طلبَ ← approved_not_pushed.
+    """
     sys.path.insert(0, str(HERE))
     import ledger as lg
 
@@ -297,9 +312,21 @@ def approved_stall_alerts(minutes: float = 45.0, now: datetime | None = None) ->
         if item.get("state") != "approved" or not item.get("state_ts"):
             continue
         age_min = (now - datetime.fromisoformat(item["state_ts"])).total_seconds() / 60
-        if age_min >= minutes:
+        if age_min < minutes:
+            continue
+        prs = pr_lookup(item["id"]) or []
+        merged = [x for x in prs if x.get("state") == "MERGED"]
+        opened = [x for x in prs if x.get("state") == "OPEN"]
+        brief = str(item.get("problem", ""))[:60]
+        if merged:
+            out.append(alert("ledger_lag", "warn", f"{item['id']} «approved» في الدفتر منذ {age_min / 60:.1f} س لكنّ #{merged[0]['number']} مدموجٌ فعلاً",
+                             "سجّل merged/published في الدفتر (0601 أو 0101) — الدفتر متأخّرٌ لا الدفع"))
+        elif opened:
+            out.append(alert("approved_pr_open", "info", f"{item['id']} معتمَدةٌ منذ {age_min / 60:.1f} س وطلبُها #{opened[0]['number']} مفتوح — {brief}",
+                             "لا تأخّرَ دفع؛ انتظارُ الدمج/البوّابات"))
+        else:
             out.append(alert("approved_not_pushed", "warn" if age_min >= 180 else "info",
-                             f"{item['id']} معتمَدةٌ منذ {age_min / 60:.1f} س ولم تُدفع — {str(item.get('problem', ''))[:60]}",
+                             f"{item['id']} معتمَدةٌ منذ {age_min / 60:.1f} س ولا طلبَ دمجٍ لها — {brief}",
                              "ذكّر الجلسةَ المنفِّذة بالدفع (بعد الاعتماد الدفعُ من الفلو) أو تحقّق من أنّها حيّة"))
     return out
 
