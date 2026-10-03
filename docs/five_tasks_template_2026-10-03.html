@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>قالب المهامّ الخمس</title>
+<style>
+  :root { --bg:#fafaf7; --fg:#1f1f1f; --card:#fff; --line:#d9d6cc; --accent:#7a1f3d; --muted:#6b6b6b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#17171a; --fg:#ececec; --card:#212126; --line:#3a3a42; --accent:#e0a3b8; --muted:#a0a0a8; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.7 "Segoe UI", Tahoma, sans-serif; padding:16px; }
+  main { max-width:860px; margin:0 auto; }
+  h1 { color:var(--accent); font-size:1.5rem; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:16px; }
+  h2 { font-size:1.15rem; margin:0 0 8px; color:var(--accent); }
+  .row { display:grid; grid-template-columns:2rem 1fr 11rem; gap:8px; align-items:center; margin-bottom:8px; }
+  .row b { text-align:center; color:var(--muted); }
+  input, select { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; width:100%; box-sizing:border-box; }
+  .head { color:var(--muted); font-size:.85rem; }
+  button { font:inherit; padding:10px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; }
+  .tip { font-size:.9rem; color:var(--muted); }
+  #out { width:100%; min-height:9rem; margin-top:10px; font-family:inherit; }
+  @media (max-width:560px) { .row { grid-template-columns:1.6rem 1fr; } .row select { grid-column:2; } .head { display:none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>المهامّ الخمس لكلّ دور</h1>
+  <p class="lead">لكلّ دورٍ اكتب أهمَّ خمس مهامّ يقوم بها في يومه أو أسبوعه، بجملةٍ قصيرة، مرتَّبةً من الأهمّ. مثال للسكرتير: «تسجيل إجازة موظّف». لا يلزم إكمالُ الأدوار الثلاثة دفعةً واحدة.</p>
+  <div id="roles"></div>
+  <section>
+    <button type="button" id="make">اجمع النصَّ لإرساله</button>
+    <p class="tip">يُجمَع ما كتبتَه نصّاً تنسخه وتُرسله لـ0102 أو 0104. لا يُحفَظ شيءٌ ولا يُرسَل من هذه الصفحة.</p>
+    <textarea id="out" readonly placeholder="يظهر هنا النصّ المجمَّع"></textarea>
+  </section>
+</main>
+<script>
+(function () {
+  var roles = ["المدير", "السكرتير", "المعلّم"];
+  var freq = ["", "عدّة مرّات يوميّاً", "مرّةً يوميّاً", "أسبوعيّاً", "شهريّاً", "نادراً"];
+  var box = document.getElementById("roles");
+  roles.forEach(function (r, ri) {
+    var s = document.createElement("section");
+    var h = '<h2>' + r + '</h2><div class="row head"><span></span><span>المهمّة</span><span>كم مرّة</span></div>';
+    for (var i = 1; i <= 5; i++) {
+      h += '<div class="row"><b>' + i + '</b><input type="text" data-r="' + ri + '" data-i="' + i + '" aria-label="' + r + ' مهمّة ' + i + '">' +
+           '<select data-f="' + ri + '-' + i + '" aria-label="تكرار">' +
+           freq.map(function (f) { return '<option>' + (f || "اختر") + '</option>'; }).join("") + '</select></div>';
+    }
+    s.innerHTML = h;
+    box.appendChild(s);
+  });
+  document.getElementById("make").addEventListener("click", function () {
+    var out = [];
+    roles.forEach(function (r, ri) {
+      out.push(r + ":");
+      for (var i = 1; i <= 5; i++) {
+        var t = document.querySelector('input[data-r="' + ri + '"][data-i="' + i + '"]').value.trim();
+        var f = document.querySelector('select[data-f="' + ri + '-' + i + '"]').value;
+        if (t) out.push(i + ". " + t + (f && f !== "اختر" ? " (" + f + ")" : ""));
+      }
+    });
+    var o = document.getElementById("out");
+    o.value = out.join("\n");
+    o.focus(); o.select();
+  });
+})();
+</script>
+</body>
+</html>
