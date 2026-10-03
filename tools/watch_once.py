@@ -39,6 +39,39 @@ def free_memory_gb() -> float | None:
     return round(st.ullAvailPhys / 1024**3, 2)
 
 
+COMMIT_DEFAULT = {"warn": 85.0, "high": 90.0, "critical": 95.0}  # نسبةُ الالتزام % (توصيةُ 0101 10-03: الخطرُ الحقيقيّ الالتزامُ لا الرام)
+
+
+def commit_percent() -> float | None:
+    """نسبةُ الالتزام (Commit charge) من الحدّ — عند ~95–100% تفشل التخصيصاتُ؛ والتقليصُ لا يخفضها."""
+    if sys.platform != "win32":
+        return None
+
+    class MEMSTAT(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong), ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong), ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong), ("sullAvailExtendedVirtual", ctypes.c_ulonglong)]
+    st = MEMSTAT(); st.dwLength = ctypes.sizeof(MEMSTAT)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
+    return round(100 * (1 - st.ullAvailPageFile / st.ullTotalPageFile), 1)
+
+
+def commit_alert(pct: float | None, th: dict | None = None) -> dict | None:
+    if pct is None:
+        return None
+    th = {**COMMIT_DEFAULT, **(th or {})}
+    if pct >= th["critical"]:
+        sev = "critical"
+    elif pct >= th["high"]:
+        sev = "high"
+    elif pct >= th["warn"]:
+        sev = "warn"
+    else:
+        return None
+    return alert("commit", sev, f"الالتزامُ {pct}% من الحدّ (تفشل التخصيصاتُ قرابةَ 95–100%)",
+                 "اخفض الجلساتِ الحيّة (قائمةُ 0104) أو أحِل إلى device_memory_guard.ps1 DryRun؛ لا تقليصَ WorkingSet فهو لا يخفض الالتزام")
+
+
 def memory_band(free_gb: float, th: dict) -> str:
     if free_gb >= th["green_min"]:
         return "green"
@@ -182,6 +215,9 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
         mem = memory_alert(free, th["memory_free_gb"], top)
         if mem:
             alerts.append(mem)
+    ca = commit_alert(commit_percent(), th.get("commit_pct"))
+    if ca:
+        alerts.append(ca)
     if not live:
         return alerts
     prs = gh("pr", "list", "--state", "open", "--limit", "200", "--json", "number,createdAt,isDraft")
