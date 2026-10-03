@@ -3,6 +3,7 @@
 
     python brainstorm_log.py add --question "…" --chosen "…" --expected "…" --metric "…" --recheck 2026-10-09 \\
         --baseline 1.35 --target 1.0 --unit س --source "gh pr list … (أمرُ القياس نفسُه)" [--by 0104]
+    python brainstorm_log.py quantify <رقم> --baseline 1.35 --target 1.0 --unit س --source "…"   يُلحق أساساً وهدفاً بعصفٍ سُجّل بلا رقم
     python brainstorm_log.py due            ما حان موعدُ إعادة قياسه (يقرؤه 0102 لا 0104)
     python brainstorm_log.py result <رقم> --actual 0.9 [--confounders "…"] [--note "…"]   0102 تقيس بأمر المصدر نفسِه فيُحسب الأثرُ آلياً
     python brainstorm_log.py result <رقم> --achieved yes|no|partial --note "…"            لعصفٍ بلا رقمٍ قياسيّ (حكمٌ نوعيّ)
@@ -32,6 +33,27 @@ def _rows(path: Path = FILE) -> list[dict]:
     return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
 
+def _brainstorms(path: Path = FILE) -> list[dict]:
+    """العصفُ بعد دمج أحداث quantify (إضافةُ أساسٍ وهدفٍ لاحقاً دون تعديل ما كُتب)."""
+    rows = _rows(path)
+    q = {r["n"]: r for r in rows if r["kind"] == "quantify"}
+    out = []
+    for r in rows:
+        if r["kind"] == "brainstorm":
+            out.append({**r, **{k: v for k, v in q.get(r["n"], {}).items() if k in ("baseline", "target", "unit", "source")}})
+    return out
+
+
+def quantify(n: int, baseline: float, target: float, unit: str, source: str, path: Path = FILE) -> None:
+    """يُلحق أساساً وهدفاً وأمرَ قياسٍ بعصفٍ سُجّل بلا رقم (لا تعديلَ لسطرٍ كُتب)."""
+    if not any(r["n"] == n for r in _brainstorms(path)):
+        raise ValueError(f"لا عصفَ برقم {n}")
+    if baseline == target or not source.strip():
+        raise ValueError("أساسٌ ≠ هدفٍ وأمرُ قياسٍ مصدر")
+    _append({"kind": "quantify", "n": n, "ts": datetime.now(DOHA).isoformat(timespec="minutes"), "baseline": baseline, "target": target,
+             "unit": unit, "source": source.strip()}, path)
+
+
 def _append(row: dict, path: Path = FILE) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
@@ -56,9 +78,8 @@ def add(question: str, chosen: str, expected: str, metric: str, recheck: str, by
 
 def due(today: date | None = None, path: Path = FILE) -> list[dict]:
     today = today or date.today()
-    rows = _rows(path)
-    done = {r["n"] for r in rows if r["kind"] == "result"}
-    return [r for r in rows if r["kind"] == "brainstorm" and r["n"] not in done and date.fromisoformat(r["recheck"]) <= today]
+    done = {r["n"] for r in _rows(path) if r["kind"] == "result"}
+    return [r for r in _brainstorms(path) if r["n"] not in done and date.fromisoformat(r["recheck"]) <= today]
 
 
 def effect(baseline: float, target: float, actual: float) -> float:
@@ -67,7 +88,7 @@ def effect(baseline: float, target: float, actual: float) -> float:
 
 
 def result(n: int, achieved: str | None = None, note: str = "", path: Path = FILE, actual: float | None = None, confounders: str = "") -> None:
-    row = next((r for r in _rows(path) if r["kind"] == "brainstorm" and r["n"] == n), None)
+    row = next((r for r in _brainstorms(path) if r["n"] == n), None)
     if row is None:
         raise ValueError(f"لا عصفَ برقم {n}")
     out = {"kind": "result", "n": n, "ts": datetime.now(DOHA).isoformat(timespec="minutes"), "note": note.strip(), "confounders": confounders.strip()}
@@ -102,6 +123,9 @@ def main() -> int:
     a.add_argument("--unit", default=""); a.add_argument("--source", default="")
     a.add_argument("--by", default="0104")
     sub.add_parser("due")
+    qz = sub.add_parser("quantify")
+    qz.add_argument("n", type=int); qz.add_argument("--baseline", type=float, required=True); qz.add_argument("--target", type=float, required=True)
+    qz.add_argument("--unit", default=""); qz.add_argument("--source", required=True)
     r = sub.add_parser("result")
     r.add_argument("n", type=int)
     r.add_argument("--achieved")
@@ -115,6 +139,9 @@ def main() -> int:
         d = due()
         print("\n".join(f"#{r['n']} (موعدُه {r['recheck']}): {r['question'][:70]} ← المقياس: {r['metric'][:60]}" + (f" | أساسٌ {r['baseline']}→هدفٌ {r['target']} {r.get('unit', '')} | قِس بـ: {r['source'][:80]}" if 'baseline' in r else "") for r in d) or "لا إعادةَ قياسٍ مستحقّة")
         print("نجاحُ العصف حتى الآن:", success_rate())
+    elif x.cmd == "quantify":
+        quantify(x.n, x.baseline, x.target, x.unit, x.source)
+        print("ok")
     else:
         result(x.n, x.achieved, x.note, actual=x.actual, confounders=x.confounders)
         print("ok")

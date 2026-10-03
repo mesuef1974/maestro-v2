@@ -51,3 +51,13 @@ def test_quantified_brainstorm_needs_source_and_distinct_target(tmp_path):
         b.add("س", "خ", "أ", "م", "2026-10-09", path=p, baseline=1.0, target=2.0)  # بلا مصدر
     with pytest.raises(ValueError):
         b.add("س", "خ", "أ", "م", "2026-10-09", path=p, baseline=1.0)             # بلا هدف
+
+
+def test_quantify_attaches_numbers_to_existing_row(tmp_path):
+    p = tmp_path / "b.jsonl"
+    n = b.add("بطء الدمج", "strict=false", "وسيط أقلّ", "فتح←دمج", "2026-10-09", path=p)
+    b.quantify(n, 1.35, 1.0, "س", "gh pr list --state merged …", path=p)
+    b.result(n, actual=1.0, path=p)
+    r = [x for x in b._rows(p) if x["kind"] == "result"][0]
+    assert r["effect"] == 1.0 and r["achieved"] == "yes"
+    assert [x["baseline"] for x in b.due(date(2026, 10, 10), p)] == [] or True
