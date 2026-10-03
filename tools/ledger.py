@@ -339,6 +339,42 @@ def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[s
 
 WAIVER_BY = {"0501"}
 
+#: ملفّاتٌ حاكمةٌ لا يُستثنى تعديلُها بـwaive-head «وثائق» (W-20261003-040، مواصفة 0103): تُحمَّل في كلّ جلسةٍ أو بالمسار فتوجّه السلوك.
+#: تُطابَق بعد التطبيع (`\` ← `/`، حذفُ `./`، حروفٌ صغيرة).
+GOVERNING_RE = (
+    r"^claude\.md$",  # الدستور في الجذر
+    r"(^|/)claude\.md$",  # دستورٌ متداخل (يُحمَّل عند القراءة في مجلّده)
+    r"^\.claude/",  # قواعد وإعدادات وhooks
+    r"^docs/governance/flow\.md$",  # الفلو المستورَد بـ@ من CLAUDE.md
+)
+
+
+def normalize_path(path: str) -> str:
+    """مسارٌ للمقارنة: الشرطةُ المائلةُ العكسيّةُ ← `/`، حذفُ `./` البادئة (مكرَّرةً)، حروفٌ صغيرة."""
+    value = path.strip().replace("\\", "/")
+    while value.startswith("./"):
+        value = value[2:]
+    return value.lower()
+
+
+def governing_files(changed: list[str]) -> list[str]:
+    """الملفّاتُ الحاكمةُ بين المتغيّرة، بأسمائها كما وردت."""
+    return [f for f in changed if any(re.search(p, normalize_path(f)) for p in GOVERNING_RE)]
+
+
+def _docs_changed_files(approved: str, new_head: str, passed: list[str] | None) -> list[str]:
+    """ما يُفحص لاستثناء «وثائق»: `git diff` الحقيقيُّ **اتّحاداً** مع القائمة الممرَّرة — فلا يتجاوز الفحصَ من يمرّر قائمةً حميدةً.
+
+    فإن تعذّرت قراءةُ git (اختبارٌ بلا مستودع) والقائمةُ ممرَّرةٌ فُحصت وحدَها؛ وبلا قائمةٍ يفشل بصوتٍ عالٍ كما كان.
+    """
+    try:
+        real = [f for f in _git_read(["git", "diff", "--name-only", approved, new_head]).splitlines() if f.strip()]
+    except LedgerError:
+        if passed is None:
+            raise
+        real = []
+    return list(dict.fromkeys([*(passed or []), *real]))
+
 
 def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None) -> None:
     """استثناءٌ صريحٌ مسجَّلٌ لا ضمنيّ: تعديلٌ تافهٌ (وثائق أو .md) بعد الاعتماد بتوقيع 0501؛ لا كودَ ولا صلاحيّاتٍ ولا هجرات."""
@@ -356,8 +392,12 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         check_tests_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ اختباراتٍ فقط بلا حراسةٍ أمنيّة (تحقّق آليّ) — {reason}"
     elif kind == "docs":
-        if changed is None:
-            changed = _git_read(["git", "diff", "--name-only", item["approved_head"], new_head]).split()
+        changed = _docs_changed_files(item["approved_head"], new_head, changed)
+        governing = governing_files(changed)
+        if governing:
+            raise LedgerError(
+                f"ملفّاتٌ حاكمةٌ (CLAUDE.md أو .claude/** أو flow.md) تحتاج اعتماداً جديداً بالرأس لا waive-head: {governing[:5]}"
+            )
         bad = [f for f in changed if not (f.startswith("docs/") or f.endswith(".md"))]
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
