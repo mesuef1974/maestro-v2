@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>حالة تطبيق ما نوقش عصفاً ذهنيّاً</title>
+<style>
+:root{--bg:#faf8f5;--fg:#1f1b16;--mut:#6b6359;--card:#fff;--line:#e4ddd2;--maroon:#7a1f3d;--ok:#1f7a4d;--mid:#b07a12;--bad:#b3261e;--info:#2b5d8a}
+@media (prefers-color-scheme:dark){:root{--bg:#17140f;--fg:#f0ebe3;--mut:#a39a8c;--card:#211d17;--line:#3a3329;--maroon:#d98aa5;--ok:#5fcf9b;--mid:#e0b25a;--bad:#ff8a80;--info:#8ab8e6}}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:Tajawal,"Segoe UI",system-ui,sans-serif;line-height:1.7}
+.w{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
+h1{color:var(--maroon);font-size:1.5rem;margin:0 0 4px}h2{color:var(--maroon);margin-top:30px;font-size:1.15rem;border-bottom:2px solid var(--line);padding-bottom:4px}
+.sub{color:var(--mut);margin:0 0 16px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-size:.92rem}
+th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:start;vertical-align:top}th{background:rgba(122,31,61,.08);color:var(--maroon)}
+.t{font-weight:700;white-space:nowrap}.ok{color:var(--ok)}.mid{color:var(--mid)}.bad{color:var(--bad)}.info{color:var(--info)}
+.n{unicode-bidi:isolate;direction:ltr;display:inline-block}
+.tw{overflow-x:auto}
+</style>
+</head>
+<body><div class="w">
+<h1>حالةُ تطبيق ما نوقش عصفاً ذهنيّاً</h1>
+<p class="sub">0102 — 2026-10-03 — مصدرُ كلّ بند: الدفترُ وgit وworkflows على main وdecisions.md (فُحصت الآن لا من الذاكرة)</p>
+
+<h2>١) تسريعُ الدمج والنشر — ثمانيةُ بنود (قرارُ المالك D-143م)</h2>
+<div class="tw"><table>
+<tr><th>#</th><th>البند</th><th>الحالة</th><th>الدليل</th></tr>
+<tr><td>١</td><td><span class="n">strict=false</span> على حماية main</td><td class="t ok">طُبّق</td><td>قرأتُه بنفسي من <span class="n">branches/main/protection</span>: strict=false وenforce_admins=true</td></tr>
+<tr><td>٢</td><td>مهمّةٌ سريعةٌ تفشل مبكراً على pull_request</td><td class="t ok">طُبّق</td><td><span class="n">#786</span> مدموج؛ <span class="n">fast-guards</span> في quality-gate.yml</td></tr>
+<tr><td>٣</td><td>الفحوصُ السريعةُ محلّيّاً قبل الدفع</td><td class="t mid">طُبّق جزئيّاً</td><td><span class="n">#785</span> (prepush) مدموج؛ وإلزامُه بمنع الدفع محلّياً <b>مؤجَّلٌ بقرارك</b></td></tr>
+<tr><td>٤</td><td>إصلاحُ تضاعف pytest + تقسيمُه shards</td><td class="t mid">قيد التنفيذ</td><td>W-20261002-025 <span class="n">in_progress</span>؛ التقسيمُ <span class="n">#797</span> مفتوح</td></tr>
+<tr><td>٥</td><td>تخطّي pytest الكامل لتعديلات الوثائق</td><td class="t ok">طُبّق</td><td>quality-gate.yml: <span class="n">ci_docs_only.py</span> يشغّل «قرّاءَ الوثائق» وحدَهم</td></tr>
+<tr><td>٦</td><td>تخفيفُ فحوص push إلى main</td><td class="t bad">لم يُطبَّق (عمداً)</td><td>quality-gate وsecurity-scan ما زالا على push وطابور الدمج بتشغيلٍ كامل؛ شروطُ 0105 تُبقي ذلك</td></tr>
+<tr><td>٧</td><td>الدفعُ فور الاعتماد + تنبيهُ المتأخّر</td><td class="t ok">طُبّق</td><td>تنبيه <span class="n">approved_not_pushed</span> يقاطع <span class="n">gh</span> (0102)؛ والقاعدةُ في بطاقة 04</td></tr>
+<tr><td>٨</td><td>تطبيقُ 8500 كلَّ 10 دقائق</td><td class="t ok">طُبّق</td><td><span class="n">#788</span> مدموج؛ W-20261002-029 published</td></tr>
+</table></div>
+
+<h2>٢) خطّةُ رفع مهارات 0104 — سبعةُ بنود (D-157م)</h2>
+<div class="tw"><table>
+<tr><th>#</th><th>البند</th><th>الحالة</th><th>الدليل</th></tr>
+<tr><td>١</td><td>سجلُّ عصفٍ بنتيجته</td><td class="t ok">طُبّق</td><td><span class="n">brainstorm_log.py</span> + <span class="n">ledger/brainstorms.jsonl</span> (3 عصفاتٍ مسجَّلة)</td></tr>
+<tr><td>٢</td><td>قالبُ خياراتٍ موحَّد</td><td class="t ok">طُبّق (في الميثاق)</td><td>طريقةُ عملٍ في ميثاق 0104؛ التزامُها بها يُقاس لاحقاً</td></tr>
+<tr><td>٣</td><td>مهاراتٌ صريحةٌ في الميثاق</td><td class="t ok">طُبّق</td><td>product-brainstorming وsystem-design وstatistical-analysis</td></tr>
+<tr><td>٤</td><td>خصمٌ داخليّ قبل التوصية</td><td class="t ok">طُبّق (في الميثاق)</td><td>سلوكٌ يُقاس بالعيّنة</td></tr>
+<tr><td>٥</td><td>حدُّ تسليم (لا فروعَ معلّقة)</td><td class="t ok">طُبّق (في الميثاق)</td><td>وصنّفتُ إيداعاتِها بلا طلب (W-035 مغلق)</td></tr>
+<tr><td>٦</td><td>قياسٌ أسبوعيّ من 0102</td><td class="t mid">مجدول</td><td>أوّلُ قياس 2026-10-09/10-10 (لا أثرَ مقيساً بعد)</td></tr>
+<tr><td>٧</td><td>أوصافُ الأدوات بالعربيّة وعدمُ إعادة المقرَّر للمالك</td><td class="t ok">طُبّق (التزام)</td><td>مكتوبٌ في ميثاقها؛ يُراجَع بـ<span class="n">lang_audit</span> و<span class="n">owner_asks_audit</span></td></tr>
+<tr><td>+</td><td>قياسُ الأثر الكمّيّ (طلبُك لاحقاً)</td><td class="t ok">طُبّق</td><td>أساسٌ/هدفٌ/مصدرٌ؛ <span class="n">quantify</span>؛ الأثرُ يُحسب آلياً</td></tr>
+</table></div>
+
+<h2>٣) حزمةُ رفع قدرات الجلسات — ستّةُ بنودٍ اعتمدتَها (D-158م) وأربعةٌ مؤجَّلة</h2>
+<div class="tw"><table>
+<tr><th>#</th><th>البند</th><th>الحالة</th><th>الدليل</th></tr>
+<tr><td>١</td><td>فحصُ CI يطابق سطرَ الاعتماد رأسَ الطلب + اصطلاحُ فروعٍ برمز البطاقة</td><td class="t mid">لم يُنفَّذ (بطاقةٌ)</td><td>W-20261003-003 <span class="n">captured</span>؛ لا طلب</td></tr>
+<tr><td>٢</td><td>أداةُ <span class="n">affected_tests</span> وبصمتُها</td><td class="t mid">لم يُنفَّذ (بطاقةٌ)</td><td>W-20261003-004 <span class="n">captured</span></td></tr>
+<tr><td>٣</td><td>تقصيرُ CLAUDE.md وقواعدُ <span class="n">.claude/rules</span> وflow.md</td><td class="t mid">قيد الدمج</td><td>W-20261003-006 دُفع (رأس 0663f6a0) وسُلّم 0601؛ لم يصل main</td></tr>
+<tr><td>٤</td><td>توسيعُ حارس البيانات الشخصيّة إلى md وdocs + حارس تصادم الترقيم</td><td class="t mid">لم يُنفَّذ (بطاقةٌ)</td><td>W-20261003-005 <span class="n">captured</span></td></tr>
+<tr><td>٥</td><td>خريطةُ الشاشة↔الملفّات وأمر <span class="n">my_state</span></td><td class="t mid">لم يُنفَّذ (بطاقةٌ)</td><td>W-20261003-007 <span class="n">captured</span></td></tr>
+<tr><td>٦</td><td>بيئةُ فحصٍ محلّيّةٌ مطابقةٌ لـCI</td><td class="t mid">لم يُنفَّذ (موجَّهة)</td><td>W-20261003-008 <span class="n">routed</span></td></tr>
+<tr><td>—</td><td>مؤجَّلٌ بقرارك: منعُ الدفع محلّياً، أداةُ 0601، نقلُ الدفتر، <span class="n">sot_grep</span></td><td class="t info">مؤجَّل</td><td>D-158م</td></tr>
+</table></div>
+
+<h2>٤) نظافةُ الذاكرة (D-160م)</h2>
+<div class="tw"><table>
+<tr><th>البند</th><th>الحالة</th><th>الدليل</th></tr>
+<tr><td>ميثاقُ 0103 يملك الفهرسَ ونظافتَه</td><td class="t ok">طُبّق</td><td>tabs.json + بطاقة 0103</td></tr>
+<tr><td><span class="n">memory_stale.py</span> قراءةً فقط</td><td class="t ok">طُبّق</td><td>يستثني archive والمسارَ الموسوم؛ الفهرس 17.9KB/101 سطراً (ضمن السقف)</td></tr>
+<tr><td>تقليلُ الذكريات المسمّيةِ مساراً مفقوداً</td><td class="t mid">جارٍ</td><td>29 ← 17 (22 مساراً)؛ الهدف 0؛ التنفيذُ لـ0103 بنقلٍ لا حذف وبأمرك</td></tr>
+<tr><td>إخفاءُ الأرقام الشخصيّة في الذاكرة الحيّة (D-159م)</td><td class="t ok">طُبّق</td><td>صفرٌ في الخمسة الحيّة</td></tr>
+</table></div>
+
+<h2>٥) ذاكرةُ الجهاز (D-162م)</h2>
+<div class="tw"><table>
+<tr><th>البند</th><th>الحالة</th><th>الدليل</th></tr>
+<tr><td>تنبيهُ الالتزام Commit% في المراقب</td><td class="t ok">طُبّق</td><td>warn 85 / high 90 / critical 95؛ يُطلق «عالٍ» عند 93.8%</td></tr>
+<tr><td>حارسُ الذاكرة <span class="n">device_memory_guard.ps1</span></td><td class="t ok">كُتب وحُصِّن (يدويّ DryRun)</td><td>بمراجعة 0105؛ بلا مهمّةٍ مجدولة (D-60م)</td></tr>
+<tr><td>أرشفةُ الجلسات عند انتهاء مهمّتها (إذنٌ دائم)</td><td class="t mid">جارٍ (0101)</td><td>تنفّذها 0101 وتبلغ بعد الفعل</td></tr>
+<tr><td>فحصُ حجم pagefile</td><td class="t mid">بيدك</td><td>إعدادُ نظامٍ لا تملكه الجلسات</td></tr>
+<tr><td>تقليصُ WorkingSet آليّاً</td><td class="t bad">رُفض عمداً</td><td>لا يخفض الالتزام ويسبّب قراءاتٍ من القرص</td></tr>
+<tr><td>قياسُ الذاكرة بلا تنظيفٍ يدويّ</td><td class="t mid">جارٍ</td><td>t0 ≈ 07:00؛ تقريرٌ 2026-10-10</td></tr>
+</table></div>
+
+<h2>٦) اقتراحاتٌ أُوقفت أو رُفضت بالقياس</h2>
+<div class="tw"><table>
+<tr><th>الاقتراح</th><th>القرار</th><th>السبب</th></tr>
+<tr><td>05 ثانيةٌ وخادمُ معاينةٍ ثانٍ (8400)</td><td class="t bad">لم يُطبَّق</td><td>التأخّرُ في «اعتمادٌ←دفع» لا في المعاينة؛ الذاكرةُ حرجة</td></tr>
+<tr><td>صفحةُ قراراتٍ واحدة للمالك</td><td class="t bad">أُوقفت بأمرك</td><td>«لا أريد شيئاً الآن»</td></tr>
+<tr><td>منظِّفُ ذاكرةٍ مجدولٌ كلَّ 5 دقائق</td><td class="t bad">لم يُركَّب</td><td>يخالف D-60م ولا يعالج الالتزام</td></tr>
+</table></div>
+
+<h2>الخلاصةُ بالأرقام</h2>
+<p>من 35 بنداً مسرودة (دون صفّ «المؤجَّل بقرارك»): <b class="ok">طُبّق 17</b>، <b class="mid">جارٍ أو بانتظار تنفيذٍ/دمج/قياس 13</b>، <b class="bad">لم يُطبَّق عمداً أو رُفض 5</b>. وأبرزُ ما لم يُنفَّذ بعدُ: الحزمةُ الستّة (D-158م) — خمسٌ منها بطاقاتٌ لم تبدأ، وواحدةٌ (CLAUDE.md) مدفوعةٌ بانتظار الدمج. وأثرُ كلّ ما سبق على المؤشّرات (وسيط الدمج، فجوة 8500، الرؤوس الزائدة، أسئلةُ المالك) <b>غيرُ مقيسٍ بعد</b>: أقيسه 2026-10-09 و2026-10-10.</p>
+</div></body></html>
