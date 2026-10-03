@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>حالة تطبيق قرارات العصف — جدول المايسترو</title>
+<style>
+body{font-family:Tahoma,Arial,sans-serif;margin:1.5rem;line-height:1.7;background:#fff;color:#222}
+h1{font-size:1.3rem} h2{font-size:1.05rem;margin-top:1.6rem}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{border:1px solid #bbb;padding:.4rem .6rem;vertical-align:top;text-align:right}
+th{background:#f0e6e8}
+.ok{background:#e6f4e6}.run{background:#fff6dc}.no{background:#fbe5e5}
+small{color:#555}
+</style>
+</head>
+<body>
+<h1>هل طُبّق ما نوقش عصفاً ذهنيّاً؟ — جدول المايسترو (2026-10-03 ~07:10 بتوقيت الدوحة)</h1>
+<p><small>المصدر: الدفتر وground_truth والطلبات المفتوحة والمذكّرات. مقابلُ جدول 0102 (brainstorm_status_2026-10-03.html). ما لم أقِسه أنا ذكرتُه صراحةً.</small></p>
+
+<h2>أ) D-143م — تسريع الدمج والنشر (ثمانية بنود)</h2>
+<table>
+<tr><th>البند</th><th>الحالة</th><th>المنفِّذ / المرجع</th><th>ملاحظة</th></tr>
+<tr class="ok"><td>strict=false على حماية main</td><td>منجز</td><td>المالك</td><td>نفّذه بيده</td></tr>
+<tr class="ok"><td>مهمّة سريعة تفشل مبكراً على pull_request</td><td>منجز</td><td>#786</td><td></td></tr>
+<tr class="ok"><td>أداة محلّية للفحوص السريعة (prepush)</td><td>منجز</td><td>#785</td><td>سيمتدّ إلى affected_tests (D-158م)</td></tr>
+<tr class="run"><td>رفع أولويّة W-025 وتقسيم pytest</td><td>جارٍ</td><td>#797 (0408)، W-025</td><td>#797 تعارض مع main في .secrets.baseline فأُعيد توليده برأس 43f34f0d؛ ينتظر اعتماد المالك بكلمة (0501 تعرضه)</td></tr>
+<tr class="ok"><td>تخطّي pytest الكامل لتعديلات docs وmd</td><td>منجز</td><td>مرشّح docs-only</td><td></td></tr>
+<tr class="no"><td>تخفيف quality-gate وSecurity Scan عند push إلى main</td><td>لم يُطبَّق عمداً</td><td>شروط 0105</td><td>قرارٌ مقصودٌ لا نسيان</td></tr>
+<tr class="ok"><td>قاعدة الدفع فور الاعتماد</td><td>منجز</td><td>#784 و#794</td><td></td></tr>
+<tr class="ok"><td>تطبيق 8500 كل 10 دقائق</td><td>منجز</td><td>#788</td><td></td></tr>
+<tr class="ok"><td>تسريع الاختبارات (إضافي)</td><td>منجز</td><td>#789 (W-037)</td><td>عاد pytest إلى 15–17 دقيقة</td></tr>
+</table>
+
+<h2>ب) D-156م — W-040 (حصر المحو بمدرسة المدير)</h2>
+<table>
+<tr><th>البند</th><th>الحالة</th><th>المنفِّذ</th><th>ملاحظة</th></tr>
+<tr class="run"><td>فتح الطلب وحدَه بحكم 0105</td><td>منجز؛ #805 مفتوح وCI أخضر (24)</td><td>0601 + 0414</td><td>الرأس 3c04c9b2 معتمَد من المالك</td></tr>
+<tr class="run"><td>قياس المحو العالق قبل الدمج</td><td>لم يُجرَ</td><td>المالك</td><td>الأمر جاهز في المحادثة؛ قراءةٌ فقط على الإنتاج</td></tr>
+</table>
+
+<h2>ج) D-157م — خطة رفع مهارات 0104 (سبعة بنود)</h2>
+<table>
+<tr><th>البند</th><th>الحالة</th><th>المنفِّذ</th><th>ملاحظة</th></tr>
+<tr class="run"><td>الميثاق: سجلّ عصف، قالب خيارات، مهارات، خصم داخلي، حدّ تسليم، قياس أسبوعي، سلوك</td><td>أُقرّ؛ تنفيذه في tabs.json عند 0102</td><td>0102</td><td>لم يصلني تأكيد إيداعه؛ أطلب من 0102 تأكيده</td></tr>
+</table>
+
+<h2>د) D-158م — حزمة رفع القدرات (ستّ بطاقات)</h2>
+<table>
+<tr><th>البطاقة</th><th>الحالة</th><th>المنفِّذ</th><th>ملاحظة</th></tr>
+<tr class="run"><td>W-003 فحص CI لسطر الاعتماد + اصطلاح فروع</td><td>موجَّهة</td><td>0801</td><td>تبدأ بعد اندماج #801</td></tr>
+<tr class="run"><td>W-004 affected_tests وبصمتها</td><td>موجَّهة</td><td>0408</td><td>بعد #797</td></tr>
+<tr class="run"><td>W-005 حارس PII على md/docs + تصادم الترقيم + سقّاطة CLAUDE.md</td><td>موجَّهة، بُدئ فرعٌ محلّي</td><td>0402 (مواصفة 0103)</td><td>تمرّ بـ0105 لوجود .github</td></tr>
+<tr class="run"><td>W-006 قواعد .claude/rules وتقصير CLAUDE.md (380 ← 142)</td><td>مدفوعة؛ #806 مفتوح (CI يجري)</td><td>0103</td><td>اعتُمد بالرأس 0663f6a0؛ نصّ «لا يُعدّ وثائقَ فقط» بعد الدمج بإيداعٍ جديدٍ يحتاج اعتماداً</td></tr>
+<tr class="run"><td>W-007 my_state + خريطة الشاشات</td><td>موجَّهة؛ my_state مودَع (7a5b5ec في مستودع المايسترو)</td><td>0403</td><td>الخريطة تنتظر W-004</td></tr>
+<tr class="run"><td>W-008 سطر أرقام الجودة وبيئة فحص مطابقة لـCI</td><td>موجَّهة؛ المواصفة مكتوبة (docs/quality_line_spec_w008.md)</td><td>0702 (مواصفة) ثمّ 0408 (تنفيذ)</td><td>بعد W-004</td></tr>
+</table>
+
+<h2>هـ) D-159م / D-160م / D-161م — الذاكرة</h2>
+<table>
+<tr><th>البند</th><th>الحالة</th><th>المنفِّذ</th><th>ملاحظة</th></tr>
+<tr class="ok"><td>إخفاء الأرقام الشخصية في الذاكرة الحيّة (D-159م)</td><td>منجز: 10 مواضع في 5 ملفّات، المتبقّي صفر</td><td>0103</td><td>تنقية تاريخ claude-backup مؤجَّلة (لم يأذن)</td></tr>
+<tr class="ok"><td>ملكيّة الفهرس والنظافة لـ0103 + memory_stale (D-160م)</td><td>منجز (إيداعٌ محلّيّ 1244695)</td><td>0102</td><td></td></tr>
+<tr class="ok"><td>تطبيق الفهرس المقترح وأرشفة 5 ملفّات (D-161م)</td><td>منجز: 102 سطراً / 18326 بايت، صفر روابط مفقودة</td><td>0103</td><td>الإرجاع ممكن</td></tr>
+<tr class="run"><td>تصحيح مسارات 9 ملفّات</td><td>منجز (11 موضعاً في 8 ملفّات)؛ المسمّية مساراً مفقوداً 17</td><td>0103</td><td>الهدف 0 عبر أرشفةٍ بأمر المالك</td></tr>
+</table>
+
+<h2>و) D-162م — الأرشفة عند انتهاء المهمّة</h2>
+<table>
+<tr><th>الجلسة</th><th>الحالة</th><th>متى</th></tr>
+<tr><td>0407</td><td>بانتظار دمج #803</td><td>بعد الدمج</td></tr>
+<tr><td>0412</td><td>أعادها المالك لمعاينة W-044</td><td>بعد المعاينة</td></tr>
+<tr><td>0301</td><td>نواة، تبقى</td><td>—</td></tr>
+<tr><td>0402 و0414 و0408 و0801 و0403 و0404 و0406</td><td>لكلٍّ عملٌ جارٍ</td><td>عند انتهاء مهمّاتها</td></tr>
+</table>
+<p>حتى الآن لم تُؤرشف أيّ جلسة بهذا الإذن.</p>
+
+<h2>ز) الفروق بيني وبين جدول 0102</h2>
+<ul>
+<li>بطاقات D-158م الأربع (003/004/005/007): الإسناد صحيح والدفتر كان متأخّراً (صُحّح إلى «موجَّهة»).</li>
+<li>W-040: ليست محجوزةً بشرط الترتيب؛ أسقطته 0105، وطلبها #805 مفتوح.</li>
+<li>أثر الخطة (D-157م): لا أستطيع تأكيد تنفيذ الميثاق قبل تأكيد 0102.</li>
+</ul>
+</body>
+</html>
