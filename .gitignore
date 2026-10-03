@@ -5,3 +5,6 @@ ledger/windows/
 *.tmp
 ledger/spawn_reservations.json
 ledger/pr_watch_heartbeat.json
+
+# كلمة مرور حسابات المعاينة (بيد المالك) — لا تُتتبَّع أبداً
+tools/.preview_accounts.env
