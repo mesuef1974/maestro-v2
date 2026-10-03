@@ -48,15 +48,16 @@ th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:start;verti
 <tr><td>+</td><td>قياسُ الأثر الكمّيّ (طلبُك لاحقاً)</td><td class="t ok">طُبّق</td><td>أساسٌ/هدفٌ/مصدرٌ؛ <span class="n">quantify</span>؛ الأثرُ يُحسب آلياً</td></tr>
 </table></div>
 
+<p class="sub">تصحيح (بعد ردّ 0101): الإسنادُ تمّ قبل إعدادي هذا الجدول لكنّ الدفتر تأخّر عن الواقع فعرضتُ «captured» — تأخّرُ الدفتر مشكلةٌ متكرّرة (ledger_lag).</p>
 <h2>٣) حزمةُ رفع قدرات الجلسات — ستّةُ بنودٍ اعتمدتَها (D-158م) وأربعةٌ مؤجَّلة</h2>
 <div class="tw"><table>
 <tr><th>#</th><th>البند</th><th>الحالة</th><th>الدليل</th></tr>
-<tr><td>١</td><td>فحصُ CI يطابق سطرَ الاعتماد رأسَ الطلب + اصطلاحُ فروعٍ برمز البطاقة</td><td class="t mid">لم يُنفَّذ (بطاقةٌ)</td><td>W-20261003-003 <span class="n">captured</span>؛ لا طلب</td></tr>
-<tr><td>٢</td><td>أداةُ <span class="n">affected_tests</span> وبصمتُها</td><td class="t mid">لم يُنفَّذ (بطاقةٌ)</td><td>W-20261003-004 <span class="n">captured</span></td></tr>
-<tr><td>٣</td><td>تقصيرُ CLAUDE.md وقواعدُ <span class="n">.claude/rules</span> وflow.md</td><td class="t mid">قيد الدمج</td><td>W-20261003-006 دُفع (رأس 0663f6a0) وسُلّم 0601؛ لم يصل main</td></tr>
-<tr><td>٤</td><td>توسيعُ حارس البيانات الشخصيّة إلى md وdocs + حارس تصادم الترقيم</td><td class="t mid">لم يُنفَّذ (بطاقةٌ)</td><td>W-20261003-005 <span class="n">captured</span></td></tr>
-<tr><td>٥</td><td>خريطةُ الشاشة↔الملفّات وأمر <span class="n">my_state</span></td><td class="t mid">لم يُنفَّذ (بطاقةٌ)</td><td>W-20261003-007 <span class="n">captured</span></td></tr>
-<tr><td>٦</td><td>بيئةُ فحصٍ محلّيّةٌ مطابقةٌ لـCI</td><td class="t mid">لم يُنفَّذ (موجَّهة)</td><td>W-20261003-008 <span class="n">routed</span></td></tr>
+<tr><td>١</td><td>فحصُ CI يطابق سطرَ الاعتماد رأسَ الطلب + اصطلاحُ فروعٍ برمز البطاقة</td><td class="t mid">مُسنَد ولم يُنفَّذ</td><td>W-20261003-003 ← 0801 بعد <span class="n">#801</span> (الدفترُ كان متأخّراً فعرض captured؛ صُحّح إلى routed)</td></tr>
+<tr><td>٢</td><td>أداةُ <span class="n">affected_tests</span> وبصمتُها</td><td class="t mid">مُسنَد ولم يُنفَّذ</td><td>W-20261003-004 ← 0408 بعد <span class="n">#797</span></td></tr>
+<tr><td>٣</td><td>تقصيرُ CLAUDE.md وقواعدُ <span class="n">.claude/rules</span> وflow.md</td><td class="t mid">قيد الدمج</td><td>W-20261003-006: <span class="n">#806</span> مفتوح بدمجٍ آليّ وحكمُ 0105 بلا اعتراض</td></tr>
+<tr><td>٤</td><td>توسيعُ حارس البيانات الشخصيّة إلى md وdocs + حارس تصادم الترقيم</td><td class="t mid">بدأ (فرعٌ محلّيّ)</td><td>W-20261003-005 ← 0402؛ مواصفةُ 0103 مكتوبة؛ مراجعةُ 0105 لـ.github</td></tr>
+<tr><td>٥</td><td>خريطةُ الشاشة↔الملفّات وأمر <span class="n">my_state</span></td><td class="t mid">جزءٌ مودَع</td><td>W-20261003-007 ← 0403: <span class="n">my_state</span> مودَع (7a5b5ec)، والخريطةُ تنتظر -004</td></tr>
+<tr><td>٦</td><td>بيئةُ فحصٍ محلّيّةٌ مطابقةٌ لـCI</td><td class="t mid">مواصفةٌ مكتوبة</td><td>W-20261003-008: مواصفةُ 0702 مكتوبة والتنفيذُ عند 0408 بعد -004</td></tr>
 <tr><td>—</td><td>مؤجَّلٌ بقرارك: منعُ الدفع محلّياً، أداةُ 0601، نقلُ الدفتر، <span class="n">sot_grep</span></td><td class="t info">مؤجَّل</td><td>D-158م</td></tr>
 </table></div>
 
