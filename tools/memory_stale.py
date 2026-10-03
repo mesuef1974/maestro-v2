@@ -27,7 +27,8 @@ LINK = re.compile(r"\(([^)]+\.md)\)")
 
 
 def memory_files(root: Path) -> list[Path]:
-    return [p for p in root.rglob("*.md")]
+    """ملفّاتُ الذاكرة الحيّة؛ `archive/` مستثناةٌ (ما نُقل بالأرشفة لا يُعدّ مضلِّلاً، D-160م)."""
+    return [p for p in root.rglob("*.md") if "archive" not in p.relative_to(root).parts]
 
 
 def unindexed(root: Path, files: list[Path]) -> list[str]:
@@ -51,12 +52,21 @@ def maestro_paths(root: Path = MAESTRO) -> set[str]:
     return out
 
 
+MARKED = re.compile(r"^\s*\((?:حُذف|حذف|حزمة)")  # مسارٌ موسومٌ صراحةً بأنّه محذوفٌ/حزمةٌ مؤرَّخة فليس مضلِّلاً
+
+
 def missing_paths(files: list[Path], existing: set[str]) -> dict[str, list[str]]:
     bad: dict[str, list[str]] = {}
     for p in files:
-        for m in set(PATH.findall(p.read_text(encoding="utf-8", errors="replace"))):
-            if m not in existing:
-                bad.setdefault(p.name, []).append(m)
+        text = p.read_text(encoding="utf-8", errors="replace")
+        for m in PATH.finditer(text):
+            path = m.group(1)
+            if path in existing or MARKED.match(text[m.end() + 1:m.end() + 40]):
+                continue
+            if path not in bad.setdefault(p.name, []):
+                bad[p.name].append(path)
+        if not bad.get(p.name):
+            bad.pop(p.name, None)
     return bad
 
 

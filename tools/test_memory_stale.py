@@ -31,3 +31,12 @@ def test_index_cap_flag(tmp_path):
     assert ms.measure(root, existing=set())["index_over_cap"] is True
     (root / "MEMORY.md").write_text("- [a](a.md)\n", encoding="utf-8")
     assert ms.measure(root, existing=set())["index_over_cap"] is False
+
+
+def test_archive_dir_excluded_and_marked_paths_accepted(tmp_path):
+    root = mk(tmp_path)
+    (root / "archive").mkdir()
+    (root / "archive" / "old.md").write_text("يذكر `tools/gone.py`", encoding="utf-8")
+    (root / "c.md").write_text("`tools/was.py` (حُذف في D-60م) و`tools/pack.py` (حزمة قديمة) و`tools/real_missing.py`", encoding="utf-8")
+    m = ms.measure(root, existing={"tools/ok.py", "templates/base.html"})
+    assert m["_bad"] == {"c.md": ["tools/real_missing.py"]}
