@@ -293,7 +293,7 @@ def check_tests_only(approved: str, new: str, repo: str | None = None) -> list[s
     cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
     if subprocess.run(["git", "merge-base", "--is-ancestor", approved, new], cwd=cwd, capture_output=True).returncode != 0:
         raise LedgerError("الإيداعُ الجديد لا يتلو الرأسَ المعتمَد — لا يُعفى")
-    changed = [f for f in _git(["diff", "--name-only", approved, new], repo).split("\n") if f]
+    changed = [f for f in _git(["diff", "--no-renames", "--name-only", approved, new], repo).split("\n") if f]
     if not changed:
         raise LedgerError("لا فرقَ عن الرأس المعتمَد — لا حاجةَ لاستثناء")
     outside = [f for f in changed if not f.startswith("tests/")]
@@ -320,7 +320,7 @@ def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[s
     if subprocess.run(["git", "merge-base", "--is-ancestor", approved, first], cwd=repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp"),
                       capture_output=True).returncode != 0:
         raise LedgerError("الأبُ الأوّل ليس الرأسَ المعتمَد أو تالياً له — فيه إيداعاتٌ لا نعرفها")
-    changed = _git(["diff", "--name-only", approved, new], repo).split("\n")
+    changed = _git(["diff", "--no-renames", "--name-only", approved, new], repo).split("\n")
     changed = [f for f in changed if f]
     bad = []
     for f in changed:
@@ -368,7 +368,7 @@ def _docs_changed_files(approved: str, new_head: str, passed: list[str] | None) 
     فإن تعذّرت قراءةُ git (اختبارٌ بلا مستودع) والقائمةُ ممرَّرةٌ فُحصت وحدَها؛ وبلا قائمةٍ يفشل بصوتٍ عالٍ كما كان.
     """
     try:
-        real = [f for f in _git_read(["git", "diff", "--name-only", approved, new_head]).splitlines() if f.strip()]
+        real = [f for f in _git_read(["git", "diff", "--no-renames", "--name-only", approved, new_head]).splitlines() if f.strip()]
     except LedgerError:
         if passed is None:
             raise

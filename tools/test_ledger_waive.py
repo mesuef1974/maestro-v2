@@ -129,3 +129,18 @@ class OtherKindsUntouched(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RenameVisibilityTest(unittest.TestCase):
+    """0102: `git diff --name-only` يعرض الاسمَ الجديدَ وحدَه للمُعاد تسميتُه — فنقلُ ملفٍّ حاكمٍ لا يُرى اسمُه القديم؛ لذا يلزم `--no-renames`."""
+
+    def test_docs_diff_uses_no_renames(self):
+        calls = []
+
+        def fake(cmd, *a, **k):
+            calls.append(cmd)
+            return "docs/a.md"
+
+        with mock.patch.object(ledger, "_git_read", side_effect=fake):
+            ledger._docs_changed_files(APPROVED, NEW, None)
+        self.assertTrue(any("--no-renames" in c for c in calls), calls)
