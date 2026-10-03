@@ -206,6 +206,28 @@ def park(item_id: str, decision: str, reason: str, path=None) -> None:
     append_event("update", item_id, {"parked": {"decision": decision, "reason": check_text("reason", reason)}}, path)
 
 
+RESCHEDULABLE = {"captured", "routed"}
+
+
+def reschedule(item_id: str, start: str, decision: str, reason: str, by: str, path=None) -> None:
+    """إعادةُ جدولةِ بدءِ بطاقةٍ منتظِرةٍ (captured/routed) بقرارٍ مسجَّل: حدثُ update بـstart الجديد وملاحظةٌ تسمّي القرارَ والسببَ والزمنَ القديم؛ لا تمسّ حالةً ولا اعتماداً ولا أولويّةً."""
+    items = reduce_state(load_events(path))
+    if item_id not in items:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    item = items[item_id]
+    if item.get("state") not in RESCHEDULABLE:
+        raise LedgerError(f"لا تُعاد جدولةُ بطاقةٍ في الحالة «{item.get('state')}» — المسموح: {sorted(RESCHEDULABLE)}")
+    if not re.fullmatch(r"D-\d+م", decision):
+        raise LedgerError("--decision رقمُ قرارٍ من decisions.md مثل D-178م")
+    if not by:
+        raise LedgerError("--by إلزاميّ: رقمُ جلستك")
+    new_start = parse_start(start)
+    old = item.get("start", "—")
+    note = check_text("note", f"إعادةُ جدولةٍ بـ{decision} ({by}): {old[:16]} ← {new_start[:16]}؛ {reason}")
+    append_event("update", item_id, {"start": new_start}, path)
+    append_event("note", item_id, {"text": note}, path)
+
+
 def raise_priority(item_id: str, priority: str, reason: str, by: str, path=None) -> None:
     """رفعُ الأولويّة فقط (P3→P2…) بحدثِ update وملاحظةٍ تسمّي السبب والقرار؛ لا خفضَ بهذا الأمر (الخفضُ قرارُ المايسترو بتسجيلٍ آخر)."""
     if priority not in PRIORITIES:
@@ -417,6 +439,8 @@ def main() -> None:
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)")
     pk = sub.add_parser("park", help="وسمُ بطاقةٍ مركونةٍ بقرارٍ مسجَّل")
     pk.add_argument("id"); pk.add_argument("--decision", required=True); pk.add_argument("--reason", required=True)
+    rs = sub.add_parser("reschedule", help="إعادةُ جدولةِ بدءِ بطاقةٍ منتظِرةٍ بقرارٍ مسجَّل")
+    rs.add_argument("id"); rs.add_argument("--start", required=True); rs.add_argument("--decision", required=True); rs.add_argument("--by", required=True); rs.add_argument("--reason", required=True)
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
@@ -437,6 +461,8 @@ def main() -> None:
             move(args.id, args.state, note=args.note, by=args.by, head=args.head); print("ok")
         elif args.cmd == "raise-priority":
             raise_priority(args.id, args.priority, args.reason, args.by); print("ok")
+        elif args.cmd == "reschedule":
+            reschedule(args.id, args.start, args.decision, args.reason, args.by); print("ok")
         elif args.cmd == "park":
             park(args.id, args.decision, args.reason); print("ok")
         elif args.cmd == "waive-head":
