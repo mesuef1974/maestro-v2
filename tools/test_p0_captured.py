@@ -43,3 +43,12 @@ def test_raise_priority_only_raises(tmp_path):
     assert ledger.reduce_state(ledger.load_events(p))[iid]["priority"] == "P2"
     with pytest.raises(ledger.LedgerError):
         ledger.raise_priority(iid, "P3", "خفض", "0102", path=p)
+
+
+def test_future_scheduled_p0_is_not_a_stall(monkeypatch, tmp_path):
+    p = tmp_path / "ev.jsonl"
+    future = (datetime.now(w.DOHA) + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M")
+    ledger.__dict__.setdefault("_orig", ledger.load_events)
+    ledger.add_item("owner", "bug", "م", "أ", "ق", path=p, start=future, priority="P0", urgent=True)
+    monkeypatch.setattr(ledger, "load_events", lambda path=None: ledger.__dict__["_orig"](p))
+    assert w.p0_captured_alerts(now=datetime.now(w.DOHA) + timedelta(hours=5)) == []

@@ -354,6 +354,16 @@ def p0_captured_alerts(minutes: float = P0_STALL_MINUTES, now: datetime | None =
     for item in lg.reduce_state(lg.load_events(None)).values():
         if item.get("priority") != "P0" or item.get("state") not in ("captured", "routed"):
             continue
+        start = item.get("start")
+        if start:  # مجدولةٌ لبدءٍ مستقبليّ بقرارٍ مسجَّل: انتظارُها ليس ركوداً (قرار المالك 2026-10-04، تقييم الفلو)
+            try:
+                start_dt = datetime.fromisoformat(start)
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=DOHA)
+                if start_dt > now:
+                    continue
+            except ValueError:
+                pass
         since = datetime.fromisoformat(item.get("state_ts") or item["created"])
         age_min = (now - since).total_seconds() / 60
         if age_min >= minutes:
