@@ -56,5 +56,26 @@ class Reservations(unittest.TestCase):
         self.assertEqual(sp.active_reservations(NXT, self.path, later), [])
 
 
+class ShortCode(unittest.TestCase):
+    def test_short_code_from_full(self):
+        self.assertEqual(sp.short_code("W-20261001-007"), "W-007")
+        self.assertEqual(sp.short_code("G4"), "G4")
+
+    def test_collision_uses_longer_form(self):
+        code, notes = sp.resolve_code("W-20261001-007", ["W-20261001-007", "W-20260930-007"])
+        self.assertEqual(code, "W-1001-007")
+        self.assertTrue(notes)
+
+    def test_no_collision_uses_short(self):
+        self.assertEqual(sp.resolve_code("W-20261001-007", ["W-20261001-008"]), ("W-007", []))
+
+    def test_long_name_is_warning_not_blocker(self):
+        r = sp.preflight(None, TAG, "مهمّة طويلةٌ جدّاً تتجاوز الحدَّ المسموح للاسم", "W-20261001-007", "", TABS, TH, 8.0,
+                         known_codes=["W-20260930-007"])
+        self.assertGreater(r["length"], r["max_len"])
+        self.assertFalse([b for b in r["blockers"] if "أطولُ" in b])
+        self.assertTrue(any("(W-1001-007)" in r["title"] for _ in [0]))
+
+
 if __name__ == "__main__":
     unittest.main()

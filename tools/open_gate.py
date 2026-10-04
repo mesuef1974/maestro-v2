@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -20,9 +21,11 @@ sys.path.insert(0, str(MAESTRO / "tools"))
 sys.path.insert(0, str(MAESTRO / "skills" / "maestro-spawn" / "scripts"))
 import spawn_preflight as sp  # noqa: E402
 import watch_once as wo  # noqa: E402
+import topic_match as tm  # noqa: E402
 
 
-def assignable_with_tag(sessions: list[dict], tag: str, live_titles: set[str] | None = None) -> list[dict]:
+def assignable_with_tag(sessions: list[dict], tag: str, live_titles: set[str] | None = None,
+                        task: str | None = None, code: str | None = None) -> list[dict]:
     """جلساتُ 04 الصالحةُ للإسناد بوسمٍ واحد — الوسمُ يُقرأ من الاسم «04SS · <وسم>: <مهمّة>»؛ وتُستبعد المؤرشفةُ (ليست في members)."""
     out = []
     for s in sessions:
@@ -31,11 +34,28 @@ def assignable_with_tag(sessions: list[dict], tag: str, live_titles: set[str] | 
             continue
         head, _, rest = name.partition(" · ")
         if head[:2] == "04" and rest.startswith(f"{tag}:") and s.get("assignable"):
+            if tm.excluded_by_topic(s, task, code):
+                continue  # مشغولةٌ بموضوعٍ مختلف — الوسمُ وحدَه لا يكفي
             out.append(s)
     return out
 
 
-def decide(pre: dict, assignable: list[dict], band: str | None, priority: str | None) -> dict:
+def pending_decisions(number: str, text: str) -> list[dict]:
+    """قراراتٌ في decisions.md تحجز الرقمَ المطلوب (مثل 0414) بلا أن تُذكر منفَّذةً في سطرها — تُعرض قبل منح الرقم."""
+    done = ("نُفِّذ", "نفذ ", "منفّذ", "منفذ", "أُنجز", "انجز", "أُلغي", "الغي", "استُبدل")
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"^- (D-\d+\S*) \|", line)
+        if not m or not re.search(rf"(?<!\d){re.escape(number)}(?!\d)", line):
+            continue
+        if any(w in line for w in done):
+            continue
+        out.append({"decision": m.group(1), "snippet": line[:160]})
+    return out
+
+
+def decide(pre: dict, assignable: list[dict], band: str | None, priority: str | None,
+           pending: list[dict] | None = None) -> dict:
     if not pre["ok"]:
         return {"verdict": "لا تفتح", "why": pre["blockers"]}
     if assignable:
@@ -46,6 +66,10 @@ def decide(pre: dict, assignable: list[dict], band: str | None, priority: str | 
             return {"verdict": "افتح بحذر", "why": [
                 f"الذاكرةُ {band} ولا جلسةَ صالحةٌ للإسناد؛ P0 وحدَه يمرّ: اطلب من أخفّ جلسةٍ خاملةٍ إيقافَ حاويتها (لا أوقفها بيدي) ثمّ أعِد القياس قبل الفتح"]}
         return {"verdict": "انتظر", "why": [f"الذاكرةُ {band} ولا جلسةَ صالحةٌ للإسناد؛ يبقى الطلبُ في الطابور حتى ترتاح الذاكرة أو تتحرّر جلسة"]}
+    if pending:
+        ids = "، ".join(p["decision"] for p in pending)
+        return {"verdict": "راجع القرارات", "why": [f"قراراتٌ معلّقةٌ تحجز الرقمَ {pre.get('next_serial_04')}: {ids} — نفِّذها أو أسقطها قبل منح الرقم"],
+                "pending_decisions": pending}
     return {"verdict": "افتح الآن", "why": ["لا جلسةَ صالحةٌ للإسناد بالوسم، والذاكرةُ تسمح"]}
 
 
@@ -100,7 +124,9 @@ def main() -> None:
     band = pre["memory"]["band"] if pre["memory"] else None
     live = set(next(t for t in tabs["tabs"] if t.get("number") == "04")["members"])
     live = live - busy_titles()
-    result = decide(pre, assignable_with_tag(load_sessions(), args.tag, live), band, args.priority)
+    dec = MAESTRO / "decisions.md"
+    pending = pending_decisions(pre["next_serial_04"], dec.read_text(encoding="utf-8")) if dec.is_file() else []
+    result = decide(pre, assignable_with_tag(load_sessions(), args.tag, live, args.task, args.code), band, args.priority, pending)
     result.update({"title": pre["title"], "memory": pre["memory"], "live_04": f"{pre['live_04']}/{pre['live_cap_04']}",
                    "measure": "قِس الذاكرة مرّتين بعد أيّ فتح: فوراً، ثمّ بعد 10 دقائق (العبءُ يظهر عند أوّل عملٍ فعليّ)"})
     print(json.dumps(result, ensure_ascii=False, indent=2))

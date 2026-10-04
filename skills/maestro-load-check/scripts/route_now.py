@@ -23,6 +23,7 @@ from pathlib import Path
 MAESTRO = Path(os.environ.get("MAESTRO_HOME", "C:/Users/mesue/delivery_manager_work"))
 sys.path.insert(0, str(MAESTRO / "tools"))
 import routing  # noqa: E402 — نعيد استعمالَ guess_type وlive_rows ولا ننسخهما
+import topic_match as tm  # noqa: E402
 
 # نوعُ المشكلة ← جلسةُ النواة التي تملكه (من مواثيق session_policy.charters في tabs.json).
 # git وinfra_preview لا مالكَ لهما بعد أرشفة مقعدَيهما في D-43م ← يُسأل المايسترو/المالك.
@@ -57,7 +58,7 @@ def merge_rows(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
-def decide(ptype: str, paths: list[str], rows: list[dict], tabs: dict, rt: dict) -> dict:
+def decide(ptype: str, paths: list[str], rows: list[dict], tabs: dict, rt: dict, task: str | None = None) -> dict:
     spec = rt["problem_types"].get(ptype)
     if spec is None:
         return {"decision": "unknown_type", "type": ptype, "known": sorted(rt["problem_types"]),
@@ -85,6 +86,8 @@ def decide(ptype: str, paths: list[str], rows: list[dict], tabs: dict, rt: dict)
     merged = merge_rows(rows)
     cands = [v for k, v in merged.items() if k[:2] == "04" and k.partition(" · ")[2].startswith(tag + ":")]
     free = [c for c in cands if c["assignable"]]
+    skipped = [c["session"] for c in free if tm.excluded_by_topic(c, task)]
+    free = [c for c in free if c["session"] not in skipped]  # مشغولةٌ بموضوعٍ مختلف لا تُقترح
     decision = "assign_candidate" if free else "spawn"
     why = ("جلسةٌ حيّةٌ بالوسم نفسه غيرُ مثقلة — وجِّه إليها إن كانت المهمّةُ من عائلة مهمّتها، وإلّا فاستحدث"
            if free else ("كلُّ جلسات الوسم مثقلة" if cands else "لا جلسةَ حيّةً بهذا الوسم في 04"))
@@ -92,7 +95,7 @@ def decide(ptype: str, paths: list[str], rows: list[dict], tabs: dict, rt: dict)
         decision, why = "queue", f"04 ممتلئة ({base['live_04']}/{base['live_cap_04']}): تنتظر البطاقةُ في الطابور أو يقرّر المالك"
     return {**base, "decision": decision, "tag": tag, "specialty": tab_id,
             "candidates": sorted(cands, key=lambda c: (c["overloaded"], c["open_prs"], c["context_mb"])),
-            "notes": base["notes"] + [why]}
+            "notes": base["notes"] + [why] + ([f"استُبعدت لانشغالها بموضوعٍ مختلف: {'، '.join(skipped)}"] if skipped else [])}
 
 
 def main() -> None:
@@ -102,6 +105,7 @@ def main() -> None:
     ap.add_argument("--paths", nargs="*", default=[])
     ap.add_argument("--load-json")
     ap.add_argument("--live", action="store_true")
+    ap.add_argument("--task", help="عنوانُ المهمّة المطلوبة؛ تُستبعد الجلساتُ المشغولةُ بموضوعٍ مختلف")
     args = ap.parse_args()
     rt, tabs = routing.load_routing(), load_tabs()
     ptype = args.type or routing.guess_type(args.paths, rt)
@@ -114,7 +118,7 @@ def main() -> None:
         rows = routing.live_rows()
     else:
         sys.exit("حدّد --live أو --load-json")
-    print(json.dumps(decide(ptype, args.paths, rows, tabs, rt), ensure_ascii=False, indent=2))
+    print(json.dumps(decide(ptype, args.paths, rows, tabs, rt, args.task), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

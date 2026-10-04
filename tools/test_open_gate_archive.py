@@ -35,6 +35,25 @@ class Gate(unittest.TestCase):
         self.assertEqual(len(og.assignable_with_tag(rows, "إدارة", {"0405 · إدارة: أ (W-1)"})), 1)
 
 
+class TopicAndPending(unittest.TestCase):
+    def test_busy_session_with_different_topic_is_excluded(self):
+        rows = [{"session": "0403 · إدارة: تسريب PII (W-1)", "assignable": True, "wip": 2, "context_mb": 5},
+                {"session": "0404 · إدارة: إعادة التوجيه (W-2)", "assignable": True, "wip": 0, "context_mb": 9}]
+        got = og.assignable_with_tag(rows, "إدارة", task="تنبيه إعادة التوجيه", code="W-8")
+        self.assertEqual([r["session"] for r in got], ["0404 · إدارة: إعادة التوجيه (W-2)"])
+
+    def test_busy_same_topic_stays(self):
+        rows = [{"session": "0403 · إدارة: تسريب PII (W-1)", "assignable": True, "wip": 1}]
+        self.assertEqual(len(og.assignable_with_tag(rows, "إدارة", task="إصلاح تسريب PII")), 1)
+
+    def test_pending_decision_blocks_number(self):
+        text = chr(10).join(["- D-148م | 10-02 | الشريحة لجلسة مرنة جديدة 0414 بالتتابع | x", "- D-150م | 10-02 | نُفِّذ على 0414 | y", "- D-151م | z 04141 | w"])
+        got = og.pending_decisions("0414", text)
+        self.assertEqual([d["decision"] for d in got], ["D-148م"])
+        self.assertEqual(og.decide(OK, [], "green", "P1", got)["verdict"], "راجع القرارات")
+        self.assertEqual(og.decide(OK, [{"session": "s"}], "green", "P1", got)["verdict"], "أسنِد")
+
+
 class Archive(unittest.TestCase):
     def test_stopped_hours(self):
         self.assertEqual(acd.stopped_hours("Exited (0) 3 hours ago"), 3)
