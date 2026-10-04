@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""قائمةُ التقييم اليوميّ لجلسة «0102 · تقييم المايسترو» في مخرجٍ واحد — قراءةٌ فقط، لا يكتب أيَّ ملفّ.
+"""قائمةُ التقييم اليوميّ لجلسة «0102 · التقييم والعصف الذهني» في مخرجٍ واحد — قراءةٌ فقط، لا يكتب أيَّ ملفّ.
 
 يجمع ما تطلبه طريقةُ العمل اليوميّة في ميثاق 0102 (tabs.json → session_policy.charters):
   1) السجلّ مقابل الجلسات الحيّة (validate_registry بقائمةٍ حيّة، لا باللقطة المحفوظة وحدها)
@@ -12,7 +12,7 @@
     python daily_audit.py --sessions-json <ملفُّ مخرج list_sessions> [--no-live] [--json]
 
 الملفُّ: مصفوفةُ list_sessions كما هي (أو قائمةُ عناوين). list_sessions تُسقط الجلسةَ المستدعِية،
-فيُضاف عنوانُها بـ--self-title (الافتراض «0102 · تقييم المايسترو»).
+فيُضاف عنوانُها بـ--self-title (الافتراض «0102 · التقييم والعصف الذهني»).
 """
 
 from __future__ import annotations
@@ -235,7 +235,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default="C:/Users/mesue/delivery_manager_work")
     ap.add_argument("--sessions-json", type=Path)
-    ap.add_argument("--self-title", default="0102 · تقييم المايسترو")
+    ap.add_argument("--self-title", default="0102 · التقييم والعصف الذهني")
     ap.add_argument("--repo-prefix", default="D:/shschool_mvp")
     ap.add_argument("--idle-hours", type=float, default=3.0)
     ap.add_argument("--decisions", type=int, default=12, help="عددُ آخر القرارات التي تُطابَق أوقاتُها")

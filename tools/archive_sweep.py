@@ -92,7 +92,7 @@ def extra_blockers(merged_prs: list[int], live_commit: str | None, oid_of, ances
         blockers.append("طلبٌ مدموجٌ لم يبلغ الإنتاجَ الحيّ: " + ", ".join(f"#{n}" for n in undeployed))
     missing = [n for n in merged_prs if n not in mentioned]
     if missing:
-        blockers.append("الخارطةُ لم تذكر: " + ", ".join(f"#{n}" for n in missing) + " (تنتظر 0701)")
+        blockers.append("الخارطةُ لم تذكر: " + ", ".join(f"#{n}" for n in missing) + " (تنتظر 0702)")
     if not blockers:
         notes.append("منشورةٌ في الإنتاج الحيّ ومذكورةٌ في الخارطة: " + ", ".join(f"#{n}" for n in merged_prs))
     return blockers, notes

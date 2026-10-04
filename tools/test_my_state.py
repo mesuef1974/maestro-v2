@@ -118,7 +118,7 @@ class Report(unittest.TestCase):
         text = my_state.report("0403", events, now=NOW)
         self.assertIn("W-1", text)
         self.assertNotIn("W-2", text)
-        self.assertIn("أبلغي 0701", text)
+        self.assertIn("أبلغي 0702", text)
         self.assertIn("(مستنتَج)", text)
 
     def test_finished_cards_appear_only_with_all(self):

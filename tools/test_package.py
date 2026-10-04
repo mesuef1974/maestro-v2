@@ -509,7 +509,7 @@ class Registry(unittest.TestCase):
 
     def test_core_to_open_is_listed_but_not_required_live(self):
         # جلسةُ نواةٍ لم تُفتح بعدُ تُدرج في core_to_open ولا يلزمها تبويبٌ ولا حياة؛ نبنيها على نسخةٍ لأنّ الحالَ الحيّة تتغيّر بالفتح
-        tabs = json.loads(json.dumps(TABS)); sp = tabs["session_policy"]; name = "0702 · مراقبات الجودة"
+        tabs = json.loads(json.dumps(TABS)); sp = tabs["session_policy"]; name = "0702 · الجودة والرصد والخارطة والأتمتة"
         if name in sp["core_sessions"]:
             sp["core_sessions"].remove(name)
         sp["core_to_open"] = [name]

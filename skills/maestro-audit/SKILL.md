@@ -1,12 +1,12 @@
 ---
 name: maestro-audit
-description: "Use for the independent Maestro audit in SchoolOS (session 0102 · تقييم المايسترو): the daily post-deploy-window check, the Thursday deep audit and BLUF report, and applying an owner structural decision everywhere (decisions.md, flow_changelog, tabs.json, tools, skills). Trigger on: validate_registry, ledger late items, flow_metrics, session_load_v2, first-round approval ratio, maestro-* activation tests, flow version mismatch, decision time vs commit. استخدمها عند «قيّم المايسترو»، «تقرير الخميس»، «هل السجلُّ متّسقٌ مع الشريط؟»، «طبّق قرارَ المالك» (مراحل، نواة، تسمية، ترقيم)، «هل D-NNم متطبّق في كلّ الملفّات؟» — ولو لم يُذكر التقييم: جلساتٌ نايمة خارج النواة، رقمُ فلوٍ مختلف، وقتُ قرارٍ لا يطابق إيداعه. ليست لـ: توجيه المهامّ (maestro-load-check)، فتح جلسة (maestro-spawn)، الأرشفة (maestro-archive-check)، حادثٍ جارٍ (maestro-incident)، قياس الجودة (schoolos-quality-guards)، نافذة المراجعة (maestro-review-window)، الفلو (schoolos-flow)، مراجعة شيفرة (code-review)."
+description: "Use for the independent Maestro audit in SchoolOS (session 0102 · التقييم والعصف الذهني): the daily post-deploy-window check, the Thursday deep audit and BLUF report, and applying an owner structural decision everywhere (decisions.md, flow_changelog, tabs.json, tools, skills). Trigger on: validate_registry, ledger late items, flow_metrics, session_load_v2, first-round approval ratio, maestro-* activation tests, flow version mismatch, decision time vs commit. استخدمها عند «قيّم المايسترو»، «تقرير الخميس»، «هل السجلُّ متّسقٌ مع الشريط؟»، «طبّق قرارَ المالك» (مراحل، نواة، تسمية، ترقيم)، «هل D-NNم متطبّق في كلّ الملفّات؟» — ولو لم يُذكر التقييم: جلساتٌ نايمة خارج النواة، رقمُ فلوٍ مختلف، وقتُ قرارٍ لا يطابق إيداعه. ليست لـ: توجيه المهامّ (maestro-load-check)، فتح جلسة (maestro-spawn)، الأرشفة (maestro-archive-check)، حادثٍ جارٍ (maestro-incident)، قياس الجودة (schoolos-quality-guards)، نافذة المراجعة (maestro-review-window)، الفلو (schoolos-flow)، مراجعة شيفرة (code-review)."
 ---
 
 # تقييمُ منظومة المايسترو (جلسة 0102)
 
 الغرض: خطُّ دفاعٍ ثانٍ مستقلّ يتحقّق أنّ ما قرّره المالكُ مسجَّلٌ ومطبَّقٌ في الملفّات والأدوات والمهارات والشريط، وأنّ الفلو يُتَّبع، ثمّ يصلح ما يخصّ مجلّد المايسترو ويبلّغ.
-المصدر: ميثاقُ «0102 · تقييم المايسترو» في `C:/Users/mesue/delivery_manager_work/projects/schoolos/tabs.json` → `session_policy.charters` (D-51م).
+المصدر: ميثاقُ «0102 · التقييم والعصف الذهني» في `C:/Users/mesue/delivery_manager_work/projects/schoolos/tabs.json` → `session_policy.charters` (D-51م).
 
 ## متى تُستعمل ومتى لا
 - يوميّاً بعد نافذة النشر (قصير)، والخميس (معمَّق)، وعند كلّ قرارٍ بنيويٍّ من المالك.
@@ -24,7 +24,7 @@ description: "Use for the independent Maestro audit in SchoolOS (session 0102 ·
 
 ## القواعد وأسبابها
 - القائمةُ الحيّة لا اللقطةُ المحفوظة: `validate_registry --sessions sessions_snapshot.json` يطابق ملفّاً قد يكون قديماً فيقول «متّسق» والشريطُ غيرُ ذلك. و`list_sessions` تُسقط الجلسةَ المستدعِية، فأضِف عنوانَك (السكربتُ يفعلها). المصدر: فحصُ 09-28 21:02.
-- الأرشفةُ ليست لك: توصي بها للمايسترو بعد `archive_check.py`، والمالكُ يأمر. أرشفةُ «0201 · أمين البلاغات» خطأً في D-43م (وهي ثابتةٌ منذ 09-25) أُعيدت في D-47م. المصدر: decisions.md D-47م، feedback_never_archive_without_order.
+- الأرشفةُ ليست لك: توصي بها للمايسترو بعد `archive_check.py`، والمالكُ يأمر. أرشفةُ «0204 · البوابة والبلاغات» خطأً في D-43م (وهي ثابتةٌ منذ 09-25) أُعيدت في D-47م. المصدر: decisions.md D-47م، feedback_never_archive_without_order.
 - لا تراسل إلّا المايسترو ما لم يأذن المالك، ولا توجّه جلسة، ولا تفتح جلسات، ولا تمسّ شيفرةَ المنصّة ولا تدفع إليها ولا تدمج. المصدر: حدودُ ميثاق 0102.
 - القرارُ لا يُعدَّل نصُّه أبداً؛ التصحيحُ سطرٌ جديد (مثل «تصحيحُ أوقات»). المصدر: رأسُ decisions.md.
 - لا رقمَ بلا مصدرٍ ووقت، ولا تقديرٌ مكان قياس: ما لا أداةَ له يُكتب «غيرُ مقيس» بسببه. المصدر: operating_model.md رأسُه و§9.

@@ -31,13 +31,13 @@ NOTE_OWNER = re.compile(r"^\s*(?:من\s+)?(\d{4})\b")
 SESSION_CODE = re.compile(r"\b(\d{4})\b")
 
 #: ملاحظةٌ بعد الدمج تدلّ على أنّ الخارطةَ أُبلغت.
-ROADMAP_MARK = re.compile(r"0701|خارط|roadmap", re.IGNORECASE)
+ROADMAP_MARK = re.compile(r"0701|0702|خارط|roadmap", re.IGNORECASE)
 
 DONE = ("published", "closed", "deferred")
 
 #: الأفعالُ الخمسة بترتيب العرض.
 ACTIONS = (
-    ("roadmap", "بعد الدمج: أبلغي 0701 برقم الطلب"),
+    ("roadmap", "بعد الدمج: أبلغي 0702 برقم الطلب"),
     ("now", "عليكِ الآن"),
     ("push", "اعتُمدت: ادفعي بالرأس المعتمَد"),
     ("waiting", "تنتظر غيرَكِ"),
@@ -73,7 +73,7 @@ def _merged_at(events: list[dict], card: str) -> str | None:
 
 
 def roadmap_notified(events: list[dict], card: str) -> bool:
-    """ملاحظةٌ بعد آخر دمجٍ تذكر الخارطةَ أو 0701."""
+    """ملاحظةٌ بعد آخر دمجٍ تذكر الخارطةَ أو 0702."""
     since = _merged_at(events, card)
     if since is None:
         return False

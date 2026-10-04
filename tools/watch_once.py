@@ -69,7 +69,7 @@ def commit_alert(pct: float | None, th: dict | None = None) -> dict | None:
     else:
         return None
     return alert("commit", sev, f"الالتزامُ {pct}% من الحدّ (تفشل التخصيصاتُ قرابةَ 95–100%)",
-                 "اخفض الجلساتِ الحيّة (قائمةُ 0104) أو أحِل إلى device_memory_guard.ps1 DryRun؛ لا تقليصَ WorkingSet فهو لا يخفض الالتزام")
+                 "اخفض الجلساتِ الحيّة (قائمةُ 0102) أو أحِل إلى device_memory_guard.ps1 DryRun؛ لا تقليصَ WorkingSet فهو لا يخفض الالتزام")
 
 
 def memory_band(free_gb: float, th: dict) -> str:
