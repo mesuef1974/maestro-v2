@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تقرير العصف الذهني — 2026-10-04</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1b19;--mut:#6b655d;--line:#e4dfd6;--card:#fff;--acc:#7a1f3d;--ok:#1f6b3a;--warn:#8a5a00;--bad:#9b1c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#161412;--fg:#ece7de;--mut:#a39b8f;--line:#33302b;--card:#1e1b18;--acc:#e0a3b8;--ok:#74c28f;--warn:#e0b14d;--bad:#e58a8a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 "Tajawal","Segoe UI",Tahoma,sans-serif}
+main{max-width:62rem;margin-inline:auto;padding:1.5rem 1rem 4rem}
+h1{font-size:1.6rem;margin:0 0 .25rem;color:var(--acc)}
+h2{font-size:1.2rem;margin:2.2rem 0 .6rem;border-block-end:2px solid var(--line);padding-block-end:.3rem}
+.sub{color:var(--mut);margin:0 0 1.2rem}
+.bluf{background:var(--card);border:1px solid var(--line);border-inline-start:5px solid var(--acc);padding:1rem 1.2rem;border-radius:.5rem}
+.bluf p{margin:.3rem 0}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:.5rem;overflow:hidden;font-size:.95rem}
+th,td{padding:.55rem .7rem;text-align:start;vertical-align:top;border-block-end:1px solid var(--line)}
+th{background:rgba(122,31,61,.08);font-weight:700}
+.tbl{overflow-x:auto}
+.tag{display:inline-block;padding:.05rem .5rem;border-radius:1rem;font-size:.8rem;border:1px solid var(--line)}
+.hi{color:var(--ok);border-color:var(--ok)}.md{color:var(--warn);border-color:var(--warn)}.lo{color:var(--mut)}
+ul{padding-inline-start:1.3rem}
+.q{background:var(--card);border:1px solid var(--line);border-radius:.5rem;padding:.8rem 1rem;margin:.6rem 0}
+small,.mut{color:var(--mut)}
+code{background:rgba(127,127,127,.15);padding:0 .3rem;border-radius:.25rem;font-size:.9em}
+</style>
+</head>
+<body>
+<main>
+<h1>تقرير العصف الذهني: تجويد الجلسات والفلو</h1>
+<p class="sub">إعداد 0102 · 2026-10-04 · بأمر المالك · سبعةُ ردودٍ من ثمانٍ (0104 بانتظار الرد)</p>
+
+<div class="bluf">
+<p><strong>الخلاصة:</strong> ثلاثةُ أخطاءٍ تكرّرت عبر ردودٍ متعدّدة، وإصلاحُها رخيصٌ وأثرُه عالٍ: (١) الجلسةُ بعد المسح لا تعرف هويّتَها وبطاقتَها، (٢) الإبلاغُ يضيع حين يُختم الردُّ قبل إرساله، (٣) ادّعاءاتُ «بأمر المالك» المنقولةُ بين الجلسات لا أثرَ يُطابَق عليه.</p>
+<p><strong>توصيتي:</strong> اعتمادُ الحزمة أ (ملفُّ هويّةٍ + أمرٌ مسجَّل برقم + إبلاغٌ ضمن الفعل) أوّلاً؛ ثمّ الحزمة ب (سلامةُ الدفتر)؛ وتأجيلُ الباقي إلى ما بعد قياسٍ أوّل.</p>
+<p class="mut">لا رقمَ هنا إلّا ما أوردتْه الجلساتُ بدليله؛ وكلُّ «ما لم يُقَس» مذكورٌ بجانب مقترحه.</p>
+</div>
+
+<h2>١) الأنماط المشتركة (ما اتّفقت عليه أكثرُ من جلسة)</h2>
+<div class="tbl"><table>
+<tr><th>النمط</th><th>الدليل</th><th>من أبلغ</th></tr>
+<tr><td>فقدانُ الهويّة بعد المسح</td><td>0301 رفضت العملَ لأنّها لا تعرف أنّها 0301؛ 0103 و0201 عرّفتا نفسيهما 04SS؛ 0601 ردّت مرّتين دون أن تعرف أنّها 0601؛ وأنا قرأتُ بطاقة 04.md بدل 0102.md. <strong>السببُ الجذريّ (0103):</strong> أوّلُ سطرٍ في «ابدأ هنا» من MEMORY.md كان يوجّه إلى بطاقة 04SS — وقد صحّحتُه الآن</td><td>0101 و0201 و0601 و0103 و0102</td></tr>
+<tr><td>إبلاغٌ يضيع لأنّ الردَّ خُتم قبله</td><td>0501 ثبّتت 8500 ولم تُبلغ إلّا بعد سؤال 0101؛ 0406 لم تُسجّل في الدفتر</td><td>0501 و0101</td></tr>
+<tr><td>«بأمر المالك» منقولٌ بلا أثر</td><td>رفعُ P0 V2 من 0204؛ إعادةُ ترقيم الجلسات من جلسةٍ أخرى (تحقّقتُ منها في سجلّها وقبلتُها: D-198م)</td><td>0101</td></tr>
+<tr><td>دمجٌ يترك تعارضاً أو إحالاتٍ قديمة</td><td>مذكّرة 0201 «لا تقرير 07:00» مقابل ميثاقٍ يوجبه؛ ست عباراتٍ ذاتيّة الإحالة في tabs.json؛ 0601.md تذكر أسماءً قديمة</td><td>0201 و0701 و0601</td></tr>
+<tr><td>حالةُ الدفتر تخالف الواقع</td><td>W-20261003-038 «pushed» ورأسُها محلّيّ بلا طلب</td><td>0601</td></tr>
+<tr><td>تأخّرٌ بين الحدث والإعلان</td><td>#752 اندمج 10-01 ووصل الخارطةَ 10-04 (هدفُه يوم)</td><td>0701</td></tr>
+<tr><td>معاينةٌ بلا دليلٍ بصريّ</td><td>ثلاثُ دوراتٍ على W-014/015؛ ومعاينةٌ على رأسٍ قديم</td><td>0101 و0501</td></tr>
+</table></div>
+
+<h2>٢) المقترحاتُ مرتّبةً بالأثر ÷ الكلفة</h2>
+<h3>الحزمة أ — أعلى أثرٍ وأقلّ كلفة (أنصح بها الآن)</h3>
+<div class="tbl"><table>
+<tr><th>#</th><th>المقترح</th><th>القياس</th><th>ما لم يُقَس</th><th>الأثر</th></tr>
+<tr><td>أ١</td><td>ملفُّ هويّةٍ في شجرة كلّ جلسةٍ (الرقم والبطاقة) تقرؤه عند أوّل ردّ؛ ورسالةُ المسح تحمل اسمَ الجلسة وبطاقتَها الصحيحين</td><td>عددُ تصحيحات الهويّة بعد كلّ مسح</td><td>كم جلسةً تفقد هويّتها خارج هذه الواقعة</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>أ٢</td><td>كلُّ أمرٍ مباشر من المالك يُسجَّل برقمٍ في <code>owner_orders_auto.md</code>، ويُطابَق عليه أيُّ ادّعاءٍ «بأمر المالك» قبل التنفيذ</td><td>نسبةُ الأوامر المنفَّذة ذات رقم</td><td>عددُ الادّعاءات الخاطئة</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>أ٣</td><td>الإبلاغُ جزءٌ من الفعل نفسِه: pin أو إيداعٌ ثمّ رسالةٌ للمنفِّذة و0101 في الردّ نفسه</td><td>الزمنُ بين الفعل والإبلاغ</td><td>عددُ الوعود الضائعة</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>أ٤</td><td>«جاهزٌ للمعاينة» يحمل حقلاً رابعاً: الرأس (sha8) وطريقةُ الدخول (حسابٌ وهميّ أو شخصيّ)، ولا «جاهز» لواجهةٍ بلا لقطتين بالدور</td><td>دوراتُ المعاينة لكلّ بطاقة واجهة؛ شكاوى لا تتّصل بالكود</td><td>أيّ جلسةٍ مرنةٍ تملك متصفّحاً</td><td><span class="tag hi">عالٍ</span></td></tr>
+</table></div>
+
+<div class="q"><strong>طُبّق فوراً:</strong> أوّلُ سطرٍ في «ابدأ هنا» (MEMORY.md) صار «اعرف رقمَك من اسم جلستك ثمّ بطاقتَك» (مقترح 0103)، وما بعده للمرنة 04SS فقط.</div>
+<h3>الحزمة ب — سلامةُ الدفتر والأدوات</h3>
+<div class="tbl"><table>
+<tr><th>#</th><th>المقترح</th><th>القياس</th><th>ما لم يُقَس</th><th>الأثر</th></tr>
+<tr><td>ب١</td><td><code>ledger.py move … pushed</code> لا يُقبل إلّا بعد <code>ls-remote</code> ناجح؛ و<code>my_state.py</code> يطبع تحذيراً ببطاقات pushed بلا فرع بعيد</td><td>بطاقاتٌ pushed بلا فرع بعيد (الآن 1)</td><td>تكلفةُ ls-remote لكلّ بطاقة؛ عددُ الأخرى</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>ب٢</td><td>حقل <code>held_by</code> في الدفتر يكتبه <code>spawn_preflight --reserve</code> وتصفّره أداةُ الفتح/الإغلاق (بدل الاستدلال بالغياب)</td><td>بطاقاتٌ محجوزةٌ بلا جلسةٍ حيّة</td><td>أخطاءُ 0301 السابقة</td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>ب٣</td><td><code>post_merge_checklist</code> ينشئ بنداً في طابور مزامنة الخارطة تلقائياً عند اندماج أيّ طلب</td><td>وسيطُ الزمن من الدمج إلى سطر الطابور</td><td>بنودٌ بلا بطاقة دفتر</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>ب٤</td><td><code>spawn_preflight</code> يقبل الرمزَ الكامل ويشتقّ اختصاراً فريداً ويفحص تصادمَه (رُفض «W-20261001-007» لطوله)</td><td>رفضاتُ الطول وتصادماتُ الرموز (الهدف صفر)</td><td>التصادماتُ الماضية</td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>ب٦</td><td><code>my_state.py</code> يقبل اسمَ الجلسة الظاهر أو يقرؤه من البيئة (يطلب الآن رقمَ الجلسة ولم تجده 0103 في الملفّات)</td><td>تشغيله بلا معطيات يعيد حالةَ الجلسة نفسها</td><td>وجودُ الاسم في البيئة أصلاً</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>ب٥</td><td>«أسنِد» يفحص عنوانَ مهمّة الجلسة وحالتَها فيستبعد المشغولةَ بموضوعٍ مختلف</td><td>نسبةُ اقتراحات «أسنِد» المُبطَلة يدويّاً</td><td>انشغالُ 0410 الفعليّ</td><td><span class="tag md">متوسّط</span></td></tr>
+</table></div>
+
+<h3>الحزمة ج — الدمجُ وإعادةُ التسمية والرصد</h3>
+<div class="tbl"><table>
+<tr><th>#</th><th>المقترح</th><th>القياس</th><th>ما لم يُقَس</th><th>الأثر</th></tr>
+<tr><td>ج١</td><td>جدولُ تحويلٍ (alias) في tabs.json تقرؤه الأدوات بدل استبدالٍ نصّيّ في نحو 200 ملف؛ و<code>validate_registry</code> يرفض «X دُمجت في X» والأرقامَ الميّتة</td><td>الإحالاتُ الميّتة = 0</td><td>ما في MEMORY.md المشترك</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>ج٥</td><td>فحصٌ أسبوعيّ (الخميس) للأرقام الميّتة والمُعاد استعمالُها في MEMORY.md والبطاقات (بقيت 0105 و0204 و0702)؛ والتنفيذُ بأمر المالك</td><td>المراجعُ الميّتة (الهدف 0)</td><td>حجمُها في البطاقات الأخرى</td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>ج٦</td><td><code>validate_registry</code> يرفض سطراً في <code>flow_changelog.md</code> بلا رقم إصدارٍ وقرار (سطرُ ترقيم 10-04 صدر بلا إصدار وتعارض مع v2.14)</td><td>أسطرٌ مخالفة (الآن 1)</td><td>الأسطرُ الأقدم</td><td><span class="tag lo">منخفض</span></td></tr>
+<tr><td>ج٢</td><td>كلُّ دمجٍ يُرفق جدولَ «ما انتقل وما أُلغي» في الميثاق؛ وإعادةُ توليد البطاقات من tabs.json عند كلّ إعادة تسمية</td><td>تعارضٌ بين مذكّرةٍ ودورٍ = 0؛ أسماءٌ قديمةٌ في البطاقات = 0</td><td>أثرُه على سرعة الاستعادة</td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>ج٣</td><td>الرصد: دورةٌ كاملةٌ (watch_once وbranch_status) عند بدء كلّ جلسةٍ وبعد كلّ نشر + اختبارُ تغطيةٍ يسقط إن غاب BACKUP_FAILED أو الشجرةُ اليتيمة أو late_start</td><td>الأنواعُ المغطّاة من ثلاثة</td><td>نسبةُ الإنذارات الكاذبة</td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>ج٤</td><td>فحصُ «آخرُ تطبيق للتكامل» قبل كلّ «جاهزٌ للمعاينة» وتشغيلُ <code>sync --now</code> إن زاد على 12 دقيقة</td><td>معاينةٌ على رأسٍ قديم</td><td>سببُ توقّف watch</td><td><span class="tag md">متوسّط</span></td></tr>
+</table></div>
+
+<h3>الحزمة د — الطابورُ والبلاغات</h3>
+<div class="tbl"><table>
+<tr><th>#</th><th>المقترح</th><th>القياس</th><th>ما لم يُقَس</th><th>الأثر</th></tr>
+<tr><td>د١</td><td>هدفٌ رسميٌّ لعمر الراكد غير المركون (الآن 55 من 85 = 64.7% مقابل < 20%) يُراجَع أسبوعيّاً</td><td><code>intake_kpis.py</code></td><td>هل هو إهمالٌ أم أولويّةٌ منخفضة</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>د٢</td><td>جلسةُ Chrome مسجَّلة الدخول مثبَّتةٌ لقراءة صندوق المطوّر (تقرير 07:00 بلا مصدرٍ اليوم: صفحةُ دخول)</td><td>أيّامُ التقرير الصادرة ÷ الأيّام</td><td>تاريخُ آخر تقرير قبل المسح</td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>د٣</td><td>لا يُحجز رقمٌ محدَّدٌ بقرارٍ حتى يُنفَّذ القرارُ أو يُغلق، ويعرض <code>open_gate</code> القراراتِ المعلّقة عليه (تعارض D-148م مع موجة الإجازات على 0414)</td><td>أرقامٌ محجوزةٌ بقرارين متعارضين</td><td>هل فُتحت 014..016 قبل D-148م</td><td><span class="tag lo">منخفض</span></td></tr>
+</table></div>
+
+<h2>٣) ما طُبّق فعلاً اليوم ضمن هذا العصف</h2>
+<ul>
+<li>ميثاق 0501: كلُّ ما يحتاج تعديلاً أو تحقّقاً يُحال إلى الجلسة المسؤولة بنصّه ولا يُشخَّص (إيداع <code>176aa95</code>)، ولا pin لعملٍ مودَع.</li>
+<li>مهارتان جديدتان لـ0102: <code>maestro-facilitation</code> (إدارة العصف والنقاش) و<code>maestro-system-quality</code> (ثمانيةُ أبعادٍ واختبارُ المسح ومعيارُ الميثاق).</li>
+<li>الدمجُ الرباعيُّ وإعادةُ الترقيم موثَّقان في D-197م وD-198م.</li>
+</ul>
+
+<h2>٤) مقترحاتي أنا (0102)</h2>
+<ul>
+<li><strong>اختبارُ المسح دوريّاً</strong> (شهريّاً وبعد كلّ تغييرٍ بنيويّ) بمهارة <code>maestro-system-quality</code>: عيّنةُ جلستين، وعدُّ تصحيحات الهويّة.</li>
+<li><strong>استقلالُ التقييم بعد الدمج:</strong> قراءةُ 0103 عيّنةً من أثر العصف بدل 0102 (مسجَّل في ميثاقي). <span class="mut">ما لم يُقَس: هل 0103 تملك الوقتَ لذلك.</span></li>
+<li><strong>الردودُ لا تصلني إن بقيت في محادثة الجلسة:</strong> أربع جلساتٍ توقّفت بلا إرسال. يُضاف إلى رسالة العصف سطرٌ «أرسلي بـSendMessage» افتراضيّاً.</li>
+</ul>
+
+<h2>٥) ما أسألك عنه</h2>
+<div class="q"><strong>هل أعتمد الحزمة أ وأحوّلها إلى بطاقاتٍ وتغييرات ميثاقٍ (أ١ أ٢ أ٣ أ٤)؟</strong> سأوزّعها على أصحابها: أ١ على 0101 وأدوات المايسترو، أ٢ على 0101، أ٣ على الميثاق العامّ، أ٤ على 0501 و0103 (ترقية <code>web-design-mastery</code>).</div>
+<div class="q"><strong>هل أعمّم قاعدة «يُحال ولا يُشخَّص» (من ميثاق 0501) على كلّ الجلسات؟</strong></div>
+
+<p class="mut">المصادر: ردودُ 0501 و0201 و0101 و0701 و0601 و0301 في محادثة 0102؛ ردّا 0103 و0104 لم يصلا بعد وسأُلحقهما. لا أرقامَ غيرَ ما أوردتْه الجلساتُ بدليله.</p>
+</main>
+</body>
+</html>
