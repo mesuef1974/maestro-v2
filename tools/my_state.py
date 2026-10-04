@@ -148,11 +148,13 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="أين بطاقتي الآن؟ — من الدفتر، قراءةٌ فقط")
-    parser.add_argument("session", help="رقمُ الجلسة، مثلاً 0402")
+    parser.add_argument("session", help="رقمُ الجلسة (0402) أو اسمُها الظاهر («0402 · …»)")
     parser.add_argument("--all", action="store_true", help="اعرض المنتهيةَ أيضاً")
     args = parser.parse_args()
-    if not re.fullmatch(r"\d{4}", args.session):
+    m = re.match(r"\s*(\d{4})", args.session)  # يقبل الاسمَ الظاهر كاملاً: نأخذ أوّل أربع خانات
+    if not m:
         sys.exit("رقمُ الجلسة أربعةُ أرقام، مثلاً 0402")
+    args.session = m.group(1)
     sys.stdout.reconfigure(encoding="utf-8")
     print(report(args.session, ledger.load_events(), show_all=args.all))
 
