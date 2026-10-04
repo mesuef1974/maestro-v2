@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>عصف آليّة الغياب — 2026-10-04</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1b19;--mut:#6b655d;--line:#e4dfd6;--card:#fff;--acc:#7a1f3d;--ok:#1f6b3a;--warn:#8a5a00;--bad:#9b1c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#161412;--fg:#ece7de;--mut:#a39b8f;--line:#33302b;--card:#1e1b18;--acc:#e0a3b8;--ok:#74c28f;--warn:#e0b14d;--bad:#e58a8a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 "Tajawal","Segoe UI",Tahoma,sans-serif}
+main{max-width:64rem;margin-inline:auto;padding:1.5rem 1rem 4rem}
+h1{font-size:1.6rem;margin:0 0 .25rem;color:var(--acc)}h2{font-size:1.2rem;margin:2.2rem 0 .6rem;border-block-end:2px solid var(--line);padding-block-end:.3rem}h3{font-size:1.02rem;margin:1.2rem 0 .3rem}
+.sub{color:var(--mut);margin:0 0 1.2rem}.bluf{background:var(--card);border:1px solid var(--line);border-inline-start:5px solid var(--acc);padding:1rem 1.2rem;border-radius:.5rem}.bluf p{margin:.3rem 0}
+.tbl{overflow-x:auto}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-size:.93rem}th,td{padding:.5rem .65rem;text-align:start;vertical-align:top;border-block-end:1px solid var(--line)}th{background:rgba(122,31,61,.08);font-weight:700}
+.tag{display:inline-block;padding:.05rem .5rem;border-radius:1rem;font-size:.8rem;border:1px solid var(--line)}.hi{color:var(--bad);border-color:var(--bad)}.md{color:var(--warn);border-color:var(--warn)}.lo{color:var(--ok);border-color:var(--ok)}
+code{background:rgba(127,127,127,.15);padding:0 .3rem;border-radius:.25rem;font-size:.88em;direction:ltr;unicode-bidi:embed}
+.q{background:var(--card);border:1px solid var(--line);border-radius:.5rem;padding:.8rem 1rem;margin:.7rem 0}.q h3{margin-top:0}.mut{color:var(--mut)}ul{padding-inline-start:1.3rem;margin:.3rem 0}
+</style>
+</head>
+<body>
+<main>
+<h1>عصف آليّة الغياب: الأدوار والحفظ في الباك اند</h1>
+<p class="sub">إعداد 0102 · 2026-10-04 · مصادر: ردود 0101 و0103 و0104 و0301 و0404، وقراءة الكود من origin/main (رأس edfb66d، قراءة فقط) · لم يُشغَّل كود ولم تُفحص قاعدة حيّة</p>
+
+<div class="bluf">
+<p><strong>الخلاصة:</strong> البنية الأساسيّة سليمة وفيها ما يفوق أغلب الأنظمة: سجلّ أحداثٍ يُلحَق فقط بحارس ثلاثيّ (الكود وtrigger في القاعدة وأدمن للقراءة). المشكلة أنّ <strong>الحقيقةَ مزدوجة</strong> (حالة تُستبدل بجانب السجلّ)، وأنّ ثلاثة مصادر تُنتج «غائب» وأسبقيّتُها في الكود وحده لا في الجداول، وأنّ <strong>قيود القاعدة ناقصة</strong> فيحرسها الكود ويسقط تحت التزامن.</p>
+<p><strong>توصيتي:</strong> (١) مرحلة أمان وسلامة بيانات الآن: قيود في القاعدة، وسدّ أربع ثغرات صلاحيات، وكتابة ModelAdmin للجداول الخمسة الناقصة؛ (٢) ثمّ التدقيق والخصوصيّة (تشفير الأسباب وسجلّ قبل/بعد)؛ (٣) ثمّ توحيد الحساب في خدمة واحدة؛ (٤) وتأجيل جعل StudentAttendance إسقاطاً من السجلّ إلى ما بعد استقرار المدرسة الوهميّة.</p>
+</div>
+
+<h2>١) الأدوار: ما قُرِّر وما في اللوائح وما في الكود</h2>
+<div class="tbl"><table>
+<tr><th>الدور</th><th>قرارات المالك (0101/0103)</th><th>اللوائح (0301)</th><th>الكود (الاستكشاف)</th></tr>
+<tr><td>معلّم الحصّة</td><td>يرصد مبدئيّاً من بدء الحصّة حتى نهاية اليوم (D-125م/128م)؛ لا يكتب فوق معتمَد</td><td><strong>لا نصّ</strong> يحدّد صلاحيّته في تسجيل الغياب أو تعديله</td><td><code>submit_entry</code> معلّق في الأجنحة؛ ينقر «متأخّر» و«خرج»؛ يُنهي أيَّ حصّة مدرسته (ثغرة)</td></tr>
+<tr><td>مشرف الجناح (حامل <code>WingCoverage</code>)</td><td>يعتمد، ولو في يوم لاحق لمن حمل الجناح يوم الحصّة</td><td>المشرف الإداري يحصر الغياب اليوميّ ويدخله ولا يبتّ في المخالفات؛ إنذار الغياب يعتمده المشرف الإداري ومنسّق شؤون الطلبة والنائب الإداري والمدير</td><td>يكتب مباشرةً في <code>StudentAttendance</code> (<code>source=supervisor</code>)؛ يقبل العذر خلال يومين دراسيّين</td></tr>
+<tr><td>النائب الأكاديمي</td><td><strong>لم يُعرَّف</strong> ولا حدّه عن حامل الجناح (فجوة تعريف)</td><td>اللائحة تذكر «النائب الإداري» فقط</td><td>داخل <code>WING_DAY_RECORD</code> فيرصد مباشرةً؛ غير منفصل عن الإداريّ</td></tr>
+<tr><td>النائب الإداري</td><td>—</td><td>يعتمد إنذار الغياب؛ يملك سياسة المواظبة</td><td>يقبل العذر بعد المهلة (<code>wings.excuse_after_deadline</code>)، مع المدير</td></tr>
+<tr><td>القيادة (مدير/نائب)</td><td>لا تعتمد إلا عند غياب حامل الجناح</td><td>المدير يعتمد الإنذار</td><td>يعتمدون حين لا حاملَ فعليّ (<code>can_approve</code>)</td></tr>
+<tr><td>المرشد/الأخصائي</td><td>—</td><td>يستقبل الإحالات ولا يعتمد</td><td>يرى كلَّ الحضور ويصله تنبيه العتبة؛ لا يسجّل</td></tr>
+<tr><td>معلّم التربية الخاصة</td><td>رصده نهائيّ بلا اعتماد مع تدقيق كامل (D-129م)</td><td>—</td><td>يُعتمد فوراً؛ لكنّ <code>mark_all_present</code> له يتجاوز السجلّ والتدقيق (ثغرة)</td></tr>
+<tr><td>المطوّر</td><td>لا يدخل ولا يعتمد</td><td>—</td><td>مستبعَد من <code>WING_DAY_RECORD</code></td></tr>
+</table></div>
+<p class="mut">لا نصَّ لوائحيّاً يحدّد: من يعدّل غياباً مسجَّلاً، ومن يقبل العذر، وتعريفاً كمّيّاً لـ«التأخّر عن الحصّة» (القيمة الحاليّة 5 دقائق قرار مدرسة)، وحصص التبديل. هذه قراراتُك أنت.</p>
+
+<h2>٢) الجداول الحاليّة وما ينقصها</h2>
+<div class="tbl"><table>
+<tr><th>الجدول</th><th>الدور</th><th>ما ينقصه (بالدليل)</th></tr>
+<tr><td><code>StudentAttendance</code></td><td>الحالة الحاليّة لكلّ (حصّة، طالب)؛ <code>UniqueConstraint(session,student)</code></td><td>حالة تُستبدل بلا جدول تاريخ؛ <code>excuse_notes</code> و<code>notes</code> نصٌّ حرّ غير مشفَّر؛ كتابة المشرف بلا قبل/بعد إلا في مواضع</td></tr>
+<tr><td><code>AttendanceEntry</code> / <code>AttendanceDecision</code></td><td>سجلّ أحداث يُلحَق فقط (إدخال المعلّم، قرار الاعتماد/الرفض)</td><td>سليم: حارس ثلاثيّ، <code>CheckConstraint</code> يوجب سبباً للتصحيح والرفض. يُغذّي المعتمَدُ منه <code>StudentAttendance</code></td></tr>
+<tr><td><code>ClassExit</code></td><td>الخروج من الصفّ: الوجهة، <code>left_at</code>، <code>returned_at</code></td><td>لا <code>CheckConstraint(returned_at >= left_at)</code>؛ لا قيد على خروجين مفتوحين للطالب؛ <code>carry_over</code> قد يضع <code>returned_at</code> قبل <code>left_at</code> فيُنتج مدّةً سالبة يخفيها الملخّص بـ<code>max(0)</code>؛ <strong>بلا ModelAdmin</strong></td></tr>
+<tr><td><code>AbsenceExcuse</code></td><td>العذر وحالته ومراجعته</td><td>لا قيد <code>date_from <= date_to</code>؛ <code>notes</code> و<code>document</code> غير مشفَّرَين؛ <strong>بلا ModelAdmin</strong></td></tr>
+<tr><td><code>AbsenceAlert</code></td><td>تنبيه العتبة</td><td><strong>بلا unique</strong> مع أنّ <code>get_or_create</code> يعتمد عليه (سباق قد يكرّر التنبيه)؛ بلا فهرس مركّب؛ قابل للتعديل في الأدمن</td></tr>
+<tr><td><code>GuardianContact</code></td><td>اتصال وليّ الأمر بسبب الغياب</td><td><code>note</code> نصٌّ حرّ غير مشفَّر؛ بلا تدقيق؛ <strong>بلا ModelAdmin</strong></td></tr>
+<tr><td><code>SectionDayConfirmation</code> / <code>PeriodConfirmation</code></td><td>تأكيد اليوم/الحصّة</td><td><strong>بلا ModelAdmin</strong></td></tr>
+</table></div>
+<p class="mut">قاعدتك المسجَّلة اليوم: كلُّ تعديلٍ باك اند يظهر في Django admin، ومن لا جدولَ له يُكتب له ModelAdmin كاملاً. الخمسة المذكورة مخالفةٌ لها.</p>
+
+<h2>٣) الفجوات مرتّبةً بالخطورة</h2>
+<div class="tbl"><table>
+<tr><th>#</th><th>الفجوة</th><th>الدليل</th><th>الخطر</th></tr>
+<tr><td>١</td><td><code>tardiness_record</code> (التأخّر الصباحيّ) تعدّل <em>أيَّ</em> رصد موجود حتى «غائب» أو رصد مشرف، بلا <code>can_record</code> ولا <code>settle_before_supervisor_write</code>، وتحدّد «أول حصّة» لا حصّةً محدّدة</td><td><code>student_affairs/views.py:2770</code></td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>٢</td><td><code>complete_session</code> و<code>session_summary</code> بلا فحص أنّ المستخدم معلّم الحصّة: أيّ حامل <code>attendance.mark</code> في المدرسة يُنهي أيَّ حصّة</td><td><code>views_attendance.py:467/482</code></td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>٣</td><td><code>mark_all_present</code> لمعلّم التربية الخاصة يُنشئ صفوف <em>present</em> خارج السجلّ والقرار والتدقيق</td><td><code>services/attendance.py:159</code></td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>٤</td><td>خروجان مفتوحان لطالب واحد (الحارس بالحصّة فقط)، و<code>carry_over</code> يكتب عند GET صفحة المعلّم وعند <code>confirm_period</code> بتكرارٍ يمنعه <code>exists()</code> لا قيد فريد</td><td><code>class_exit.py:53</code>، إفادة 0404</td><td><span class="tag hi">عالٍ</span></td></tr>
+<tr><td>٥</td><td>أسباب الغياب الصحّيّة/الأسريّة وملاحظاته غير مشفَّرة، والنمط المعتمد قائم في <code>clinic/models.py</code></td><td><code>attendance.py:74/230</code></td><td><span class="tag hi">عالٍ (PDPPL، قاصرون)</span></td></tr>
+<tr><td>٦</td><td>لا سجلّ قبل/بعد لكلّ كتابة؛ <code>ClassExit</code> و<code>GuardianContact</code> بلا تدقيق؛ ويجب ألّا تُكتب أسبابُ الغياب بقيمتها في AuditLog (سابقة <code>W-20261003-019</code>)</td><td>0104 + الاستكشاف</td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>٧</td><td>ثلاثة مصادر لـ«غائب» (خروج لم يعد، إدخال المعلّم، تثبيت المشرف) وأسبقيّتها في الكود فقط؛ والخروج المفتوح بلا إدخال ليس حاضراً ولا غائباً</td><td><code>period_register._resolved_mark</code>، <code>exit_reflection.exit_overrides</code></td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>٨</td><td>حالة «معذور» تُقبل في النموذج ولا تُرفع في تقرير الوزارة (<code>ministry_flag</code> يشترط <code>absent</code>)</td><td><code>daily_absence.py</code></td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>٩</td><td><code>attendance_rate</code> (نسبة تواجد حصص) تُستدعى من 14 موضعاً وبعضها يسمّيها «غياباً»؛ وعدّ <code>absent</code> الخام مكرّر في ملفّات كثيرة بخلاف <code>absence_standing</code></td><td>الاستكشاف، ADR-0009 «مقترح»</td><td><span class="tag md">متوسّط</span></td></tr>
+<tr><td>١٠</td><td>قائمتا صلاحيّات تختلفان في المساعدين (<code>permissions.py</code> و<code>capabilities.py</code>)</td><td>الاستكشاف</td><td><span class="tag lo">منخفض</span></td></tr>
+<tr><td>١١</td><td>تعارض عتبات: <code>04_academic.md</code> يذكر 7/10/13/15 (قرار 2015)، والمرجع الصحيح 5/8/11/15 (<code>08_conduct_policy_2026.md:144-148</code>)؛ والكود يستعمل 5/8/11/15 حسب الاستكشاف، بينما تقرير تدقيقٍ قديم يقول غير ذلك</td><td>0301 + الاستكشاف</td><td><span class="tag lo">منخفض (يحتاج تأكيداً)</span></td></tr>
+</table></div>
+
+<h2>٤) النموذج المقترح على أعلى المعايير</h2>
+<ul>
+<li><strong>مصدر الحقيقة:</strong> السجلّ (<code>AttendanceEntry</code>+<code>Decision</code>) لكلّ ما يدخله المعلّم، و<code>StudentAttendance</code> يبقى «الحالة المعتمَدة» الظاهرة للقراءة؛ والهدف البعيد جعله إسقاطاً (<em>read model</em>) يُعاد بناؤه من السجلّ.</li>
+<li><strong>دالّة واحدة لـ«غائب»:</strong> خدمة <code>resolve_attendance(session, student)</code> تكتب الأسبقيّة (مشرف معتمَد ← قرار ← إدخال معلّم ← خروج لم يعد) وتُستعمل في كلّ مكان؛ وعدّ الغياب كلُّه عبر <code>absence_standing</code> لا بعدّ <code>status="absent"</code> خاماً.</li>
+<li><strong>قيود في القاعدة لا في الكود فقط:</strong> <code>CHECK(returned_at >= left_at)</code>؛ فريد جزئيّ «خروجٌ مفتوح واحدٌ للطالب»؛ فريد على <code>ClassExit.continued_from</code>؛ فريد على <code>AbsenceAlert(school,student,gate,period_start)</code>؛ <code>CHECK(date_from <= date_to)</code> على العذر.</li>
+<li><strong>التزامن:</strong> <code>select_for_update</code> في كتابات المعلّم والمشرف، أو حقل إصدار (<em>optimistic lock</em>)؛ ونقل <code>carry_over</code> من GET إلى جرس/مهمّة خلفيّة (>300ms ← Background Job).</li>
+<li><strong>التصحيح بعد الاعتماد:</strong> يتطلّب اعتماداً جديداً وسبباً إلزاميّاً، ويُنتج سطراً غير قابل للتعديل: من، متى، السبب، قبل/بعد (بلا نصّ السبب الحسّاس).</li>
+<li><strong>الخصوصيّة:</strong> تشفير <code>excuse_notes</code> و<code>notes</code> و<code>GuardianContact.note</code> و<code>ClassExit</code> الوجهة الصحّيّة بالنمط القائم (توسيع ثمّ تقليص)؛ المعلّم يرى «معذور» لا السبب؛ مدّة احتفاظ مقرَّرة.</li>
+<li><strong>الإدارة:</strong> ModelAdmin كامل للجداول الخمسة، للقراءة حيث السجلّ مُلحَق.</li>
+<li><strong>إخطار وليّ الأمر:</strong> بعد الاعتماد فقط، عبر <em>outbox</em> idempotent بلا تكرار.</li>
+</ul>
+
+<h2>٥) مراحل التنفيذ المقترحة</h2>
+<div class="tbl"><table>
+<tr><th>المرحلة</th><th>المحتوى</th><th>الخطورة</th><th>المقياس</th></tr>
+<tr><td>أ — سلامة وأمان</td><td>سدّ الثغرات ١–٤، وقيود القاعدة، وModelAdmin للخمسة، واختبارات قيودٍ تفشل بخرقها</td><td>هجرة توسيع (ثقيل على جدول كبير → CONCURRENTLY)</td><td>اختبارات القيود؛ صفرُ خروجين مفتوحين</td></tr>
+<tr><td>ب — تدقيق وخصوصيّة</td><td>سجلّ قبل/بعد، تشفير الأسباب، عرض بالدور، مدّة الاحتفاظ</td><td>متوسّط (PDPPL)</td><td>عدّ الحقول النصّيّة غير المشفَّرة = 0</td></tr>
+<tr><td>ج — توحيد الحساب</td><td><code>resolve_attendance</code> وعدّ الغياب عبر خدمة واحدة، وإصلاح «معذور» في تقرير الوزارة</td><td>متوسّط (يغيّر أرقاماً معروضة)</td><td>لا استدعاء خامّ <code>status="absent"</code> خارج الخدمة</td></tr>
+<tr><td>د — السجلّ مصدراً</td><td>جعل <code>StudentAttendance</code> إسقاطاً</td><td>عالٍ</td><td>إعادة بناء مطابقة لبيانات الإنتاج</td></tr>
+</table></div>
+<p class="mut">قيود التنفيذ: لا دمج الأحد–الخميس بلا إذنك، والنشر بعد الدوام؛ والمدرسة الوهميّة <code>W-20261004-006</code> تبدأ 10-06 عند 0404؛ وهذه الأعمال تتقاطع على الملفّات نفسها مع <code>W-018</code>/<code>W-019</code> (الخروج).</p>
+
+<h2>٦) أسئلتك (بخياراتها وأثمانها)</h2>
+<div class="q"><h3>س١ — من هو «النائب الأكاديمي» في الغياب؟ (اللوائح صامتة)</h3>
+<ul><li><strong>(أ) يرصد ويعتمد مباشرةً كحامل جناح</strong> (كما في الكود الآن): بلا تغيير، لكن يتداخل مع المشرف.</li>
+<li><strong>(ب) يراقب ويرى فقط ولا يسجّل</strong> إلا إن حمل جناحاً (توصيتي): أقرب للائحة التي تذكر الإداري، وتغيير صغير في <code>WING_DAY_RECORD</code>.</li>
+<li><strong>(ج) دورٌ مستقلّ باعتماد التصحيحات بعد الاعتماد:</strong> الأوضح لكنّه تعريف جديد وصلاحيّة جديدة.</li></ul></div>
+<div class="q"><h3>س٢ — تعديل غيابٍ معتمَد</h3>
+<ul><li><strong>(أ) يتطلّب اعتماداً جديداً وسبباً إلزاميّاً وسجلّ قبل/بعد</strong> (توصيتي، يطابق 0103 و0104): أبطأ قليلاً وأوثق.</li>
+<li><strong>(ب) يعدّله حامل الجناح مع تدقيق فقط:</strong> أسرع، وأضعف في عدم الإنكار.</li></ul></div>
+<div class="q"><h3>س٣ — مدّة احتفاظ أسباب الغياب الصحّيّة/الأسريّة</h3>
+<ul><li><strong>(أ) حتى نهاية العام الدراسيّ ثمّ تجهيل:</strong> أخفّ خطراً، وتفقد السياق المرضيّ للمتابعة.</li>
+<li><strong>(ب) طيلة مدّة دراسة الطالب ثمّ المحو:</strong> أوسع، وأعلى خطراً وتشفيراً.</li>
+<li><strong>(ج) بحسب نصّ الوزارة:</strong> لم أجد مدّةً مسجَّلةً؛ يحتاج 0301 للبحث وقرارك بعده.</li></ul></div>
+<div class="q"><h3>س٤ — أين نبدأ؟</h3>
+<ul><li><strong>(أ) المرحلة أ كاملةً الآن بعد المدرسة الوهميّة 10-06</strong> (توصيتي): تحمي البيانات قبل التوسّع في أدوار جديدة.</li>
+<li><strong>(ب) المرحلة أ والثغرات الثلاث الأولى فوراً، والباقي لاحقاً:</strong> أسرع في الأمان، وقد يتقاطع مع <code>W-018/019</code>.</li></ul></div>
+
+<h2>٧) ما لم يُقَس</h2>
+<ul>
+<li>الكود الذي قُرئ هو رأس <code>origin/main</code> المذكور؛ وقد تتأخّر عنه بعض الفروع (قال 0104 إنه قرأ فرعه).</li>
+<li>لا اختبار تزامنٍ متعدّد الخيوط، ولا بيانات إنتاج، ولا قياس حجم الجداول (يحدّد كلفة الهجرات).</li>
+<li>القوالب والـserializers والسجلّات لم تُفحص لتسرّب أسباب الغياب.</li>
+<li>ADR-0009 وبطاقاته السبع: ذكرها الاستكشاف «مقترحاً»، ولم يجدها 0101 في شجرته.</li>
+<li>الـPDF الأصل للوائح لم يُقرأ؛ ما نُقل من <code>md</code> ثقته «ملخّص» إلا حيث ذُكر «حرفي».</li>
+</ul>
+</main>
+</body>
+</html>
