@@ -151,7 +151,7 @@ def main() -> None:
     parser.add_argument("session", help="رقمُ الجلسة (0402) أو اسمُها الظاهر («0402 · …»)")
     parser.add_argument("--all", action="store_true", help="اعرض المنتهيةَ أيضاً")
     args = parser.parse_args()
-    m = re.match(r"\s*(\d{4})", args.session)  # يقبل الاسمَ الظاهر كاملاً: نأخذ أوّل أربع خانات
+    m = re.match(r"\s*(\d{4})\b", args.session)  # يقبل الاسمَ الظاهر كاملاً: نأخذ أوّل أربع خانات
     if not m:
         sys.exit("رقمُ الجلسة أربعةُ أرقام، مثلاً 0402")
     args.session = m.group(1)
