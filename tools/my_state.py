@@ -116,8 +116,27 @@ def describe(item: dict) -> str:
     return f"  {item['id']} [{state}] {item.get('priority', '')} {title}{extra}  (مستنتَج)"
 
 
-def report(session: str, events: list[dict], show_all: bool = False, now: datetime | None = None) -> str:
+def pushed_without_remote(items: dict, lookup=None) -> list[str]:
+    """رموزُ بطاقات pushed التي لا فرعَ بعيداً لها (أو لا فرعَ مسجَّلاً). `lookup` قابلةٌ للحقن؛ بلا شبكةٍ افتراضيّاً."""
+    lookup = lookup or ledger.remote_branch_head
+    bad = []
+    for cid, it in items.items():
+        if it.get("state") != "pushed":
+            continue
+        branch = it.get("branch")
+        try:
+            if not branch or not lookup(branch):
+                bad.append(cid)
+        except ledger.LedgerError:
+            continue  # تعذّر الاتصال ليس دليلاً على غياب الفرع
+    return sorted(bad)
+
+
+def report(session: str, events: list[dict], show_all: bool = False, now: datetime | None = None,
+           check_remote: bool = False, remote_lookup=None) -> str:
     items = ledger.reduce_state(events)
+    warn = pushed_without_remote(items, remote_lookup) if (check_remote or remote_lookup) else []
+    held = [i for i in items.values() if i.get("held_by") == session and i.get("state") not in DONE]
     owners = infer_owners(events)
     mine = {cid: it for cid, it in items.items() if owners.get(cid) == session}
     late_ids = {i["id"] for i in ledger.late_items(mine, now=now)}
@@ -131,7 +150,12 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
         else:
             groups[action].append(item)
 
-    lines = [f"== {session}: {len(mine)} بطاقةً بالمالك المستنتَج"]
+    lines = []
+    if warn:
+        lines.append(f"!! تحذير: بطاقات pushed بلا فرع بعيد ({len(warn)}): {'، '.join(warn)}\n")
+    lines.append(f"== {session}: {len(mine)} بطاقةً بالمالك المستنتَج")
+    if held:
+        lines.append(f"محجوزةٌ باسمكِ (held_by) ({len(held)}): " + "، ".join(i["id"] for i in held))
     empty = True
     for key, label in ACTIONS:
         if groups[key]:
@@ -150,13 +174,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="أين بطاقتي الآن؟ — من الدفتر، قراءةٌ فقط")
     parser.add_argument("session", help="رقمُ الجلسة (0402) أو اسمُها الظاهر («0402 · …»)")
     parser.add_argument("--all", action="store_true", help="اعرض المنتهيةَ أيضاً")
+    parser.add_argument("--check-remote", action="store_true", help="افحص بـgit ls-remote بطاقاتِ pushed (شبكة)")
     args = parser.parse_args()
     m = re.match(r"\s*(\d{4})\b", args.session)  # يقبل الاسمَ الظاهر كاملاً: نأخذ أوّل أربع خانات
     if not m:
         sys.exit("رقمُ الجلسة أربعةُ أرقام، مثلاً 0402")
     args.session = m.group(1)
     sys.stdout.reconfigure(encoding="utf-8")
-    print(report(args.session, ledger.load_events(), show_all=args.all))
+    print(report(args.session, ledger.load_events(), show_all=args.all, check_remote=args.check_remote))
 
 
 if __name__ == "__main__":

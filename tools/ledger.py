@@ -97,6 +97,12 @@ def reduce_state(events: list[dict]) -> dict[str, dict]:
         if ev["kind"] == "state":
             if data.get("head"):
                 item["approved_head"] = data["head"]  # رأسُ الإيداع الذي رآه المالكُ وقتَ الاعتماد (v2.23)
+            if data.get("branch"):
+                item["branch"] = data["branch"]  # الفرعُ الذي تحقّق منه الدفع على البعيد
+            if "held_by" in data:
+                item["held_by"] = data["held_by"]
+            if data["state"] in RELEASING_STATES:
+                item["held_by"] = ""  # إنهاءُ البطاقة يفكّ حجزَها (متوافقٌ مع الأحداث القديمة)
             item["state"] = data["state"]
             item["state_ts"] = ev["ts"]
             item["state_by"] = data.get("by", "—")
@@ -117,7 +123,7 @@ def new_id(events: list[dict], today: str | None = None) -> str:
 
 def add_item(source: str, problem_type: str, problem: str, impact: str, accept: str,
              files: list[str] | None = None, urgent: bool = False, path=None, scores: dict | None = None,
-             start: str = "", priority: str = "") -> str:
+             start: str = "", priority: str = "", held_by: str = "") -> str:
     if source not in SOURCES:
         raise LedgerError(f"مصدرٌ غيرُ معروف: {source} (المسموح: {', '.join(SOURCES)})")
     if priority not in PRIORITIES:
@@ -130,10 +136,46 @@ def add_item(source: str, problem_type: str, problem: str, impact: str, accept: 
         "accept": check_text("accept", accept), "files": [f[:200] for f in (files or [])][:20],
         "urgent": bool(urgent), "scores": scores or {},
     }
+    if held_by and held_by != "-":
+        data["held_by"] = check_session(held_by)
     events = load_events(path)
     item_id = new_id(events)
     append_event("created", item_id, data, path)
     return item_id
+
+
+#: حالاتٌ تفكّ حجزَ الجلسة للبطاقة تلقائياً
+RELEASING_STATES = {"closed", "published", "deferred"}
+SESSION_RE = re.compile(r"^\d{4}$")
+
+
+def check_session(value: str) -> str:
+    if not SESSION_RE.match(value):
+        raise LedgerError("--held-by رقمُ جلسةٍ من أربع خانات (مثل 0402) أو «-» للتصفير")
+    return value
+
+
+def remote_branch_head(branch: str, repo: str | None = None) -> str | None:
+    """رأسُ الفرع على البعيد بـ`git ls-remote origin`؛ None إن لم يوجد. تُحقن بديلاً عنها في الاختبارات (لا شبكة)."""
+    cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    p = subprocess.run(["git", "ls-remote", "origin", f"refs/heads/{branch}"], capture_output=True, encoding="utf-8",
+                       errors="replace", check=False, cwd=cwd)
+    if p.returncode != 0:
+        raise LedgerError(f"تعذّر الاتصال بالبعيد للتحقّق من الفرع: {p.stderr.strip()[:160]}")
+    line = p.stdout.strip().splitlines()
+    return line[0].split()[0] if line else None
+
+
+def check_remote_push(branch: str | None, head: str | None, lookup=None) -> str:
+    """لا `pushed` إلا بعد أن يثبت وجودُ الفرع (والرأس إن ذُكر) على البعيد. يعيد الفرعَ المتحقَّق منه."""
+    if not branch:
+        raise LedgerError('pushed يلزمه --branch <الفرع> (أو فرعٌ مسجَّلٌ في البطاقة) للتحقّق منه على البعيد، أو --waive-remote-check "<سبب>"')
+    remote = (lookup or remote_branch_head)(branch)
+    if not remote:
+        raise LedgerError(f"الفرع «{branch}» غيرُ موجودٍ على البعيد (git ls-remote origin) — لم يُدفع فعلاً؛ لا يُسجَّل pushed")
+    if head and not remote.startswith(head) and not head.startswith(remote[: len(head)]):
+        raise LedgerError(f"رأسُ الفرع على البعيد {remote[:8]} لا يطابق --head {head[:8]} — الدفعُ لم يشمل الإيداع المذكور")
+    return branch
 
 
 # مراحلُ حياة البطاقة: الحالةُ الهدف ← الحالاتُ السابقةُ المقبولة (بوّاباتٌ لا يُقفز فوقها)
@@ -179,16 +221,28 @@ def check_head(state: str, head: str | None) -> str | None:
     return head[:8]
 
 
-def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None) -> None:
+def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
+         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
+    if held_by is not None and held_by != "-":
+        check_session(held_by)
+    push_head = head if state == "pushed" else None
     head = check_head(state, head)
     items = reduce_state(load_events(path))
     if item_id not in items:
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
     check_transition(items[item_id]["state"], state, note)
     check_recorder(state, by)
-    append_event("state", item_id, {"state": state, "by": by or "غير مُعلَن", **({"head": head} if head else {})}, path)
+    extra: dict = {}
+    if state == "pushed":
+        if waive_remote_check:
+            note = f"{note + ' — ' if note else ''}استثناءُ فحص البعيد: {waive_remote_check}"
+        else:
+            extra["branch"] = check_remote_push(branch or items[item_id].get("branch"), push_head, remote_lookup)
+    if held_by is not None:
+        extra["held_by"] = "" if held_by == "-" else held_by
+    append_event("state", item_id, {"state": state, "by": by or "غير مُعلَن", **({"head": head} if head else {}), **extra}, path)
     if note:
         append_event("note", item_id, {"text": check_text("note", note)}, path)
 
@@ -475,8 +529,10 @@ def main() -> None:
     a.add_argument("--source", required=True); a.add_argument("--type", required=True)
     a.add_argument("--problem", required=True); a.add_argument("--impact", required=True); a.add_argument("--accept", required=True)
     a.add_argument("--files", nargs="*", default=[]); a.add_argument("--urgent", action="store_true")
-    a.add_argument("--start", required=True, help="زمنُ البدء الفعليّ ISO بتوقيت الدوحة"); a.add_argument("--priority", required=True, choices=PRIORITIES)
-    m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)")
+    a.add_argument("--start", required=True, help="زمنُ البدء الفعليّ ISO بتوقيت الدوحة"); a.add_argument("--priority", required=True, choices=PRIORITIES); a.add_argument("--held-by")
+    m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)؛ ولـpushed: يُقارَن بالبعيد")
+    m.add_argument("--branch", help="لـpushed: الفرعُ المتحقَّق من وجوده على البعيد"); m.add_argument("--waive-remote-check", help="استثناءٌ مسجَّل لفحص البعيد (السبب)")
+    m.add_argument("--held-by", help="الجلسةُ الحاجزة للبطاقة؛ «-» للتصفير")
     pk = sub.add_parser("park", help="وسمُ بطاقةٍ مركونةٍ بقرارٍ مسجَّل")
     pk.add_argument("id"); pk.add_argument("--decision", required=True); pk.add_argument("--reason", required=True)
     rs = sub.add_parser("reschedule", help="إعادةُ جدولةِ بدءِ بطاقةٍ منتظِرةٍ بقرارٍ مسجَّل")
@@ -496,9 +552,10 @@ def main() -> None:
     try:
         if args.cmd == "add":
             print(add_item(args.source, args.type, args.problem, args.impact, args.accept, args.files, args.urgent,
-                           start=args.start, priority=args.priority))
+                           start=args.start, priority=args.priority, held_by=args.held_by or ""))
         elif args.cmd == "move":
-            move(args.id, args.state, note=args.note, by=args.by, head=args.head); print("ok")
+            move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
+                 waive_remote_check=args.waive_remote_check, held_by=args.held_by); print("ok")
         elif args.cmd == "raise-priority":
             raise_priority(args.id, args.priority, args.reason, args.by); print("ok")
         elif args.cmd == "reschedule":
@@ -527,7 +584,8 @@ def main() -> None:
             else:
                 for it in sorted(items.values(), key=order_key):
                     if not args.state or it["state"] == args.state:
-                        print(f"{it['id']}  {it.get('priority','—')}  بدء={it.get('start','—')[:16]}  {it['state']:16} {it['type']:16} {it['problem'][:50]}")
+                        print(f"{it['id']}  {it.get('priority','—')}  بدء={it.get('start','—')[:16]}  {it['state']:16} {it['type']:16} {it['problem'][:50]}"
+                              + (f"  [حاجزها {it['held_by']}]" if it.get("held_by") else ""))
     except LedgerError as exc:
         sys.exit(f"رُفض: {exc}")
 
