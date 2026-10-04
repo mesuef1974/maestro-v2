@@ -8,6 +8,8 @@
     python ledger.py move W-20260926-001 in_progress
     python ledger.py list [--state ready_for_review]
     python ledger.py show W-20260926-001
+    python ledger.py spec W-... --tier full --ref "طبق الأصل|مسار|http://localhost:8500/..|الدور|لقطة" --assumption "محسوم: ..." --source-of-truth "..." --files-allowed a --files-forbidden b --accept "..." --step "..." --by 0301
+    python ledger.py return W-... --reason "..." --by 0501   # تُعاد لنقص المواصفة إلى captured
     python ledger.py tag W-20260926-001 --branch claude/<فرع> [--raise-to high --reason "..."] [--apply]   # وسمُ الخطورة والمجال؛ عرضٌ فقط بلا --apply
 """
 
@@ -221,8 +223,166 @@ def check_head(state: str, head: str | None) -> str | None:
     return head[:8]
 
 
+# ───────── بوّابة «المواصفة الكاملة» (قرارُ المالك 2026-10-04) ─────────
+SPEC_TIERS = ("basic", "full")
+SPEC_STEPS_MAX = 7
+SPEC_CUTOFF = "2026-10-04"  # بطاقاتٌ أُنشئت قبل هذا اليوم تبقى basic (لا يُعاد عليها بابٌ أُغلق)
+ASSUMPTION_STATUSES = ("محسوم", "افتراض")  # «افتراض» = افتراضٌ معلَن يراجعه المالكُ في المعاينة لا قبل البناء
+REF_KINDS = ("طبق الأصل", "مشابه")
+RETURNED_MARK = "أُعيدت لنقص المواصفة"  # يقيسه intake_kpis
+#: قواعدُ الاستنتاج الصريحة للمستوى full (يكفي واحدٌ منها)؛ تُطبَّق على type + problem + accept + files
+FULL_TIER_RULES = {
+    "واجهة": re.compile(r"\bui\b|\bux\b|واجه|صفح|شاش|قالب|template|\.html|\.css|css|frontend|layout|تخطيط", re.I),
+    "طبق الأصل": re.compile(r"طبق\s*الأصل|pixel|بكسل"),
+    "صلاحيات": re.compile(r"permission|rbac|صلاحي|\brole\b|دور\s*جديد", re.I),
+    "هجرة": re.compile(r"migrat|هجر", re.I),
+}
+_TREE_RE = re.compile(r"(worktrees[/\\][^/\\\s]+)", re.I)
+
+
+def infer_spec_tier(item: dict) -> tuple[str, list[str]]:
+    """يستنتج مستوى المواصفة ويعيد (المستوى، أسبابه). full إن طابقت إحدى القواعد أو مسّ العملُ أكثرَ من شجرة."""
+    text = " ".join([str(item.get("type", "")), str(item.get("problem", "")), str(item.get("accept", "")), " ".join(item.get("files") or [])])
+    reasons = [name for name, rx in FULL_TIER_RULES.items() if rx.search(text)]
+    trees = {m.group(1).lower() for f in item.get("files") or [] for m in [_TREE_RE.search(f)] if m}
+    if len(trees) > 1 or re.search(r"أكثر\s*من\s*شجر|شجرتين|multi-?tree", text, re.I):
+        reasons.append("أكثر من شجرة")
+    return ("full" if reasons else "basic"), reasons
+
+
+def effective_spec_tier(item: dict) -> str:
+    """المعلَن بـ spec_tier أوّلاً؛ وإلا الاستنتاج للبطاقات الجديدة فقط (القديمةُ basic توافقاً)."""
+    if item.get("spec_tier") in SPEC_TIERS:
+        return item["spec_tier"]
+    if str(item.get("created", ""))[:10] < SPEC_CUTOFF:
+        return "basic"
+    return infer_spec_tier(item)[0]
+
+
+def spec_missing(item: dict) -> list[str]:
+    """ما ينقص المواصفةَ الكاملة (أسماءٌ عربيّة)؛ قائمةٌ فارغة = مكتملة."""
+    miss = []
+    ref = item.get("ref") or {}
+    if not (ref.get("kind") in REF_KINDS and ref.get("path")):
+        miss.append("ref (المرجع: النوع والمسار)")
+    if not item.get("files_allowed"):
+        miss.append("files_allowed (الملفّات المسموحة)")
+    if not item.get("files_forbidden"):
+        miss.append("files_forbidden (ما لا يُلمس)")
+    if not item.get("accept_measurable"):
+        miss.append("accept_measurable (قبولٌ قابلٌ للقياس ≥1)")
+    if not item.get("steps"):
+        miss.append("steps (خطواتُ العمل ≥1)")
+    if not item.get("source_of_truth"):
+        miss.append("source_of_truth (مصدرُ الحقيقة)")
+    asm = item.get("assumptions")
+    if asm is None or any(a.get("status") not in ASSUMPTION_STATUSES for a in asm):
+        miss.append("assumptions (كلُّ تعريفٍ دلاليٍّ محسومٌ أو افتراضٌ معلَن)")
+    return miss
+
+
+def spec_status(item: dict) -> str:
+    tier = effective_spec_tier(item)
+    miss = spec_missing(item)
+    return f"{tier}: " + ("مكتملة" if not miss else "ناقصة — " + "؛ ".join(miss))
+
+
+def parse_assumption(text: str) -> dict:
+    m = re.match(r"^\s*(محسوم|افتراض)(?:\s*معلن)?\s*[:：]\s*(.+)$", text)
+    if not m:
+        raise LedgerError("--assumption بصيغة «محسوم: <نصّ المالك وتاريخه>» أو «افتراض: <التعريف المعلن>»")
+    return {"status": m.group(1), "text": check_text("assumption", m.group(2))}
+
+
+def parse_ref(text: str) -> dict:
+    parts = [p.strip() for p in text.split("|")]
+    if len(parts) < 2 or parts[0] not in REF_KINDS or not parts[1]:
+        raise LedgerError("--ref بصيغة «النوع|المسار|رابط8500|الدور|مسار اللقطة» والنوع: " + " أو ".join(REF_KINDS))
+    keys = ("kind", "path", "url", "role", "snapshot")
+    return {k: check_text("ref", v) for k, v in zip(keys, parts) if v}
+
+
+def set_spec(item_id: str, tier: str | None = None, ref: str | None = None, roles_states: str | None = None,
+             allowed_diffs: str | None = None, assumptions: list[str] | None = None, source_of_truth: str | None = None,
+             files_allowed: list[str] | None = None, files_forbidden: list[str] | None = None,
+             accept: list[str] | None = None, steps: list[str] | None = None, by: str | None = None, path=None) -> dict:
+    """يضبط حقولَ المواصفة (ما مُرِّر فقط) حدثَ update؛ ويستنتج المستوى إن لم يُفرَض."""
+    item = reduce_state(load_events(path)).get(item_id)
+    if not item:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    if not by:
+        raise LedgerError("--by إلزاميّ: رقمُ جلسةٍ أكملت المواصفة")
+    data: dict = {"spec_by": check_session(by)}
+    if tier:
+        if tier not in SPEC_TIERS:
+            raise LedgerError(f"--tier واحدٌ من {', '.join(SPEC_TIERS)}")
+        data["spec_tier"] = tier
+    if ref:
+        data["ref"] = parse_ref(ref)
+    if roles_states:
+        data["roles_states"] = check_text("roles_states", roles_states)
+    if allowed_diffs:
+        data["allowed_diffs"] = check_text("allowed_diffs", allowed_diffs)
+    if assumptions is not None:
+        data["assumptions"] = [parse_assumption(a) for a in assumptions]
+    if source_of_truth:
+        data["source_of_truth"] = check_text("source_of_truth", source_of_truth)
+    if files_allowed:
+        data["files_allowed"] = [f[:200] for f in files_allowed][:30]
+    if files_forbidden:
+        data["files_forbidden"] = [f[:200] for f in files_forbidden][:30]
+    if accept:
+        data["accept_measurable"] = [check_text("accept", a) for a in accept][:20]
+    if steps:
+        if len(steps) > SPEC_STEPS_MAX:
+            raise LedgerError(f"خطواتُ العمل ≤ {SPEC_STEPS_MAX}")
+        data["steps"] = [check_text("step", s) for s in steps]
+    if "spec_tier" not in data and not item.get("spec_tier"):
+        data["spec_tier"] = infer_spec_tier(item)[0]
+    if data.get("spec_tier") == "basic":
+        inferred, why = infer_spec_tier(item)
+        if inferred == "full":
+            raise LedgerError(f"لا خفضَ للمستوى: البطاقةُ تستوجب full ({'، '.join(why)})")
+    append_event("update", item_id, data, path)
+    return data
+
+
+def check_spec_gate(item: dict, target: str, history_states: set[str], waive: str | None) -> str | None:
+    """بوّابةُ المواصفة عند routed (أو in_progress لم يمرّ بـrouted). full: رفضٌ؛ basic: تحذيرٌ يُعاد نصُّه. يعيد نصَّ التحذير أو None."""
+    if target not in ("routed", "in_progress"):
+        return None
+    if target == "in_progress" and "routed" in history_states:
+        return None
+    miss = spec_missing(item)
+    if not miss:
+        return None
+    if effective_spec_tier(item) == "full":
+        if waive:
+            return None
+        raise LedgerError("المواصفةُ الكاملة ناقصة — لا توجيه: " + "؛ ".join(miss) + ' (تُكمَل بـspec، أو استثناءٌ مسجَّل --waive-spec "<سبب>")')
+    return "تحذير: مواصفةٌ ناقصة (basic): " + "؛ ".join(miss)
+
+
+RETURNABLE = {"verified", "routed", "in_progress", "ready_for_review", "notes"}
+
+
+def return_card(item_id: str, reason: str, by: str, path=None) -> None:
+    """إعادةُ بطاقةٍ إلى captured لنقص مواصفتها بسببٍ مكتوب؛ يعدّها intake_kpis (RETURNED_MARK)."""
+    item = reduce_state(load_events(path)).get(item_id)
+    if not item:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    if not reason or not reason.strip():
+        raise LedgerError("--reason إلزاميّ: سببٌ مكتوب")
+    if item["state"] not in RETURNABLE:
+        raise LedgerError(f"لا تُعاد بطاقةٌ في الحالة «{item['state']}» — المسموح: {sorted(RETURNABLE)}")
+    check_session(by or "")
+    append_event("state", item_id, {"state": "captured", "by": by, "held_by": ""}, path)
+    append_event("note", item_id, {"text": check_text("note", f"{RETURNED_MARK} ({by}): {reason.strip()}")}, path)
+    append_event("update", item_id, {"spec_returns": int(item.get("spec_returns", 0)) + 1}, path)
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
-         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None) -> None:
+         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
     if held_by is not None and held_by != "-":
@@ -234,6 +394,12 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
     check_transition(items[item_id]["state"], state, note)
     check_recorder(state, by)
+    history = {e["data"].get("state") for e in load_events(path) if e["id"] == item_id and e["kind"] == "state"}
+    spec_warning = check_spec_gate(items[item_id], state, history, waive_spec)
+    if waive_spec and state in ("routed", "in_progress") and effective_spec_tier(items[item_id]) == "full" and spec_missing(items[item_id]):
+        note = f"{note + ' — ' if note else ''}استثناءُ المواصفة: {waive_spec}"
+    if spec_warning:
+        print(spec_warning, file=sys.stderr)
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
@@ -533,6 +699,14 @@ def main() -> None:
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)؛ ولـpushed: يُقارَن بالبعيد")
     m.add_argument("--branch", help="لـpushed: الفرعُ المتحقَّق من وجوده على البعيد"); m.add_argument("--waive-remote-check", help="استثناءٌ مسجَّل لفحص البعيد (السبب)")
     m.add_argument("--held-by", help="الجلسةُ الحاجزة للبطاقة؛ «-» للتصفير")
+    m.add_argument("--waive-spec", help="استثناءٌ مسجَّل لبوّابة المواصفة الكاملة (السبب)")
+    sp = sub.add_parser("spec", help="يضبط حقولَ المواصفة الكاملة")
+    sp.add_argument("id"); sp.add_argument("--tier", choices=SPEC_TIERS); sp.add_argument("--ref"); sp.add_argument("--roles-states")
+    sp.add_argument("--allowed-diffs"); sp.add_argument("--assumption", action="append"); sp.add_argument("--source-of-truth")
+    sp.add_argument("--files-allowed", nargs="*"); sp.add_argument("--files-forbidden", nargs="*")
+    sp.add_argument("--accept", action="append"); sp.add_argument("--step", action="append"); sp.add_argument("--by", required=True)
+    rt = sub.add_parser("return", help="تعيد بطاقةً لنقص المواصفة إلى captured")
+    rt.add_argument("id"); rt.add_argument("--reason", required=True); rt.add_argument("--by", required=True)
     pk = sub.add_parser("park", help="وسمُ بطاقةٍ مركونةٍ بقرارٍ مسجَّل")
     pk.add_argument("id"); pk.add_argument("--decision", required=True); pk.add_argument("--reason", required=True)
     rs = sub.add_parser("reschedule", help="إعادةُ جدولةِ بدءِ بطاقةٍ منتظِرةٍ بقرارٍ مسجَّل")
@@ -555,7 +729,12 @@ def main() -> None:
                            start=args.start, priority=args.priority, held_by=args.held_by or ""))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
-                 waive_remote_check=args.waive_remote_check, held_by=args.held_by); print("ok")
+                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec); print("ok")
+        elif args.cmd == "spec":
+            set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
+                     args.files_allowed, args.files_forbidden, args.accept, args.step, args.by); print("ok")
+        elif args.cmd == "return":
+            return_card(args.id, args.reason, args.by); print("ok")
         elif args.cmd == "raise-priority":
             raise_priority(args.id, args.priority, args.reason, args.by); print("ok")
         elif args.cmd == "reschedule":
@@ -580,12 +759,16 @@ def main() -> None:
         else:
             items = reduce_state(load_events())
             if args.cmd == "show":
-                print(json.dumps(items.get(args.id), ensure_ascii=False, indent=2))
+                it = items.get(args.id)
+                print(json.dumps(it, ensure_ascii=False, indent=2))
+                if it:
+                    print("المواصفة — " + spec_status(it))
             else:
                 for it in sorted(items.values(), key=order_key):
                     if not args.state or it["state"] == args.state:
                         print(f"{it['id']}  {it.get('priority','—')}  بدء={it.get('start','—')[:16]}  {it['state']:16} {it['type']:16} {it['problem'][:50]}"
-                              + (f"  [حاجزها {it['held_by']}]" if it.get("held_by") else ""))
+                              + (f"  [حاجزها {it['held_by']}]" if it.get("held_by") else "")
+                              + f"  [مواصفة {spec_status(it).split(' — ')[0]}]")
     except LedgerError as exc:
         sys.exit(f"رُفض: {exc}")
 

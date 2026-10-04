@@ -88,7 +88,7 @@ class RiskTier(unittest.TestCase):
         from pathlib import Path
         with tempfile.TemporaryDirectory() as d:
             lp = Path(d) / "events.jsonl"
-            cid = ledger.add_item("owner", "ui", "م", "أ", "ق", start="2026-09-29T09:00", priority="P2", path=lp)
+            cid = ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-09-29T09:00", priority="P2", path=lp)
             shown = ledger.tag_item(cid, ["templates/a.html"], path=lp)
             self.assertFalse(shown["applied"]); self.assertEqual(shown["update"]["tier"], "medium")
             self.assertEqual(len(ledger.load_events(lp)), 1)  # العرضُ لا يكتب
@@ -104,7 +104,7 @@ class Ledger(unittest.TestCase):
         self.path = Path(tempfile.mkdtemp()) / "e.jsonl"
 
     def add(self, **kw):
-        base = dict(source="owner", problem_type="ui", problem="زرٌّ مقصوص", impact="صفحةٌ واحدة", accept="يظهر كاملاً", path=self.path,
+        base = dict(source="owner", problem_type="tool", problem="سكربتٌ مقصوص", impact="أداةٌ واحدة", accept="يعمل كاملاً", path=self.path,
                     start="2026-09-29T08:00", priority="P2")
         base.update(kw)
         return ledger.add_item(**base)
@@ -252,8 +252,8 @@ class ReviewWindow(unittest.TestCase):
 
     def test_apply_reply_records_trail(self):
         path = Path(tempfile.mkdtemp()) / "e.jsonl"
-        a = ledger.add_item("owner", "ui", "س", "ص", "ع", path=path, start="2026-09-29T08:00", priority="P1")
-        b = ledger.add_item("owner", "ui", "س", "ص", "ع", path=path, start="2026-09-29T08:00", priority="P2")
+        a = ledger.add_item("owner", "tool", "س", "ص", "ع", path=path, start="2026-09-29T08:00", priority="P1")
+        b = ledger.add_item("owner", "tool", "س", "ص", "ع", path=path, start="2026-09-29T08:00", priority="P2")
         done = rw.apply_reply({"approve": [1], "notes": {2: "غيّر اللون"}, "defer": []}, {"1": [a], "2": [b]}, path)
         st = ledger.reduce_state(ledger.load_events(path))
         self.assertEqual((st[a]["state"], st[b]["state"]), ("approved", "notes"))

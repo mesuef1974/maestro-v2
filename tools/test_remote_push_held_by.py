@@ -10,7 +10,7 @@ import my_state
 
 def fresh():
     path = os.path.join(tempfile.mkdtemp(), "e.jsonl")
-    cid = ledger.add_item("owner", "ui", "م", "أ", "ق", start="2026-10-04T08:00", priority="P2", path=path)
+    cid = ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-10-04T08:00", priority="P2", path=path)
     ledger.move(cid, "approved", path=path, note="اعتمد المالك على 8500", head="abcdef12")
     return path, cid
 
@@ -49,7 +49,7 @@ class RemoteCheck(unittest.TestCase):
 class HeldBy(unittest.TestCase):
     def test_add_set_and_clear(self):
         path = os.path.join(tempfile.mkdtemp(), "e.jsonl")
-        cid = ledger.add_item("owner", "ui", "م", "أ", "ق", start="2026-10-04T08:00", priority="P2", path=path, held_by="0402")
+        cid = ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-10-04T08:00", priority="P2", path=path, held_by="0402")
 
         def get():
             return ledger.reduce_state(ledger.load_events(path))[cid]
@@ -63,7 +63,7 @@ class HeldBy(unittest.TestCase):
     def test_terminal_states_release(self):
         for st in ("closed", "deferred"):
             path = os.path.join(tempfile.mkdtemp(), "e.jsonl")
-            cid = ledger.add_item("owner", "ui", "م", "أ", "ق", start="2026-10-04T08:00", priority="P2", path=path, held_by="0402")
+            cid = ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-10-04T08:00", priority="P2", path=path, held_by="0402")
             ledger.move(cid, st, path=path)
             self.assertEqual(ledger.reduce_state(ledger.load_events(path))[cid]["held_by"], "")
 

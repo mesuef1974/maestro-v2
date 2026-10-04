@@ -48,6 +48,7 @@ def compute(items: dict, events: list[dict], now: datetime | None = None) -> dic
             "captured_older_24h_unparked": len(stale) - len(parked),
             "median_created_to_routed_h": round(st.median(cap_to_route), 2) if cap_to_route else None,
             "duplicates_closed": len(dup),
+            "returned_for_spec": sum(1 for i in items.values() if any(ledger.RETURNED_MARK in str(n.get("text", n.get("note", ""))) for n in i["notes"])),
         },
         "0201_intake": {"cards_from_intake": by_source.get("intake", 0)},
         "0203": {"alert_cards": len(alerts), "false_alarm_cards": len(false_alarms),
@@ -68,6 +69,7 @@ def main() -> int:
     d4 = out["0201"]
     print(f"0201: ملتقَطةٌ {d4['captured_total']} — الأقدمُ من {STALE_H} س: {d4['captured_older_24h']} (منها مركونٌ بقرار {d4['captured_older_24h_parked_by_decision']}، راكدٌ فعلاً {d4['captured_older_24h_unparked']})")
     print(f"      وسيطُ التقاط←توجيه: {d4['median_created_to_routed_h']} س؛ تكرارٌ مكتشَفٌ مُغلَق: {d4['duplicates_closed']}")
+    print(f"0201: بطاقاتٌ أُعيدت لنقص المواصفة: {d4['returned_for_spec']}")
     print(f"0201: بطاقاتٌ من مصدر intake: {out["0201_intake"]["cards_from_intake"]}")
     print(f"0203: بطاقاتُ إنذارات {out['0203']['alert_cards']}، كاذبةٌ {out['0203']['false_alarm_cards']} (نسبة {out['0203']['false_alarm_ratio']})")
     return 0
