@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""جدولُ أسماء الجلسات القديمة: يحوّل رقماً أو اسماً قديماً إلى الرقم/الاسم الحاليّ (جدول التحويل D-198م).
+
+    python session_alias.py 0105            # ← 0104 · الأمان: الثغراتُ والتنبيهات
+    python session_alias.py 0402 --legacy   # الرقمُ القديمُ المُعاد استعمالُه
+
+المصدر: session_policy.aliases في tabs.json. قراءةٌ فقط.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+TABS = ROOT / "projects" / "schoolos" / "tabs.json"
+
+
+def _load(tabs: dict | None) -> dict:
+    return tabs if tabs is not None else json.loads(TABS.read_text(encoding="utf-8"))
+
+
+def _titles(tabs: dict) -> dict[str, str]:
+    """رقمٌ من أربع خانات ← العنوانُ الكامل للجلسة الحاليّة (النواةُ والأعضاء)."""
+    out: dict[str, str] = {}
+    for t in tabs["session_policy"].get("core_sessions", []) + [m for tab in tabs["tabs"] for m in tab.get("members", [])]:
+        out.setdefault(t[:4], t)
+    return out
+
+
+def resolve(name_or_number: str, tabs: dict | None = None, legacy: bool = False) -> str | None:
+    """يُرجع الاسمَ الكاملَ الحاليّ إن عُرف، وإلّا الرقمَ الحاليّ؛ و None إن لم يُعرف شيء.
+
+    الرقمُ الحاليّ يُرجَع كما هو. الرقمُ القديمُ المُعاد استعمالُه (مثل 0402) لا يُحلّ إلّا بـ legacy=True
+    لأنّه اليومَ جلسةٌ أخرى.
+    """
+    tabs = _load(tabs)
+    m = re.match(r"\s*(\d{4})\b", name_or_number or "")
+    if not m:
+        return None
+    num = m.group(1)
+    aliases = tabs["session_policy"].get("aliases", {})
+    titles = _titles(tabs)
+    if legacy and num in aliases.get("_reused", {}):
+        target = aliases["_reused"][num]
+    elif num in aliases and not num.startswith("_"):
+        target = aliases[num]
+    else:
+        return titles.get(num) or (num if num in titles else None)
+    return titles.get(target, target)
+
+
+def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("name")
+    ap.add_argument("--legacy", action="store_true")
+    a = ap.parse_args()
+    r = resolve(a.name, legacy=a.legacy)
+    print(r if r else "غيرُ معروف")
+    return 0 if r else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

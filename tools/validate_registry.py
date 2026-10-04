@@ -10,11 +10,68 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_TAB_KEYS = ("id", "name", "order", "layer", "purpose", "goals", "kpis", "inputs", "outputs", "skills", "permissions", "lifecycle", "live_cap", "members")
+
+# أرقامٌ ميّتةٌ لا تُعاد ولم تُستعمل لجلسةٍ أخرى (D-197م/D-198م، docs/session_renumbering_2026-10-04.md).
+# أمّا 0104/0201/0701 فأُعيد استعمالُها لجلساتٍ حيّةٍ فليست ميّتة.
+DEAD_NUMBERS = ("0203", "0801", "0105", "0204", "0702")
+FLOW_CHANGELOG_SINCE = "2026-10-04"
+_SELF_REF = re.compile(r"(\d{4})\s*(?:دُمجت|دمجت|دُمجَت|مدموجة)\s+في\s+\1(?!\d)")
+
+
+def self_reference_problems(text: str, where: str = "tabs.json") -> list[str]:
+    """عباراتٌ ذاتيّةُ الإحالة مثل «0201 دُمجت في 0201»: رقمٌ مدموجٌ في نفسه لا يُفهم."""
+    return [f"{where}: عبارةٌ ذاتيّةُ الإحالة «{m.group(0)}»" for m in _SELF_REF.finditer(text)]
+
+
+def dead_number_problems(tabs: dict, names: dict | None = None, snapshot: list | None = None,
+                         cards: dict[str, str] | None = None) -> list[str]:
+    """رقمٌ ميّتٌ يظهر بصفته جلسةً قائمة: عضوٌ أو نواةٌ أو اسمُ جلسةٍ أو لقطةٌ أو عنوانُ بطاقة (غيرِ المدموجة)."""
+    found: list[tuple[str, str]] = []
+    policy = tabs.get("session_policy", {})
+    for t in policy.get("core_sessions", []):
+        found.append(("core_sessions", t))
+    for tab in tabs.get("tabs", []):
+        for m in tab.get("members", []):
+            found.append((f"tabs.members[{tab.get('id')}]", m))
+    for v in (names or {}).values():
+        found.append(("session_names.json", v))
+    for t in snapshot or []:
+        found.append(("sessions_snapshot.json", t if isinstance(t, str) else str(t.get("title", ""))))
+    for fname, text in (cards or {}).items():
+        first = next((ln for ln in text.splitlines() if ln.startswith("# ")), "")
+        if "دُمجت" in first or "مدموجة" in first:
+            continue  # بطاقةُ إحالةٍ مدموجة
+        found.append((f"role_cards/{fname}", first.split("—", 1)[-1].strip()))
+    out = []
+    for where, title in found:
+        m = re.search(r"\d{4}", title)
+        if m and m.group(0) in DEAD_NUMBERS and title.index(m.group(0)) < 12:
+            out.append(f"{where}: الرقمُ الميّت {m.group(0)} يظهر جلسةً قائمة «{title}»")
+    return out
+
+
+def changelog_problems(text: str, since: str = FLOW_CHANGELOG_SINCE) -> list[str]:
+    """أسطرُ flow_changelog المؤرَّخةُ بعد `since` يلزمها رقمُ إصدار (vN.NN) ورقمُ قرار (D-NNNم). ما قبلها مستثنى."""
+    out = []
+    for i, line in enumerate(text.splitlines(), 1):
+        full = re.search(r"\b(20\d\d-\d\d-\d\d)\b", line)
+        if full:
+            date = full.group(1)
+        else:
+            row = re.match(r"\|\s*v[\d.]+\s*\|\s*(\d\d-\d\d)", line)
+            date = f"{since[:4]}-{row.group(1)}" if row else None
+        if date and date > since:
+            if not re.search(r"\bv\d+\.\d+\b", line):
+                out.append(f"flow_changelog.md:{i}: سطرٌ بعد {since} بلا رقم إصدار (vN.NN)")
+            if not re.search(r"D-\d+م", line):
+                out.append(f"flow_changelog.md:{i}: سطرٌ بعد {since} بلا رقم قرار (D-NNNم)")
+    return out
 
 
 def name_problems(title: str, tab_number: str, serial: dict) -> list[str]:
@@ -108,6 +165,14 @@ def main() -> None:
     routing = json.loads((base / "routing.json").read_text(encoding="utf-8"))
     live = json.loads(Path(args.sessions).read_text(encoding="utf-8")) if args.sessions else None
     problems = validate(tabs, routing, live)
+    problems += self_reference_problems((base / "tabs.json").read_text(encoding="utf-8"))
+    names = json.loads((base / "session_names.json").read_text(encoding="utf-8"))
+    snap = json.loads((base / "sessions_snapshot.json").read_text(encoding="utf-8"))
+    cards = {p.name: p.read_text(encoding="utf-8") for p in (ROOT / "role_cards").glob("*.md") if p.name != "INDEX.md"}
+    problems += dead_number_problems(tabs, names, snap if isinstance(snap, list) else [], cards)
+    log = ROOT / "flow_changelog.md"
+    if log.exists():
+        problems += changelog_problems(log.read_text(encoding="utf-8"))
     print("\n".join(problems) if problems else "السجلُّ متّسق")
     sys.exit(1 if problems else 0)
 

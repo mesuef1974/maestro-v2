@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """قائمةُ ما بعد الدمج: تقرأ حالةَ الطلب من المصدر وتُخرج نصَّ إشعاراتِ 0701 و0104 جاهزةً + سطرَ ledger.
 
-    python post_merge_checklist.py 757 [--card W-20261001-035]
+    python post_merge_checklist.py 757 [--card W-20261001-035] [--enqueue]
+
+--enqueue يُلحق سطراً في ledger/roadmap_queue.jsonl (يقرؤه roadmap_queue.py list) كي لا يُنسى تحديثُ الخارطة.
 
 قراءةٌ فقط ولا تُرسل شيئاً (الشيفرةُ لا تراسل الجلسات): تنقل 0601 النصَّ إلى SendMessage. تحلّ محلَّ الاعتماد على
 الذاكرة في خطواتٍ نُسيت من قبل (إخطار 0701 فورَ كلّ اندماج) وتضيف 0104 خطوةً خامسة (D-101م).
@@ -52,21 +54,37 @@ def build(pr: dict, card: str | None, hits: list[str], session: str | None = Non
     }
 
 
-def main() -> int:
+def queue_entry(pr: dict, card: str | None) -> dict:
+    """سطرُ طابور الخارطة لطلبٍ مندمج."""
+    return {"pr": pr["number"], "card": card, "commit": (pr.get("mergeCommit") or {}).get("oid", "")[:8], "merged_at": pr.get("mergedAt", "")}
+
+
+def fetch_pr(target: str) -> tuple[dict | None, str]:
+    """الاستعلامُ عن الطلب (gh)؛ يُحقَن في main كي تُختبر الأداةُ دون شبكة."""
+    p = subprocess.run(["gh", "pr", "view", target, "--json", "number,title,state,mergedAt,mergeCommit,files,headRefName"],
+                       cwd=REPO_DIR, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return (json.loads(p.stdout), "") if p.returncode == 0 else (None, p.stderr.strip()[:200])
+
+
+def main(argv: list[str] | None = None, fetch=fetch_pr, queue_path: Path | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("pr")
     ap.add_argument("--card")
-    a = ap.parse_args()
-    p = subprocess.run(["gh", "pr", "view", a.pr, "--json", "number,title,state,mergedAt,mergeCommit,files,headRefName"],
-                       cwd=REPO_DIR, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if p.returncode != 0:
-        print("تعذّر الاستعلام:", p.stderr.strip()[:200])
+    ap.add_argument("--enqueue", action="store_true", help="ألحِق سطراً في ledger/roadmap_queue.jsonl")
+    a = ap.parse_args(argv)
+    pr, err = fetch(a.pr)
+    if pr is None:
+        print("تعذّر الاستعلام:", err)
         return 1
-    pr = json.loads(p.stdout)
     if pr["state"] != "MERGED":
         print(f"الطلبُ #{pr['number']} حالتُه {pr['state']} لا MERGED — لا إشعارَ قبل الاندماج الفعليّ.")
         return 1
+    if a.enqueue:
+        import roadmap_queue as rq
+
+        added = rq.enqueue(queue_entry(pr, a.card), queue_path)
+        print(f"طابور الخارطة: {'أُلحق' if added else 'موجودٌ من قبل'} #{pr['number']}")
     paths = json.loads((ROOT / "security" / "sensitive_paths.json").read_text(encoding="utf-8"))
     globs = [g for grp in paths.get("mandatory_review_when_diff_touches", {}).values() for g in grp]
     hits = sensitive_hits([f["path"] for f in pr.get("files", [])], globs)
