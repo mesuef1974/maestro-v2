@@ -2,7 +2,7 @@
 name: maestro-review-window
 description: |
   Use for building the SchoolOS owner's review window (stage 05): collect ready_for_review cards, make each item visible on the 8500 preview (integration or the single pin slot), render bundles with review_window.py (6 per window, 10 elevated), and enrich them into BLUF items with 8500 links and roles. Trigger on: review window, 15:30/20:30 window, what awaits the owner, pin/release 8500, ready for preview, elevated capacity.
-  استخدمها في «0501 · النشر على 8500 والاعتماد» عند: «جهّز نافذة المراجعة»، موعدُ 15:30 أو 20:30، «وش ينتظر معاينتي؟»، وصولُ «جاهزٌ للمعاينة» من جلسةٍ في 04، تثبيتُ 8500 لبندٍ أو تحريرُه، فرعٌ لا يظهر على 8500، أو إعلانُ المالك رفعَ السعة — ولو لم تُذكر «نافذة».
+  استخدمها في «0501 · المعاينة: اعتمادُ المالك على 8500» عند: «جهّز نافذة المراجعة»، موعدُ 15:30 أو 20:30، «وش ينتظر معاينتي؟»، وصولُ «جاهزٌ للمعاينة» من جلسةٍ في 04، تثبيتُ 8500 لبندٍ أو تحريرُه، فرعٌ لا يظهر على 8500، أو إعلانُ المالك رفعَ السعة — ولو لم تُذكر «نافذة».
   ليست لـ: تسجيل ردّ المالك (maestro-approvals)، ولا خطورة طلبٍ وحزمة أدلّته (maestro-evidence)، ولا خطوات الجلسة المنفِّذة (schoolos-flow)، ولا الدمج والنشر (0601).
 allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/review_window.py render:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py list:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py show:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/evidence_pack.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/risk_tier.py:*), Bash(python C:/Users/mesue/delivery_manager_work/skills/maestro-evidence/scripts/tag_card.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/watch_once.py:*), Bash(bash scripts/preview.sh status:*), Bash(bash scripts/preview.sh integrate plan:*), Bash(bash scripts/preview.sh list:*), Bash(bash scripts/preview.sh pin:*), Bash(bash scripts/preview.sh release:*), Bash(git worktree list:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(date -u:*), Read, Write
 ---
@@ -10,7 +10,7 @@ allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/review_win
 # نافذةُ المراجعة (المرحلة 05)
 
 الغرض: أن يرى المالكُ على 8500 كلَّ عملٍ قبل دفعه، في نافذةٍ قصيرةٍ مرتّبةٍ يردّ عليها بكلمة، فيقصر زمنُ الاعتماد دون أن تُمسّ البوّابة.
-من يملكها: «0501 · النشر على 8500 والاعتماد» وحدَها تثبّت على 8500 وتعدّ النافذة وتسجّل الاعتماد (D-47م، `tabs.json` → 0501). المايسترو لا يبنيها بنفسه؛ إن لم تكن 0501 مفتوحةً طلب فتحَها (D-43م). خطواتُ الفلو كلّها في مهارة `schoolos-flow` ولا تُكرَّر هنا.
+من يملكها: «0501 · المعاينة: اعتمادُ المالك على 8500» وحدَها تثبّت على 8500 وتعدّ النافذة وتسجّل الاعتماد (D-47م، `tabs.json` → 0501). المايسترو لا يبنيها بنفسه؛ إن لم تكن 0501 مفتوحةً طلب فتحَها (D-43م). خطواتُ الفلو كلّها في مهارة `schoolos-flow` ولا تُكرَّر هنا.
 
 ## متى تُستعمل ومتى لا
 - نعم: موعدُ نافذةٍ (`thresholds.json` → `windows_doha`: 15:30 و20:30)، أو نافذةٌ فوريّةٌ بطلب المالك، أو تراكمُ «جاهزٌ للمعاينة»، أو إنذارُ `oldest_pr_age`.

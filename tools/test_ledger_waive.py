@@ -124,7 +124,7 @@ class OtherKindsUntouched(unittest.TestCase):
 
     def test_only_the_waiver_signer_may_waive(self):
         with self.assertRaises(ledger.LedgerError):
-            waive(["docs/a.md"], by="0406")
+            waive(["docs/a.md"], by="0404")
 
 
 if __name__ == "__main__":

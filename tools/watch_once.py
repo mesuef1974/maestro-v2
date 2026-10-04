@@ -135,7 +135,7 @@ def health_alerts(cfg: dict | None, fetch=None) -> list[dict]:
     if status == 200:
         return []
     why = f"الردّ {status}" if status else f"تعذّر الاتّصال ({error})"
-    return [alert("prod_health", "high", f"صحّةُ الإنتاج: {why}", "أبلغ «0601 · النشر على الإنتاج والدمج»، وS2 إن تكرّر")]
+    return [alert("prod_health", "high", f"صحّةُ الإنتاج: {why}", "أبلغ «0601 · الإصدار: الدمجُ والنشر»، وS2 إن تكرّر")]
 
 
 def http_status(url: str, timeout: float) -> tuple[int | None, str]:
@@ -344,7 +344,7 @@ P0_STALL_MINUTES = 60.0  # مبدئيّ (قرار 0101، يُضبط بالقيا
 def p0_captured_alerts(minutes: float = P0_STALL_MINUTES, now: datetime | None = None) -> list[dict]:
     """بطاقةُ P0 ما زالت captured/routed ولم تتحرّك خلال N دقيقة — قبل أن تصير late فيُنبَّه المايسترو (لا المالكُ) فوراً.
 
-    «لم تتحرّك» = منذ آخر تغيّرِ حالةٍ (state_ts) وإلّا منذ إنشائها (D-66م: لا مُطلِقَ زمنيّاً عند 0204/0203).
+    «لم تتحرّك» = منذ آخر تغيّرِ حالةٍ (state_ts) وإلّا منذ إنشائها (D-66م: لا مُطلِقَ زمنيّاً عند 0201/0203).
     """
     sys.path.insert(0, str(HERE))
     import ledger as lg
@@ -359,7 +359,7 @@ def p0_captured_alerts(minutes: float = P0_STALL_MINUTES, now: datetime | None =
         if age_min >= minutes:
             out.append(alert("p0_captured", "high",
                              f"{item['id']} P0 ({item['state']}) لم تتحرّك منذ {age_min:.0f} د — {str(item.get('problem', ''))[:60]}",
-                             "للمايسترو: أسندها الآن أو أبلغ 0204؛ P0 لا تنتظر فحصاً يدويّاً"))
+                             "للمايسترو: أسندها الآن أو أبلغ 0201؛ P0 لا تنتظر فحصاً يدويّاً"))
     return out
 
 

@@ -197,7 +197,7 @@ FALSE_ALARM_NOTE = "إنذارٌ كاذب"  # النصُّ الثابتُ عند
 
 
 def park(item_id: str, decision: str, reason: str, path=None) -> None:
-    """وسمُ «مركونٌ بقرار»: بطاقةٌ captured مؤجَّلةٌ بقرارٍ مسجَّل (لا خمولاً) — فلا تُحسب «راكدةً» في مؤشّرات 0204."""
+    """وسمُ «مركونٌ بقرار»: بطاقةٌ captured مؤجَّلةٌ بقرارٍ مسجَّل (لا خمولاً) — فلا تُحسب «راكدةً» في مؤشّرات 0201."""
     items = reduce_state(load_events(path))
     if item_id not in items:
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
@@ -249,14 +249,14 @@ def _git(args: list[str], repo: str | None = None) -> str:
     return p.stdout.strip()
 
 
-# اختباراتُ الحراسة الأمنيّة: لا يُعفى إقرارُ تعديلها (D-155م) — قائمةٌ ثابتةٌ تُراجَع مع 0105؛ محافظةٌ عمداً: أيُّ مطابقةٍ تُعرض على المالك
+# اختباراتُ الحراسة الأمنيّة: لا يُعفى إقرارُ تعديلها (D-155م) — قائمةٌ ثابتةٌ تُراجَع مع 0104؛ محافظةٌ عمداً: أيُّ مطابقةٍ تُعرض على المالك
 GUARD_TEST_FILES = {
     "test_every_route_is_guarded.py", "test_security_gate.py", "test_deploy_safety_guards.py", "test_uploads_are_photo_cleaned.py",
 }
 GUARD_TEST_RE = re.compile(
     r"(guard|security|permission|rbac|rls|erasure|audit|consent|encrypt|csp|auth|redirect|pdppl|personal_data|purge|health_record|"
     r"export|immutab|deploy_safety|route|photo_cleaned|gate|conftest|"
-    # توسيعُ 0105 (10-02): حراسةٌ أمنيّةٌ لا يطابقها الاسمُ الأوّل — الأمنُ يصعّد ولا يخفّف
+    # توسيعُ 0104 (10-02): حراسةٌ أمنيّةٌ لا يطابقها الاسمُ الأوّل — الأمنُ يصعّد ولا يخفّف
     r"scope|tenant|jwt|csrf|cookie|password|lockout|mfa|secret|pii|privacy|sentry|ratelimit|runtime|settings|capabilit|"
     r"developer|unrestricted|breach|injection|middleware|ci_|migration_linter)", re.I)
 
@@ -265,7 +265,7 @@ WEAKEN_LINE = re.compile(r"(pytest\.mark\.(skip|skipif|xfail)|\bskip\(|importors
 
 
 def weakened_assertions(diff_text: str) -> list[str]:
-    """تعديلٌ داخل اختبارٍ عاديٍّ يُضعف تأكيداً: حذفُ assert أكثرَ مما أُضيف، أو إضافةُ skip/xfail (ملاحظةُ حدٍّ من 0105)."""
+    """تعديلٌ داخل اختبارٍ عاديٍّ يُضعف تأكيداً: حذفُ assert أكثرَ مما أُضيف، أو إضافةُ skip/xfail (ملاحظةُ حدٍّ من 0104)."""
     removed = added = 0
     weak = []
     for ln in diff_text.splitlines():
@@ -304,7 +304,7 @@ def check_tests_only(approved: str, new: str, repo: str | None = None) -> list[s
         raise LedgerError(f"اختباراتُ حراسةٍ أمنيّةٍ تُعرض على المالك: {guards[:5]}")
     weak = weakened_assertions(_git(["diff", "-U0", approved, new, "--", "tests/"], repo))
     if weak:
-        raise LedgerError(f"تعديلٌ يُضعف تأكيداً (يُراجَع مع 0105): {weak[:3]}")
+        raise LedgerError(f"تعديلٌ يُضعف تأكيداً (يُراجَع مع 0104): {weak[:3]}")
     return changed
 
 

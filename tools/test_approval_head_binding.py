@@ -37,7 +37,7 @@ def test_waiver_only_for_0501_and_docs(tmp_path):
     iid = ledger.add_item("owner", "bug", "م", "أ", "ق", path=p, start="2026-10-02T10:00", priority="P2")
     ledger.append_event("state", iid, {"state": "approved", "by": "0501", "head": "aaaa1111"}, p)
     with pytest.raises(ledger.LedgerError):
-        ledger.waive_head(iid, "bbbb2222", "0408", "x", path=p, changed=["docs/a.md"])
+        ledger.waive_head(iid, "bbbb2222", "0405", "x", path=p, changed=["docs/a.md"])
     with pytest.raises(ledger.LedgerError):
         ledger.waive_head(iid, "bbbb2222", "0501", "x", path=p, changed=["core/permissions.py"])
     ledger.waive_head(iid, "bbbb2222", "0501", "وثيقةٌ فقط", path=p, changed=["docs/a.md"])

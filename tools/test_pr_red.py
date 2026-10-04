@@ -25,11 +25,11 @@ def test_newer_run_replaces_older_failure():
 def test_report_has_check_error_card_and_session():
     pr = {"number": 9, "title": "إصلاح (W-20261002-013)", "body": "", "headRefName": "claude/x",
           "statusCheckRollup": [chk("ملخص بوابة الجودة", "FAILURE", "2026-10-02T10:00")]}
-    rep = r.report_for(pr, runner=lambda rid: "x\nFAILED tests/test_a.py::t - assert 1 == 2\n", session_lookup=lambda b: "0408 · واجهة")
-    assert rep["card"] == "W-20261002-013" and rep["session"] == "0408 · واجهة"
+    rep = r.report_for(pr, runner=lambda rid: "x\nFAILED tests/test_a.py::t - assert 1 == 2\n", session_lookup=lambda b: "0405 · واجهة")
+    assert rep["card"] == "W-20261002-013" and rep["session"] == "0405 · واجهة"
     assert "FAILED tests/test_a.py" in rep["checks"][0]["error"]
     text = r.render(rep)
-    assert "ملخص بوابة الجودة" in text and "W-20261002-013" in text and "0408" in text
+    assert "ملخص بوابة الجودة" in text and "W-20261002-013" in text and "0405" in text
 
 
 def test_green_pr_has_no_report():

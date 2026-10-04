@@ -5,7 +5,7 @@
   add                إلحاقُ قرارٍ بنيويٍّ عاديّ: D-NNم | الوقتُ من الجهاز | النصّ | الأثر | المرجع.
   approval            اعتمادُ المالك — نوعٌ مستقلٌّ بنصّه الحرفيّ ووقته ومكانه (لا يُصاغ ولا يُلخَّص).
   non-automatable     قرارٌ بحالة «غير قابل للأتمتة» — يُرفض بلا سببٍ مكتوبٍ وتاريخِ مراجعةٍ وبديل.
-  coverage            ملخّصٌ رقميٌّ فقط (نسبة، عدد، عمرُ الأقدم) للوحة «تغطية القرارات» في 0702 — بلا نصّ قرارٍ واحد.
+  coverage            ملخّصٌ رقميٌّ فقط (نسبة، عدد، عمرُ الأقدم) للوحة «تغطية القرارات» في 0701 — بلا نصّ قرارٍ واحد.
 
 الوقتُ يُقرأ من ساعة الجهاز لحظةَ الكتابة، لا يُقدَّر ولا يُمرَّر يدويّاً (المصدر: تصحيحُ أوقات D-50م..D-56م في decisions.md).
 كلُّ إلحاقٍ في decisions.md يوازيه سطرٌ في decisions_meta.jsonl (JSON واحد بالسطر) ليُحسَب منه التغطية آليّاً
@@ -97,7 +97,7 @@ def cmd_non_automatable(args: argparse.Namespace) -> int:
 
 
 def cmd_coverage(_: argparse.Namespace) -> int:
-    """ملخّصٌ رقميٌّ فقط — بلا نصّ قرارٍ واحد، ليصلح لعرضٍ في مركز قيادة الجودة (0702)."""
+    """ملخّصٌ رقميٌّ فقط — بلا نصّ قرارٍ واحد، ليصلح لعرضٍ في مركز قيادة الجودة (0701)."""
     if not META.is_file():
         print(json.dumps({"non_automatable_count": 0, "overdue_review_count": 0,
                            "missing_reason_count": 0, "oldest_open_days": 0}, ensure_ascii=False))
@@ -149,7 +149,7 @@ def main() -> int:
     na.add_argument("--reference", default="")
     na.set_defaults(func=cmd_non_automatable)
 
-    cov = sub.add_parser("coverage", help="ملخّصٌ رقميّ فقط للوحة 0702")
+    cov = sub.add_parser("coverage", help="ملخّصٌ رقميّ فقط للوحة 0701")
     cov.set_defaults(func=cmd_coverage)
 
     chk = sub.add_parser("check", help="فحصُ تنسيق decisions.md (تاريخٌ مكرَّر)")

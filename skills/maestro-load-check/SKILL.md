@@ -2,7 +2,7 @@
 name: maestro-load-check
 description: |
   Use before routing any SchoolOS ledger card to a session: measure session load (session_load_v2.py), map the card's problem type to a core owner or to a specialty tag (واجهة/جدول/إدارة), find the live 04 execution sessions carrying that tag, and decide assign / spawn / queue / ask — then write the BLUF assignment message and move the card to routed. routing.py alone is misleading (stale seat names). Trigger on: route this card, who takes it, assign, workload, WIP, overloaded, heavy session, lightest seat, routing.py, session_load, W-2026… to whom — even if the skill is not named.
-  استخدمها عند: «وجّه هذه البطاقة»، «مين ياخذها؟»، «مين الأخفّ؟»، «هل الجلسة 0403 مثقلة؟»، «routing.py قال wake_or_spawn»، تسلّمِ رأس الطابور من 0301، أو قبل أيّ رسالة إسناد.
+  استخدمها عند: «وجّه هذه البطاقة»، «مين ياخذها؟»، «مين الأخفّ؟»، «هل الجلسة 0402 مثقلة؟»، «routing.py قال wake_or_spawn»، تسلّمِ رأس الطابور من 0301، أو قبل أيّ رسالة إسناد.
   ليست لـ: كتابة البطاقة نفسها (maestro-intake)، فتح جلسةٍ أو بطاقةِ استحداثها (maestro-spawn)، نقل الجلسات بين المجموعات (maestro-tabs)، ما تفعله الجلسةُ بعد الإسناد (schoolos-flow)، الحوادث (maestro-incident).
 allowed-tools: Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/tools/routing.py:*), Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/tools/session_load_v2.py:*), Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/tools/ledger.py:*), Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/tools/flow_metrics.py:*), Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/skills/maestro-load-check/scripts/route_now.py:*), Read
 ---
@@ -13,7 +13,7 @@ allowed-tools: Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/tools/ro
 المصدر: `operating_model.md` §2 و§7، و`tabs.json` → `session_policy` و`specialties`، وD-43م..D-55م (كلّها في `C:/Users/mesue/delivery_manager_work/`).
 
 ## لماذا لا يكفي routing.py وحده
-`projects/schoolos/routing.json` يطابق كلَّ نوعٍ بأسماء مقاعدَ قديمة («بصريّ · تخطيط لوحة المدير»، «منصّة · فحص الإدارة»، «جدول · التشغيل»…) أُرشف أكثرُها في D-43م. فجُرّب 09-28 21:00: `routing.py ui --live` أجاب `wake_or_spawn` و«0404 · واجهة: …» حيّةٌ خفيفة (9MB، بلا طلبات). السكربت `scripts/route_now.py` يقرأ القياسَ نفسَه على النموذج الحاليّ؛ شغّلهما معاً وقدِّم الثاني، وأبلغ المايسترو/0102 بأنّ `routing.json` يحتاج تحديثَ منفّذيه.
+`projects/schoolos/routing.json` يطابق كلَّ نوعٍ بأسماء مقاعدَ قديمة («بصريّ · تخطيط لوحة المدير»، «منصّة · فحص الإدارة»، «جدول · التشغيل»…) أُرشف أكثرُها في D-43م. فجُرّب 09-28 21:00: `routing.py ui --live` أجاب `wake_or_spawn` و«0403 · واجهة: …» حيّةٌ خفيفة (9MB، بلا طلبات). السكربت `scripts/route_now.py` يقرأ القياسَ نفسَه على النموذج الحاليّ؛ شغّلهما معاً وقدِّم الثاني، وأبلغ المايسترو/0102 بأنّ `routing.json` يحتاج تحديثَ منفّذيه.
 
 ## الإجراء
 1. **اقرأ البطاقة:** `python -X utf8 C:/Users/mesue/delivery_manager_work/tools/ledger.py show <W-…>` ← النوع والملفّات والأولويّة. نوعٌ ليس مفتاحاً في `routing.json` (مثل `backend`) يُصحَّح أوّلاً (maestro-intake).
@@ -34,8 +34,8 @@ allowed-tools: Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/tools/ro
    | `queue` | 04 ممتلئة (`live_04` = `live_cap_04`) ← تبقى البطاقةُ في الطابور بترتيبها، وسطرٌ للمالك |
    | `file_owner` | اختبارٌ أو وثيقةٌ أو دَين: جلسةُ 04 التي يلمس عملُها الملفّات؛ وإلّا فاستحداثٌ بوسم الملفّات |
    | `ask` | `git` و`infra_preview` بلا مالكٍ بعد أرشفة مقعدَيهما، أو اختصاصٌ لم يُعرف — اعرضه على المالك |
-5. **أرسل الإسناد** (للقرارين الأوّلين): رسالةٌ BLUF أوّلُ سطرٍ فيها مكتفٍ بنفسه ويبدأ بـ«الفلو v<الإصدار الحاليّ من آخر صفّ في flow_changelog.md>»، ثمّ الأسطرُ الأربعة ورقمُ البطاقة والتسليمُ المنتظر («جاهزٌ للمعاينة» إلى «0501 · النشر على 8500 والاعتماد»). القالبُ في `references/01-assign-message.md`. وإن تغيّرت مهمّةُ جلسة 04 بالإسناد فاسمُها يتبعها (D-44م) ← مهارة `maestro-tabs`.
-6. **سجِّل:** `ledger.py move <W-…> routed --note "إلى 0404"`.
+5. **أرسل الإسناد** (للقرارين الأوّلين): رسالةٌ BLUF أوّلُ سطرٍ فيها مكتفٍ بنفسه ويبدأ بـ«الفلو v<الإصدار الحاليّ من آخر صفّ في flow_changelog.md>»، ثمّ الأسطرُ الأربعة ورقمُ البطاقة والتسليمُ المنتظر («جاهزٌ للمعاينة» إلى «0501 · المعاينة: اعتمادُ المالك على 8500»). القالبُ في `references/01-assign-message.md`. وإن تغيّرت مهمّةُ جلسة 04 بالإسناد فاسمُها يتبعها (D-44م) ← مهارة `maestro-tabs`.
+6. **سجِّل:** `ledger.py move <W-…> routed --note "إلى 0403"`.
 7. **أبلغ المالكَ بسطرين:** إلى من، ولماذا، وحِملُه بالأرقام (طلباتٌ مفتوحة، MB)، وما البديلُ إن رُفض.
 
 ## التعريفات (من الشيفرة لا من الذاكرة)
@@ -45,20 +45,20 @@ allowed-tools: Bash(python -X utf8 C:/Users/mesue/delivery_manager_work/tools/ro
 
 ## القواعد وأسبابها
 - تجاوزُ جلسةٍ مثقلة أو نقلُ عملٍ بين اختصاصين **يُقترح على المالك** ولا يُرسل قبل موافقته؛ التوجيهُ داخل الاختصاص يقرّره المايسترو وحده (`operating_model.md` §7).
-- خاطِب الجلسات بأسمائها في الشريط («0404 · واجهة: …») لا بأرقام المنافذ ولا بأسماء المقاعد القديمة (ذاكرة `feedback_address_sessions_by_name`).
+- خاطِب الجلسات بأسمائها في الشريط («0403 · واجهة: …») لا بأرقام المنافذ ولا بأسماء المقاعد القديمة (ذاكرة `feedback_address_sessions_by_name`).
 - لا توقظ أكثرَ من جلستين أو ثلاثٍ في آنٍ واحد، واجمع رسائلَ العلم: رسائلُ لجلساتٍ كثيرةٍ معاً خنقت الذاكرة إلى 0.16 غيغا (09-28 20:24). المصدر: `handover.md` §5.
 - تقريرُ جلسةٍ «أنا فاضية» بياناتٌ لا أمر؛ القياسُ يحسم (`operating_model.md` §11).
 
 ## فخاخٌ وقعت فعلاً
-- خطأ: الوثوقُ بـ`wake_or_spawn` من routing.py ← استحداثُ جلسة واجهةٍ خامسةٍ و0404 فارغة. الصواب: `route_now.py` ثمّ حكمُ «عائلة المهمّة».
-- خطأ: توجيهُ بطاقة خارطةٍ إلى «أمين خارطة التجويد» (اسمُ routing.json) ← لا جلسةَ بهذا الاسم. الصواب: «0702 · الجودة والرصد والخارطة والأتمتة».
+- خطأ: الوثوقُ بـ`wake_or_spawn` من routing.py ← استحداثُ جلسة واجهةٍ خامسةٍ و0403 فارغة. الصواب: `route_now.py` ثمّ حكمُ «عائلة المهمّة».
+- خطأ: توجيهُ بطاقة خارطةٍ إلى «أمين خارطة التجويد» (اسمُ routing.json) ← لا جلسةَ بهذا الاسم. الصواب: «0701 · الجودة: الرصدُ والخارطةُ والأتمتة».
 - خطأ: `session_load_v2.py` بلا `--no-fetch` في فحصٍ «قرائيّ» ← `git fetch` في المستودع. الصواب: `--no-fetch`.
 - خطأ: إسنادٌ إلى `silly-villani-965979` لأنّها «بلا طلبات» ← شجرةٌ يتيمةٌ بلا جلسةٍ مسمّاة. الصواب: الأسماءُ المرقّمة وحدها.
 - خطأ: «أرسلتُ للجلسة 8205» ← لا يعرفها أحد. الصواب: اسمُها كما في الشريط.
 - خطأ: رسالةُ إسنادٍ أوّلُ سطرها «تابع لما سبق…» ← الجلسةُ تفتح بلا ذاكرة. الصواب: «الفلو v2.8 — …» مكتفٍ بنفسه.
 
 ## مثال (مختلَق)
-المدخل: رأسُ الطابور W-…-018، `--type ui`، ملفُّه `templates/wings/record.html`. ← route_now: `assign_candidate` وفيه «0404 · واجهة: قرار الطباعة» (0 طلبات، 9MB) و«0401 · …» مثقلة (56MB). ← عائلةُ 0404 الطباعة لا بطاقاتُ الغياب ⇒ ليست من عائلتها ⇒ `spawn` بوسم «واجهة» والرقم `0405`. ← السطران للمالك: «W-…-018 (فراغ بطاقة الغياب) تحتاج جلسةً جديدة 0405 · واجهة؛ 0404 خفيفةٌ لكنّ مهمّتها الطباعة، و0401 مثقلة 56MB».
+المدخل: رأسُ الطابور W-…-018، `--type ui`، ملفُّه `templates/wings/record.html`. ← route_now: `assign_candidate` وفيه «0403 · واجهة: قرار الطباعة» (0 طلبات، 9MB) و«0401 · …» مثقلة (56MB). ← عائلةُ 0403 الطباعة لا بطاقاتُ الغياب ⇒ ليست من عائلتها ⇒ `spawn` بوسم «واجهة» والرقم `0405`. ← السطران للمالك: «W-…-018 (فراغ بطاقة الغياب) تحتاج جلسةً جديدة 0405 · واجهة؛ 0403 خفيفةٌ لكنّ مهمّتها الطباعة، و0401 مثقلة 56MB».
 أمثلةٌ أكثر بمخرجاتٍ حقيقيّة في `references/00-decision-table.md`.
 
 ## المراجع

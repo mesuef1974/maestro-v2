@@ -67,7 +67,7 @@ def test_waive_head_main_merge_only_for_0501_and_records_reason(tmp_path):
     iid = ledger.add_item("owner", "bug", "م", "أ", "ق", path=p, start="2026-10-02T10:00", priority="P2")
     ledger.append_event("state", iid, {"state": "approved", "by": "0501", "head": approved[:8]}, p)
     with pytest.raises(ledger.LedgerError):
-        ledger.waive_head(iid, new[:8], "0408", "x", path=p, kind="main-merge", repo=str(repo))
+        ledger.waive_head(iid, new[:8], "0405", "x", path=p, kind="main-merge", repo=str(repo))
     ledger.waive_head(iid, new[:8], "0501", "تحقّقتُ", path=p, kind="main-merge", repo=str(repo))
     st = ledger.reduce_state(ledger.load_events(p))[iid]
     assert st["approved_head"] == new[:8] and "دمجُ main فقط" in st["notes"][-1]["text"]

@@ -2,7 +2,7 @@
 name: maestro-evidence
 description: |
   Use for the SchoolOS evidence pack of one piece of work: path-based risk tier via risk_tier.py, tagging the ledger card (tier/area/head) with tag_card.py so the review window bundles it right, and after push evidence_pack.py on the PR (checks, exact approval line, pages to preview) — unmeasured stays unmeasured. Trigger on: evidence pack, risk tier, is it high risk, migration or security in a change, does PR #N carry the approval line, PR head changed after approval, tag cards before a window.
-  استخدمها في «0501 · النشر على 8500 والاعتماد» أو المايسترو عند: «حزمة أدلّة للطلب #N» أو لعمل جلسةٍ قبل دفعه، «فيه هجرة؟ وش خطورته؟»، قبل إدراج بطاقةٍ في النافذة، «في وصفه سطر الاعتماد؟»، أو طلبٍ تغيّر رأسُه بعد الاعتماد.
+  استخدمها في «0501 · المعاينة: اعتمادُ المالك على 8500» أو المايسترو عند: «حزمة أدلّة للطلب #N» أو لعمل جلسةٍ قبل دفعه، «فيه هجرة؟ وش خطورته؟»، قبل إدراج بطاقةٍ في النافذة، «في وصفه سطر الاعتماد؟»، أو طلبٍ تغيّر رأسُه بعد الاعتماد.
   ليست لـ: سلامة الهجرة نفسها (schoolos-migration-guard)، ولا بناء النافذة (maestro-review-window)، ولا تسجيل الاعتماد (maestro-approvals)، ولا فحص 0601 قبل الدمج (schoolos-flow).
 allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/evidence_pack.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/risk_tier.py:*), Bash(python C:/Users/mesue/delivery_manager_work/skills/maestro-evidence/scripts/tag_card.py:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py show:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py list:*), Bash(git worktree list:*), Bash(git diff --name-only:*), Bash(git rev-parse:*), Bash(gh pr view:*), Read
 ---

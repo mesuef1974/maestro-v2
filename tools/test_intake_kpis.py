@@ -17,7 +17,7 @@ def test_parked_by_decision_is_counted_separately(tmp_path):
     ledger.add_item("owner", "bug", "م2", "أ", "ق", path=p, start="2026-10-01T10:00", priority="P2")
     ledger.park(a, "D-120م", "حزمةُ الامتثال الرجعيّ مؤجَّلة", path=p)
     now = datetime.now(ledger.DOHA) + timedelta(hours=48)
-    out = k.compute(ledger.reduce_state(ledger.load_events(p)), ledger.load_events(p), now)["0204"]
+    out = k.compute(ledger.reduce_state(ledger.load_events(p)), ledger.load_events(p), now)["0201"]
     assert (out["captured_older_24h"], out["captured_older_24h_parked_by_decision"], out["captured_older_24h_unparked"]) == (2, 1, 1)
 
 

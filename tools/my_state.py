@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """«أين بطاقتي الآن؟» — بطاقاتُ جلسةٍ مجمَّعةً بالفعل المطلوب منها، من الدفتر وحدَه (W-20261003-007).
 
-    python my_state.py 0403          # ما يلزم الجلسةَ الآن
-    python my_state.py 0403 --all    # ومعها المنتهيةُ (منشورةٌ/مغلقةٌ/مؤجَّلة)
+    python my_state.py 0402          # ما يلزم الجلسةَ الآن
+    python my_state.py 0402 --all    # ومعها المنتهيةُ (منشورةٌ/مغلقةٌ/مؤجَّلة)
 
 قراءةٌ فقط: لا يكتب في الدفتر شيئاً.
 
 **المالكُ مستنتَجٌ لا مسجَّل:** الدفترُ لا يحمل حقلَ مالك (قرارُ 0101: لا مساسَ بمخطّطه قبل أسبوعِ
-استعمال). فالمالكُ آخرُ رقمِ جلسةٍ عاملةٍ ظهر في صدر ملاحظةٍ («0403: …») أو في `by` حدثِ حالة؛ وجلساتُ
+استعمال). فالمالكُ آخرُ رقمِ جلسةٍ عاملةٍ ظهر في صدر ملاحظةٍ («0402: …») أو في `by` حدثِ حالة؛ وجلساتُ
 التنسيق (المايسترو والمعاينة والدمج والخارطة…) لا تُعدّ مالكاً لأنّها تمرّ على كلّ بطاقة. ولذلك يُطبع
 كلُّ سطرٍ موسوماً «مستنتَج».
 
@@ -24,20 +24,20 @@ from datetime import datetime
 import ledger
 
 #: جلساتٌ تمرّ على البطاقات توجيهاً أو معاينةً أو دمجاً أو خارطةً — لا تملكها.
-COORDINATORS = frozenset({"0101", "0102", "0103", "0501", "0601", "0701", "0702"})
+COORDINATORS = frozenset({"0101", "0102", "0103", "0501", "0601", "0701", "0701"})
 
-#: رقمُ جلسةٍ في صدر ملاحظة: «0403: …» أو «0403 — …» أو «من 0403 …».
+#: رقمُ جلسةٍ في صدر ملاحظة: «0402: …» أو «0402 — …» أو «من 0402 …».
 NOTE_OWNER = re.compile(r"^\s*(?:من\s+)?(\d{4})\b")
 SESSION_CODE = re.compile(r"\b(\d{4})\b")
 
 #: ملاحظةٌ بعد الدمج تدلّ على أنّ الخارطةَ أُبلغت.
-ROADMAP_MARK = re.compile(r"0701|0702|خارط|roadmap", re.IGNORECASE)
+ROADMAP_MARK = re.compile(r"0701|0701|خارط|roadmap", re.IGNORECASE)
 
 DONE = ("published", "closed", "deferred")
 
 #: الأفعالُ الخمسة بترتيب العرض.
 ACTIONS = (
-    ("roadmap", "بعد الدمج: أبلغي 0702 برقم الطلب"),
+    ("roadmap", "بعد الدمج: أبلغي 0701 برقم الطلب"),
     ("now", "عليكِ الآن"),
     ("push", "اعتُمدت: ادفعي بالرأس المعتمَد"),
     ("waiting", "تنتظر غيرَكِ"),
@@ -73,7 +73,7 @@ def _merged_at(events: list[dict], card: str) -> str | None:
 
 
 def roadmap_notified(events: list[dict], card: str) -> bool:
-    """ملاحظةٌ بعد آخر دمجٍ تذكر الخارطةَ أو 0702."""
+    """ملاحظةٌ بعد آخر دمجٍ تذكر الخارطةَ أو 0701."""
     since = _merged_at(events, card)
     if since is None:
         return False
@@ -148,11 +148,11 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="أين بطاقتي الآن؟ — من الدفتر، قراءةٌ فقط")
-    parser.add_argument("session", help="رقمُ الجلسة، مثلاً 0403")
+    parser.add_argument("session", help="رقمُ الجلسة، مثلاً 0402")
     parser.add_argument("--all", action="store_true", help="اعرض المنتهيةَ أيضاً")
     args = parser.parse_args()
     if not re.fullmatch(r"\d{4}", args.session):
-        sys.exit("رقمُ الجلسة أربعةُ أرقام، مثلاً 0403")
+        sys.exit("رقمُ الجلسة أربعةُ أرقام، مثلاً 0402")
     sys.stdout.reconfigure(encoding="utf-8")
     print(report(args.session, ledger.load_events(), show_all=args.all))
 

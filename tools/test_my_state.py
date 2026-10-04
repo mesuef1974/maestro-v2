@@ -26,8 +26,8 @@ def note(card, text, ts):
 
 class Owner(unittest.TestCase):
     def test_owner_from_a_note_prefix(self):
-        events = [created("W-1"), note("W-1", "0403: 4c163edc على الفرع", "2026-10-01T10:00:00+03:00")]
-        self.assertEqual(my_state.infer_owners(events), {"W-1": "0403"})
+        events = [created("W-1"), note("W-1", "0402: 4c163edc على الفرع", "2026-10-01T10:00:00+03:00")]
+        self.assertEqual(my_state.infer_owners(events), {"W-1": "0402"})
 
     def test_coordinators_never_own(self):
         events = [
@@ -38,25 +38,25 @@ class Owner(unittest.TestCase):
         self.assertEqual(my_state.infer_owners(events), {})
 
     def test_owner_from_a_working_session_state_by(self):
-        events = [created("W-1"), state("W-1", "in_progress", "2026-10-01T10:00:00+03:00", by="0402")]
-        self.assertEqual(my_state.infer_owners(events), {"W-1": "0402"})
+        events = [created("W-1"), state("W-1", "in_progress", "2026-10-01T10:00:00+03:00", by="0401")]
+        self.assertEqual(my_state.infer_owners(events), {"W-1": "0401"})
 
     def test_the_latest_working_session_wins(self):
         events = [
             created("W-1"),
-            note("W-1", "0403: بدأتُ", "2026-10-01T10:00:00+03:00"),
-            note("W-1", "0414: أكملتُها بقرار المالك", "2026-10-02T10:00:00+03:00"),
+            note("W-1", "0402: بدأتُ", "2026-10-01T10:00:00+03:00"),
+            note("W-1", "0406: أكملتُها بقرار المالك", "2026-10-02T10:00:00+03:00"),
         ]
-        self.assertEqual(my_state.infer_owners(events), {"W-1": "0414"})
+        self.assertEqual(my_state.infer_owners(events), {"W-1": "0406"})
 
     def test_a_session_named_mid_sentence_is_not_an_owner(self):
-        events = [created("W-1"), note("W-1", "اعتمد المالك في محادثة 0403", "2026-10-01T10:00:00+03:00")]
+        events = [created("W-1"), note("W-1", "اعتمد المالك في محادثة 0402", "2026-10-01T10:00:00+03:00")]
         self.assertEqual(my_state.infer_owners(events), {})
 
 
 class Actions(unittest.TestCase):
     def owned(self, *more):
-        return [created("W-1"), note("W-1", "0403: بدأتُ", "2026-10-01T10:00:00+03:00"), *more]
+        return [created("W-1"), note("W-1", "0402: بدأتُ", "2026-10-01T10:00:00+03:00"), *more]
 
     def action(self, events):
         items = ledger.reduce_state(events)
@@ -109,26 +109,26 @@ class Report(unittest.TestCase):
     def test_only_the_sessions_cards_are_listed_and_marked_inferred(self):
         events = [
             created("W-1"),
-            note("W-1", "0403: بدأتُ", "2026-10-01T10:00:00+03:00"),
+            note("W-1", "0402: بدأتُ", "2026-10-01T10:00:00+03:00"),
             state("W-1", "merged", "2026-10-02T10:00:00+03:00", by="0601"),
             created("W-2"),
-            note("W-2", "0402: لي", "2026-10-01T10:00:00+03:00"),
-            state("W-2", "in_progress", "2026-10-01T11:00:00+03:00", by="0402"),
+            note("W-2", "0401: لي", "2026-10-01T10:00:00+03:00"),
+            state("W-2", "in_progress", "2026-10-01T11:00:00+03:00", by="0401"),
         ]
-        text = my_state.report("0403", events, now=NOW)
+        text = my_state.report("0402", events, now=NOW)
         self.assertIn("W-1", text)
         self.assertNotIn("W-2", text)
-        self.assertIn("أبلغي 0702", text)
+        self.assertIn("أبلغي 0701", text)
         self.assertIn("(مستنتَج)", text)
 
     def test_finished_cards_appear_only_with_all(self):
         events = [
             created("W-1"),
-            note("W-1", "0403: بدأتُ", "2026-10-01T10:00:00+03:00"),
+            note("W-1", "0402: بدأتُ", "2026-10-01T10:00:00+03:00"),
             state("W-1", "published", "2026-10-02T10:00:00+03:00", by="0601"),
         ]
-        self.assertNotIn("W-1", my_state.report("0403", events, now=NOW))
-        self.assertIn("W-1", my_state.report("0403", events, show_all=True, now=NOW))
+        self.assertNotIn("W-1", my_state.report("0402", events, now=NOW))
+        self.assertIn("W-1", my_state.report("0402", events, show_all=True, now=NOW))
 
 
 if __name__ == "__main__":

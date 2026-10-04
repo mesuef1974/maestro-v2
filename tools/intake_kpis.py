@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""مؤشّراتُ مخرجِ تبويب المدخلات (0201/0203/0204) من الدفتر وحده — قراءةٌ فقط (D-150م).
+"""مؤشّراتُ مخرجِ تبويب المدخلات (0201/0203) من الدفتر وحده — قراءةٌ فقط (D-150م).
 
     python intake_kpis.py [--json]
 
@@ -41,7 +41,7 @@ def compute(items: dict, events: list[dict], now: datetime | None = None) -> dic
     for i in items.values():
         by_source[i.get("source", "—")] = by_source.get(i.get("source", "—"), 0) + 1
     return {
-        "0204": {
+        "0201": {
             "captured_total": len(cap),
             "captured_older_24h": len(stale),
             "captured_older_24h_parked_by_decision": len(parked),
@@ -49,7 +49,7 @@ def compute(items: dict, events: list[dict], now: datetime | None = None) -> dic
             "median_created_to_routed_h": round(st.median(cap_to_route), 2) if cap_to_route else None,
             "duplicates_closed": len(dup),
         },
-        "0201": {"cards_from_intake": by_source.get("intake", 0)},
+        "0201_intake": {"cards_from_intake": by_source.get("intake", 0)},
         "0203": {"alert_cards": len(alerts), "false_alarm_cards": len(false_alarms),
                  "false_alarm_ratio": round(len(false_alarms) / len(alerts), 2) if alerts else None},
         "by_source": by_source,
@@ -65,10 +65,10 @@ def main() -> int:
     if a.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
-    d4 = out["0204"]
-    print(f"0204: ملتقَطةٌ {d4['captured_total']} — الأقدمُ من {STALE_H} س: {d4['captured_older_24h']} (منها مركونٌ بقرار {d4['captured_older_24h_parked_by_decision']}، راكدٌ فعلاً {d4['captured_older_24h_unparked']})")
+    d4 = out["0201"]
+    print(f"0201: ملتقَطةٌ {d4['captured_total']} — الأقدمُ من {STALE_H} س: {d4['captured_older_24h']} (منها مركونٌ بقرار {d4['captured_older_24h_parked_by_decision']}، راكدٌ فعلاً {d4['captured_older_24h_unparked']})")
     print(f"      وسيطُ التقاط←توجيه: {d4['median_created_to_routed_h']} س؛ تكرارٌ مكتشَفٌ مُغلَق: {d4['duplicates_closed']}")
-    print(f"0201: بطاقاتٌ من مصدر intake: {out['0201']['cards_from_intake']}")
+    print(f"0201: بطاقاتٌ من مصدر intake: {out["0201_intake"]["cards_from_intake"]}")
     print(f"0203: بطاقاتُ إنذارات {out['0203']['alert_cards']}، كاذبةٌ {out['0203']['false_alarm_cards']} (نسبة {out['0203']['false_alarm_ratio']})")
     return 0
 

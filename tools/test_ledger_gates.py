@@ -45,6 +45,6 @@ class TestRecorders(unittest.TestCase):
         check_recorder("approved", "0501")
         check_recorder("merged", None)  # بلا --by: انتقالٌ لطيف
         with self.assertRaises(LedgerError):
-            check_recorder("approved", "0408")
+            check_recorder("approved", "0405")
         with self.assertRaises(LedgerError):
-            check_recorder("merged", "0404")
+            check_recorder("merged", "0403")

@@ -39,7 +39,7 @@ class DeployAndRoadmap(unittest.TestCase):
 
     def test_roadmap_gap_blocks(self):
         b, _ = self.check([1], "abc", {1: "o1"}, {"o1"}, set())
-        self.assertEqual(b, ["الخارطةُ لم تذكر: #1 (تنتظر 0702)"])
+        self.assertEqual(b, ["الخارطةُ لم تذكر: #1 (تنتظر 0701)"])
 
     def test_unknown_production_blocks_conservatively(self):
         b, _ = self.check([1], None, {1: "o1"}, {"o1"}, {1})

@@ -315,7 +315,7 @@ class ArchiveCheck(unittest.TestCase):
         self.assertEqual(set(blocked), set(TABS["session_policy"]["core_sessions"]))
         self.assertIn("0101 · المايسترو", blocked)
         self.assertNotIn("مسار Backend والبيانات", blocked)
-        self.assertFalse(ac.evaluate({**self.FACTS, "title": "0601 · النشر على الإنتاج والدمج"}, blocked)["eligible"])
+        self.assertFalse(ac.evaluate({**self.FACTS, "title": "0601 · الإصدار: الدمجُ والنشر"}, blocked)["eligible"])
 
 
 class BranchStatus(unittest.TestCase):
@@ -493,7 +493,7 @@ class Registry(unittest.TestCase):
         self.assertTrue(any("يبدأ من 01" in p for p in probs))
         self.assertTrue(any("أطولُ من 40" in p for p in probs))
         bad2 = json.loads(json.dumps(TABS))
-        bad2["tabs"][0]["members"].remove("0103 · الحوكمة")
+        bad2["tabs"][0]["members"].remove("0103 · الحوكمة: حراسةُ القواعد")
         self.assertTrue(any("جلسةُ النواة" in p for p in vr.validate(bad2, ROUTING)))
 
     def test_empty_tab_is_allowed(self):
@@ -509,7 +509,7 @@ class Registry(unittest.TestCase):
 
     def test_core_to_open_is_listed_but_not_required_live(self):
         # جلسةُ نواةٍ لم تُفتح بعدُ تُدرج في core_to_open ولا يلزمها تبويبٌ ولا حياة؛ نبنيها على نسخةٍ لأنّ الحالَ الحيّة تتغيّر بالفتح
-        tabs = json.loads(json.dumps(TABS)); sp = tabs["session_policy"]; name = "0702 · الجودة والرصد والخارطة والأتمتة"
+        tabs = json.loads(json.dumps(TABS)); sp = tabs["session_policy"]; name = "0701 · الجودة: الرصدُ والخارطةُ والأتمتة"
         if name in sp["core_sessions"]:
             sp["core_sessions"].remove(name)
         sp["core_to_open"] = [name]

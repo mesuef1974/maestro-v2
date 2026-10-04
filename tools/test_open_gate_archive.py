@@ -13,7 +13,7 @@ class Gate(unittest.TestCase):
         self.assertEqual(og.decide({"ok": False, "blockers": ["x"]}, [], "green", "P0")["verdict"], "لا تفتح")
 
     def test_assign_beats_open_even_when_p0_and_red(self):
-        s = [{"session": "0404 · إدارة: أ (W-1)", "assignable": True, "wip": 1, "context_mb": 5}]
+        s = [{"session": "0403 · إدارة: أ (W-1)", "assignable": True, "wip": 1, "context_mb": 5}]
         self.assertEqual(og.decide(OK, s, "red", "P0")["verdict"], "أسنِد")
 
     def test_red_waits_unless_p0(self):
@@ -24,14 +24,14 @@ class Gate(unittest.TestCase):
         self.assertEqual(og.decide(OK, [], "green", "P1")["verdict"], "افتح الآن")
 
     def test_tag_filter_reads_name_and_assignable(self):
-        rows = [{"session": "0402 · جدول: أ (W-1)", "assignable": True},
-                {"session": "0404 · واجهة: ب (W-2)", "assignable": True},
+        rows = [{"session": "0401 · جدول: أ (W-1)", "assignable": True},
+                {"session": "0403 · واجهة: ب (W-2)", "assignable": True},
                 {"session": "0405 · واجهة: ج (W-3)", "assignable": False}]
-        self.assertEqual([r["session"] for r in og.assignable_with_tag(rows, "واجهة")], ["0404 · واجهة: ب (W-2)"])
+        self.assertEqual([r["session"] for r in og.assignable_with_tag(rows, "واجهة")], ["0403 · واجهة: ب (W-2)"])
 
     def test_archived_session_is_not_assignable(self):
         rows = [{"session": "0405 · إدارة: أ (W-1)", "assignable": True}]
-        self.assertEqual(og.assignable_with_tag(rows, "إدارة", {"0404 · واجهة: ب (W-2)"}), [])
+        self.assertEqual(og.assignable_with_tag(rows, "إدارة", {"0403 · واجهة: ب (W-2)"}), [])
         self.assertEqual(len(og.assignable_with_tag(rows, "إدارة", {"0405 · إدارة: أ (W-1)"})), 1)
 
 

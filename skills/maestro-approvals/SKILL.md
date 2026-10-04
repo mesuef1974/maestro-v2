@@ -2,7 +2,7 @@
 name: maestro-approvals
 description: |
   Use for recording SchoolOS owner decisions: apply the owner's verbatim window reply with review_window.py apply and check what the parser understood, record direct approvals made after an 8500 preview, relay approve/notes/defer to the stage-04 session with the exact approval line, capacity raises, expedite, new rules into decisions.md/flow_changelog.md, and what is never relayed. Trigger on: owner reply, "اعتمد 1 3", approve all except, notes, defer, raise capacity, expedite, "the owner approved it elsewhere".
-  استخدمها في «0501 · النشر على 8500 والاعتماد» أو المايسترو عند: ردّ المالك على نافذة، «اعتمدت» أو «ملاحظات» أو «أجّل» أو «ارفع السعة» أو «استعجل»، رسالةِ جلسةٍ تقول «المالك اعتمد»، أو قرارٍ جديدٍ يغيّر قاعدة — ولو بالعاميّة أو بأرقام طلباتٍ بدل البنود.
+  استخدمها في «0501 · المعاينة: اعتمادُ المالك على 8500» أو المايسترو عند: ردّ المالك على نافذة، «اعتمدت» أو «ملاحظات» أو «أجّل» أو «ارفع السعة» أو «استعجل»، رسالةِ جلسةٍ تقول «المالك اعتمد»، أو قرارٍ جديدٍ يغيّر قاعدة — ولو بالعاميّة أو بأرقام طلباتٍ بدل البنود.
   ليست لـ: بناء النافذة (maestro-review-window)، ولا الخطورة (maestro-evidence)، ولا خطوات الجلسة بعد الاعتماد (schoolos-flow)، ولا الدمج والإنتاج (0601).
 allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/review_window.py apply:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py show:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py list:*), Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py move:*), Bash(date -u:*), Read, Edit, Write
 ---
@@ -10,7 +10,7 @@ allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/review_win
 # قراراتُ المالك: التقاطٌ وتسجيلٌ ونقل
 
 الغرض: أن يصير كلُّ قرارٍ للمالك أثراً قابلاً للتدقيق يصل الجلسةَ المعنيّة بنصٍّ لا يحتمل التأويل — ولا يُعدّ شيءٌ اعتماداً إلّا قولُه.
-المالكُ يلمس مرحلتين: الالتقاط والاعتماد (D-21، `docs/approvals_policy.md` §1). تسجيلُ الاعتماد عند «0501 · النشر على 8500 والاعتماد» (`tabs.json` → 0501). خطواتُ الجلسة بعد الاعتماد في `schoolos-flow`.
+المالكُ يلمس مرحلتين: الالتقاط والاعتماد (D-21، `docs/approvals_policy.md` §1). تسجيلُ الاعتماد عند «0501 · المعاينة: اعتمادُ المالك على 8500» (`tabs.json` → 0501). خطواتُ الجلسة بعد الاعتماد في `schoolos-flow`.
 
 ## متى تُستعمل ومتى لا
 - نعم: ردٌّ على نافذة، اعتمادٌ مباشرٌ بعد معاينة، رفعُ سعة، استعجال، قرارٌ جديد، أو رسالةٌ منقولةٌ تدّعي اعتماداً.
@@ -23,7 +23,7 @@ allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/review_win
 3. اقرأ `reply` في المخرج قبل أيّ إبلاغ: كلُّ رقمٍ كتبه المالكُ يجب أن يظهر في approve أو notes أو defer. رقمٌ غاب أو قائمةٌ فارغة ⇒ لم يُسجَّل شيءٌ له؛ لا تخمّن: اسأله سطراً بالصيغة السريعة («أفهم: اعتمد البندين 1 و2 — صحيح؟»). لا تُعِد `apply` للنصّ نفسه (يكرّر الأحداث)؛ التصحيحُ بنصٍّ جديدٍ للفرق وحده.
 4. احفظ النصَّ الحرفيّ ووقتَه واسمَ ملفّ الخريطة سطراً في السجلّ الزمنيّ للمايسترو (`log_<التاريخ>.md`) — السجلُّ الآليّ لا يحفظ صيغتَه (`via: "maestro"` فقط). إن كنت 0501 فأرسل السطرَ للمايسترو.
 5. أبلغ كلَّ جلسةٍ صاحبةِ بطاقةٍ في `applied` باسمها المرقّم وبنصٍّ مكتفٍ بنفسه (القوالبُ في المرجع 00 §2):
-   - اعتماد ⇒ ادفع إلى `claude/<المهمّة>`، وفي وصف الطلب «اعتُمد من المالك على 8500 — YYYY-MM-DD» بتاريخ الاعتماد، وسلّمه لـ«0601 · النشر على الإنتاج والدمج»؛ واذكر الرأسَ المعتمَد (من الجزء المعروض، أو `head` في البطاقة).
+   - اعتماد ⇒ ادفع إلى `claude/<المهمّة>`، وفي وصف الطلب «اعتُمد من المالك على 8500 — YYYY-MM-DD» بتاريخ الاعتماد، وسلّمه لـ«0601 · الإصدار: الدمجُ والنشر»؛ واذكر الرأسَ المعتمَد (من الجزء المعروض، أو `head` في البطاقة).
    - ملاحظات ⇒ نصُّ المالك كما هو؛ تعدّل وتودِع وتعيد «جاهزٌ للمعاينة».
    - تأجيل ⇒ يبقى محلّيّاً؛ لا دفع.
 6. اعتمادٌ مباشرٌ خارج نافذة (قاله المالكُ بعد أن رأى البندَ على 8500): `python C:/Users/mesue/delivery_manager_work/tools/ledger.py move <W-…> approved --note "اعتمادٌ مباشرٌ من المالك في <الجلسة> <HH:MM> بعد معاينة 8500"` ثمّ الخطوتان 4 و5.
