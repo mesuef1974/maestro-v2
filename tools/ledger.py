@@ -381,8 +381,36 @@ def return_card(item_id: str, reason: str, by: str, path=None) -> None:
     append_event("update", item_id, {"spec_returns": int(item.get("spec_returns", 0)) + 1}, path)
 
 
+# بوّابةُ WIP (قرارُ المالك 2026-10-05): خفضُ تشتّت المهامّ — لا بطاقتَين جاريتَين لجلسةٍ واحدة.
+# كلُّ البطاقات المنشأة قبل هذا الزمن مستثناةٌ بقرار المالك: يريد إنهاءَ موضوع الحضور والغياب أوّلاً
+# فلا تُعطَّل بطاقاتُه الجاريةُ بقاعدةٍ جديدة؛ وتسري القاعدةُ على ما يُنشأ بعده.
+WIP_CUTOFF = "2026-10-05T06:00+03:00"
+
+
+def session_in_progress(items: dict, session: str, exclude: str | None = None) -> list[dict]:
+    """بطاقاتُ الجلسة الجاريةُ (in_progress) — بحسب من نقلها أو حجزها — مرتّبةً بالأقدم، دون البطاقة المستثناة."""
+    out = [i for i in items.values()
+           if i["id"] != exclude and i.get("state") == "in_progress" and session in (i.get("state_by"), i.get("held_by"))]
+    return sorted(out, key=lambda i: i.get("state_ts", ""))
+
+
+def check_wip(items: dict, item_id: str, by: str | None, waive: str | None) -> str | None:
+    """يرفض بدءَ بطاقةٍ ثانيةٍ لجلسةٍ لها جاريةٌ؛ ويعيد نصَّ التنازل إن وُجد ليُسجَّل ملاحظةً."""
+    item = items[item_id]
+    if not by or item.get("priority") == "P0":
+        return None
+    if datetime.fromisoformat(item.get("created", "9999")) < datetime.fromisoformat(WIP_CUTOFF):
+        return None
+    others = session_in_progress(items, by, exclude=item_id)
+    if not others:
+        return None
+    if waive:
+        return f"استثناءُ حدِّ العمل الجاري: {waive}"
+    raise LedgerError(f"للجلسة {by} بطاقةٌ جاريةٌ أخرى: {others[0]['id']} — أنهِها أو انقلها إلى ready_for_review قبل بدء {item_id} (أو --waive-wip \"السبب\"، أو أولويّة P0)")
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
-         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None) -> None:
+         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
     if held_by is not None and held_by != "-":
@@ -400,6 +428,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         note = f"{note + ' — ' if note else ''}استثناءُ المواصفة: {waive_spec}"
     if spec_warning:
         print(spec_warning, file=sys.stderr)
+    if state == "in_progress":
+        wip_note = check_wip(items, item_id, by, waive_wip)
+        if wip_note:
+            note = f"{note + ' — ' if note else ''}{wip_note}"
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
@@ -700,6 +732,7 @@ def main() -> None:
     m.add_argument("--branch", help="لـpushed: الفرعُ المتحقَّق من وجوده على البعيد"); m.add_argument("--waive-remote-check", help="استثناءٌ مسجَّل لفحص البعيد (السبب)")
     m.add_argument("--held-by", help="الجلسةُ الحاجزة للبطاقة؛ «-» للتصفير")
     m.add_argument("--waive-spec", help="استثناءٌ مسجَّل لبوّابة المواصفة الكاملة (السبب)")
+    m.add_argument("--waive-wip", help="استثناءٌ مسجَّل لحدِّ العمل الجاري: بطاقةٌ واحدةٌ جاريةٌ للجلسة (السبب)")
     sp = sub.add_parser("spec", help="يضبط حقولَ المواصفة الكاملة")
     sp.add_argument("id"); sp.add_argument("--tier", choices=SPEC_TIERS); sp.add_argument("--ref"); sp.add_argument("--roles-states")
     sp.add_argument("--allowed-diffs"); sp.add_argument("--assumption", action="append"); sp.add_argument("--source-of-truth")
@@ -729,7 +762,7 @@ def main() -> None:
                            start=args.start, priority=args.priority, held_by=args.held_by or ""))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
-                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec); print("ok")
+                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip); print("ok")
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
                      args.files_allowed, args.files_forbidden, args.accept, args.step, args.by); print("ok")
