@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تقرير الفلو و SWOT — 2026-10-05</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1b19;--mut:#6b655d;--line:#e4dfd6;--card:#fff;--acc:#7a1f3d;--ok:#1f6b3a;--warn:#8a5a00;--bad:#9b1c1c;--s:#e8f3ec;--w:#fbeaea;--o:#e8eef8;--t:#fbf1dc}
+@media (prefers-color-scheme:dark){:root{--bg:#161412;--fg:#ece7de;--mut:#a39b8f;--line:#33302b;--card:#1e1b18;--acc:#e0a3b8;--ok:#74c28f;--warn:#e0b14d;--bad:#e58a8a;--s:#1c2b22;--w:#2e1c1c;--o:#1c2330;--t:#2e2716}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 "Tajawal","Segoe UI",Tahoma,sans-serif}
+main{max-width:66rem;margin-inline:auto;padding:1.5rem 1rem 4rem}
+h1{font-size:1.6rem;margin:0 0 .25rem;color:var(--acc)}h2{font-size:1.2rem;margin:2.2rem 0 .6rem;border-block-end:2px solid var(--line);padding-block-end:.3rem}
+.sub{color:var(--mut);margin:0 0 1.2rem}.bluf{background:var(--card);border:1px solid var(--line);border-inline-start:5px solid var(--acc);padding:1rem 1.2rem;border-radius:.5rem}.bluf p{margin:.3rem 0}
+.tbl{overflow-x:auto}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-size:.93rem}th,td{padding:.5rem .65rem;text-align:start;vertical-align:top;border-block-end:1px solid var(--line)}th{background:rgba(122,31,61,.08);font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.q{border:1px solid var(--line);border-radius:.6rem;padding:.8rem 1rem}.q h3{margin:.1rem 0 .4rem;font-size:1.05rem}.q ul{margin:0;padding-inline-start:1.2rem}.q li{margin:.35rem 0;font-size:.93rem}
+.S{background:var(--s)}.W{background:var(--w)}.O{background:var(--o)}.T{background:var(--t)}
+.mut{color:var(--mut)}code{background:rgba(127,127,127,.15);padding:0 .3rem;border-radius:.25rem;font-size:.88em;direction:ltr;unicode-bidi:embed}
+.tag{display:inline-block;padding:.05rem .5rem;border-radius:1rem;font-size:.8rem;border:1px solid var(--line)}.g{color:var(--ok);border-color:var(--ok)}.a{color:var(--warn);border-color:var(--warn)}.r{color:var(--bad);border-color:var(--bad)}
+ol,ul{padding-inline-start:1.3rem}
+</style>
+</head>
+<body>
+<main>
+<h1>تقرير الفلو: ما تمّ وما قيس و SWOT</h1>
+<p class="sub">إعداد 0102 · 2026-10-05 05:40 بتوقيت الدوحة · القياسات من أدوات المايسترو (intake_kpis, ledger_lead_time, flow_metrics, ledger.py, watch_once, pytest, web_citations_audit) · لم يُقَس ما نُصّ عليه صراحةً «لم يُقَس»</p>
+
+<div class="bluf">
+<p><strong>الخلاصة:</strong> الفلو في حالة <strong>أفضل بنيةً من أمس وأقوى في السرعة بعد الاعتماد</strong>: دورة الدمج وسيطها 0.87 ساعة و87 طلباً مدموجاً في 3 أيام، وبطاقة ModelAdmin للغياب مرّت من المواصفة إلى الاعتماد والدفع في ساعات. وما زال الضعف في <strong>الدَّين</strong> (الراكد 18 من 38 ملتقَطة) و<strong>التزام الجلسات بالمكتوب</strong> (أربع مخالفات تنفيذية اليوم) و<strong>وضوح التعليمات للمنفِّذة</strong> (دوّامة 0404 في آليّة الغياب).</p>
+<p><strong>الأولويات الخمس:</strong> (١) قاموس تعريفات الغياب وبطاقة قصيرة لـ0404؛ (٢) فحص آلي لسطر مهارات التصميم وقناة المالك بدل الاعتماد على النص؛ (٣) تفريغ الراكد المتبقي؛ (٤) استعلام عدّ الصفوف المخالفة قبل قيود القاعدة؛ (٥) تسجيل الاستشهادين الخارجيّين في مصدر الحقيقة.</p>
+</div>
+
+<h2>١) ما تمّ منذ أمس (موثَّق في الإيداعات والقرارات)</h2>
+<div class="tbl"><table>
+<tr><th>المحور</th><th>ما تمّ</th></tr>
+<tr><td>البنية</td><td>دمج الجلسات الدائمة (النواة من 14 إلى 9) وإعادة الترقيم (D-197م وD-198م)؛ بطاقات الأدوار والمواثيق مولَّدة من مصدر واحد؛ SessionStart hook للهويّة بعد المسح؛ <code>session_register.py</code> لتسجيل الشجرة</td></tr>
+<tr><td>الدفتر والأدوات</td><td><code>pushed</code> لا يُقبل إلا بعد <code>ls-remote</code>؛ <code>held_by</code>؛ بوّابة المواصفة الكاملة (<code>spec</code> و<code>return</code> ورفض <code>routed</code> للناقص)؛ <code>validate_registry</code> يرفض الإحالات الذاتية والأرقام الميّتة؛ <code>dead_refs</code> و<code>alert_reconcile</code> و<code>roadmap_queue</code> و<code>web_citations_audit</code>؛ إصلاح تنبيه P0 المجدولة (337 اختباراً ناجحاً)</td></tr>
+<tr><td>القواعد</td><td>التصميم المركزي (مراجع دليل الهوية)؛ ظهور الجداول في Django admin؛ ما يُجلب من الإنترنت يدخل مصدر الحقيقة؛ 0301 ممارسةٌ دائمة (تحقّق ثمّ بحث ثمّ توثيق)؛ الشجرةُ التي يخدمها 8500 لا يغيّرها إلا 0501؛ التحقق ضمن المجال والإحالة خارجه</td></tr>
+<tr><td>المهارات</td><td>مهارتان جديدتان لـ0102؛ مهارات كلّ جلسة في ميثاقها؛ وتحديث 51 ملفّاً في مهارات المنصّة (محلّيّ غير مدفوع)</td></tr>
+<tr><td>الغياب</td><td>عصف 8 جلسات وتقرير؛ قرارات المالك (D-201م)؛ مواصفة المرحلة أ؛ سبع بطاقات <code>W-20261004-021..027</code>؛ <strong>أ٣ (ModelAdmin) نُفِّذت واعتُمدت ودُفعت</strong> (فرع بعيد مؤكَّد)</td></tr>
+<tr><td>الطابور</td><td>الراكد من 56 إلى 18 (من 79 إلى 38 ملتقَطة)</td></tr>
+<tr><td>الانضباط</td><td>أربع مخالفات تنفيذية سُجّلت (0501 مرّتان، 0404، 0409)، والتراجع عن عمل 0409 المبكر بقرارٍ منك</td></tr>
+</table></div>
+
+<h2>٢) القياسات الآن</h2>
+<div class="tbl"><table>
+<tr><th>المقياس</th><th>القيمة</th><th>الحكم</th></tr>
+<tr><td>الطلبات المدموجة (3 أيام)</td><td>87 (29.0/يوم)</td><td><span class="tag g">قوي</span></td></tr>
+<tr><td>زمن دورة الطلب</td><td>وسيط 0.87 س · p75 1.64 · p90 7.19 · أقصى 171.97</td><td><span class="tag g">قوي</span> مع ذيل طويل</td></tr>
+<tr><td>من «جاهز» إلى الاعتماد</td><td>وسيط 2.2 س · متوسّط 6.6 (36 بطاقة)</td><td><span class="tag a">مقبول</span></td></tr>
+<tr><td>من التوجيه إلى النشر</td><td>وسيط 3.8 س · متوسّط 10.3 (25)</td><td><span class="tag g">جيد</span></td></tr>
+<tr><td>من الالتقاط إلى النشر</td><td>وسيط 10.9 س · متوسّط 20.3 (74)</td><td><span class="tag a">مقبول</span></td></tr>
+<tr><td>من الالتقاط إلى التوجيه</td><td>وسيط 32.1 س (متوسّط 46.0؛ 111) <span class="mut">— يرتفع بتوجيه بطاقات قديمة في الموجات، لا يعني تدهوراً</span></td><td><span class="tag a">لا يقارَن بأمس</span></td></tr>
+<tr><td>الملتقَطة / الراكدة غير المركونة</td><td>38 / 18 (47%) · الهدف &lt; 20%</td><td><span class="tag r">أحمر (كان 71%)</span></td></tr>
+<tr><td>حالات البطاقات</td><td>published 81 · routed 59 · captured 38 · closed 16 · merged 11 · ready_for_review 5 · in_progress 5 · approved 5</td><td>59 موجَّهة تنتظر تنفيذاً</td></tr>
+<tr><td>العمل المفتوح فعلاً / نسبة التراكم</td><td>7 (أقدمه 22.4 س) / 1.4×</td><td><span class="tag a">أصفر</span></td></tr>
+<tr><td>الاستشهادات الخارجية المسجَّلة</td><td>0 من 2 (الهدف 100%)</td><td><span class="tag r">أحمر</span></td></tr>
+<tr><td>بطاقات أُعيدت لنقص المواصفة</td><td>0</td><td><span class="tag a">لم يُختبر بعد</span> — بطاقتان رُفضتا في التوجيه</td></tr>
+<tr><td>اختبارات الحزمة</td><td>337 ناجحاً</td><td><span class="tag g">أخضر</span></td></tr>
+</table></div>
+
+<h2>٣) SWOT</h2>
+<div class="grid">
+<div class="q S"><h3>القوّة</h3><ul>
+<li><strong>سرعة ما بعد الاعتماد:</strong> 29 طلباً مدموجاً يومياً، ودورة وسيطها أقل من ساعة.</li>
+<li><strong>الضوابط الآلية تعمل:</strong> رفض الدفتر بطاقتين full ناقصتين في التوجيه، ومنع <code>pushed</code> بلا فرع بعيد (قوّة مُثبَتة بأداة لا بنصّ).</li>
+<li><strong>أ٣ دليل أنّ المسار يعمل:</strong> مواصفة ← تنفيذ (0401) ← اعتماد المالك ← دفع بفرع بعيد مؤكَّد خلال ساعات.</li>
+<li><strong>ثقافة الإفصاح:</strong> 0501 و0404 و0409 أبلغت عن مخالفاتها بنفسها وأقرّت.</li>
+<li><strong>مصدر واحد للمواثيق:</strong> <code>tabs.json</code> ← بطاقات ← 337 اختباراً و<code>validate_registry</code> متّسق.</li>
+<li><strong>قابلية التراجع:</strong> تراجعت 0409 بسلام بنسخة مرجعية خارج المستودع.</li></ul></div>
+<div class="q W"><h3>الضعف</h3><ul>
+<li><strong>الدَّين:</strong> الراكد 47% (الهدف &lt; 20%)، و59 بطاقة موجَّهة بلا تنفيذ، و4 أشجار يتيمة وإيداعات بلا طلب دمج.</li>
+<li><strong>الالتزام بالنصّ لا بالفحص:</strong> أربع مخالفات تنفيذية اليوم (التشخيص، قناة المالك، مهارات التصميم، البدء قبل البطاقة)؛ ولا فحص آليّ لأكثرها.</li>
+<li><strong>وضوح التعليمات:</strong> مواصفة تقسيم 015 طويلة (135 سطراً) وموزَّعة على بطاقتين، وما زالت 0404 في دوّامة آليّة الغياب.</li>
+<li><strong>الاستشهادات الخارجية 0%</strong> مسجَّلة في مصدر الحقيقة.</li>
+<li><strong>عنق 0301:</strong> 59 بطاقة موجَّهة عندها، وبوّابة المواصفة الكاملة تزيد عليها دقائق لكلّ بطاقة (لم تُقَس).</li>
+<li><strong>الحمل:</strong> الالتزام بالذاكرة 88% (آخر قياس) وتعدّد الجلسات الحيّة.</li></ul></div>
+<div class="q O"><h3>الفرص</h3><ul>
+<li><strong>قاموس تعريفات الغياب:</strong> يزيل أصل التخبّط (خروج / غائب / متأخّر / عدّاد / نافذة الإدخال) ويقصّر بطاقة 0404.</li>
+<li><strong>مراحل الغياب أ/ب/ج:</strong> ستّ بطاقات جاهزة تنتظر 0301 وهي تحمل قاعدة الجداول في الإدارة.</li>
+<li><strong>فحوص آلية إضافية:</strong> سطر مهارات التصميم في «جاهز للمعاينة»، وقناة المالك، واستشهادات الويب في CI.</li>
+<li><strong>المدرسة الوهمية 10-06:</strong> اختبار حقيقي للأدوار (مدير، نائب، مشرف جناح، معلّم) بحسابات المعاينة.</li>
+<li><strong>أتمتة 0701:</strong> مراقب الطلبات وطابور الخارطة تلقائيّان.</li>
+<li><strong>لقطات ذاتية للمنفِّذة:</strong> تخفّض دورات المعاينة من 3 إلى 1 (لم تُجرَّب بعد).</li></ul></div>
+<div class="q T"><h3>التهديد</h3><ul>
+<li><strong>عنق المالك:</strong> كلّ اعتمادٍ وقرارٍ عنده؛ وأوامره تنتقل عبر جلسات (ادّعاءات «بأمر المالك» بلا أثر).</li>
+<li><strong>الدمج ينشر الويب تلقائياً:</strong> فلا دمجَ الأحد–الخميس بلا إذنك، فتتراكم طلباتٌ مدموجة معلّقة.</li>
+<li><strong>هجرات قيود الغياب</strong> قد تفشل على صفوف مخالِفة في الإنتاج (لم تُعَدّ بعد).</li>
+<li><strong>تقاطع الملفات:</strong> بطاقات الغياب أ٢/أ٥/أ٦/أ٧ تمسّ ملفّات الخروج التي تعمل عليها 0404.</li>
+<li><strong>فقدان الهويّة بعد مسح المحادثات:</strong> الـhook لم يُجرَّب حيّاً، وقد سمّى 0409 باسم خاطئ قبل تصحيح السجلّ.</li>
+<li><strong>خصوصيّة القاصرين:</strong> أسباب الغياب الصحّيّة غير مشفَّرة إلى أن تُنفَّذ المرحلة ب.</li></ul></div>
+</div>
+
+<h2>٤) التوصيات مرتّبةً</h2>
+<ol>
+<li><strong>قاموس تعريفات الغياب + بطاقة قصيرة لـ0404 (الآن):</strong> كلّ تعريفٍ بنصّ المالك وتاريخه أو افتراضٍ معلن، في صفحةٍ واحدة؛ وتجميدُ تعديلات 0404 حتى يصل.</li>
+<li><strong>تحويل أكثر القواعد من نصٍّ إلى فحص:</strong> رفض الدفتر لـ«جاهز للمعاينة» لواجهةٍ بلا حقل مهارات التصميم، وفحص أنّ <code>pin</code> لا يأتي من غير 0501.</li>
+<li><strong>إكمال تفريغ الراكد (18):</strong> موجة رابعة (P3 وبطاقتان full ناقصتان) وقرارٌ بما يُركن.</li>
+<li><strong>استعلام عدّ الصفوف المخالِفة</strong> (مدّة سالبة، خروجان مفتوحان، تنبيهات مكرّرة) قبل أ١، بإذنك (DPO).</li>
+<li><strong>تسجيل الاستشهادين</strong> (<code>ictaccess.mada.org.qa</code> و<code>quality.arc42.org</code>) في <code>ext_*.md</code> وتشغيل <code>web_citations_audit</code> أسبوعياً.</li>
+<li><strong>قياس عنق 0301</strong> بعد أسبوع (زمن المواصفة الكاملة لكلّ بطاقة، ونسبة المُعادة).</li>
+</ol>
+
+<h2>٥) ما لم يُقَس</h2>
+<ul>
+<li>الالتزام بالذاكرة الآن (آخر قياس 88.2% في 18:45)؛ وصحّة الإنتاج و8500 مباشرةً؛ وتنبيهات <code>watch_once</code> الحالية بالأنواع.</li>
+<li>أثر بوّابة المواصفة على دورات المعاينة (لا بطاقة واجهة مرّت بها كاملةً بعد).</li>
+<li>الـhook لم يُجرَّب على بدءٍ حقيقيّ بعد مسح؛ وما قاله 0404 عن التباسه ينتظر ردّه.</li>
+<li>الصفوف المخالِفة في الإنتاج؛ وكلفة الهجرات على الجداول الكبيرة.</li>
+</ul>
+</main>
+</body>
+</html>
