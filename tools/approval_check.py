@@ -49,7 +49,7 @@ def head_status(approved: str | None, pr_head: str | None, today: date | None = 
 def card_evidence(card: str, pr_head: str | None = None) -> list[tuple[str, str]]:
     code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
     try:
-        d = json.loads(out)
+        d, _ = json.JSONDecoder().raw_decode(out.lstrip())  # show يطبع نصّاً بعد الـJSON
     except ValueError:
         return []
     ev: list[tuple[str, str]] = []
@@ -126,7 +126,7 @@ def main() -> int:
         print(f"✘ الاعتمادُ على رأسٍ غيرِ رأس الإيداع الحاليّ ({pr_head}): لا يسري على إيداعاتٍ لاحقةٍ لم يرها المالك.")
         for t, _ in stale:
             print(f"  - {t}")
-        print("  أعيدي المعاينةَ على الرأس الجديد ثمّ سجّلي اعتماداً بـ--head، أو استثناءَ تافهٍ بتوقيع 0501 (`ledger.py waive-head`، وثائقُ فقط).")
+        print("  أعيدي المعاينةَ على الرأس الجديد ثمّ سجّلي اعتماداً بـ--head، أو استثناءَ تافهٍ بتوقيع 0501 (`ledger.py waive-head`: وثائقُ، أو دمجُ main فقط D-154م، أو إصلاحُ اختباراتٍ فقط D-155م).")
         return 3
     if ev:
         print("✘ اعتماداتٌ بلا رأسٍ انتهت مهلتُها (2026-10-09): سجّلي اعتماداً جديداً بـ--head.")
