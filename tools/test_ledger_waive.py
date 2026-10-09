@@ -151,3 +151,23 @@ def test_tests_only_rejects_assertion_whose_content_changed():
     weak = ledger.weakened_assertions("-    assert st in OK\n+    assert st != cp_model.MODEL_INVALID\n")
     assert weak and "assert st in OK" in weak[0]
     assert ledger.weakened_assertions("+    assert x == 1\n") == []
+
+
+def test_reapprove_moves_head_for_approved_card_and_guards(tmp_path):
+    """reapprove: رأسٌ جديد اعتمده المالكُ مباشرةً على بطاقةٍ معتمَدة (ثغرة W-20261008-013)."""
+    f = tmp_path / "l.jsonl"
+    ledger.append_event("created", "W-1", {"type": "tools", "problem": "x", "impact": "y", "accept": "z", "priority": "P2", "start": "2026-10-09T09:00+03:00", "source": "owner"}, f)
+    ledger.append_event("state", "W-1", {"state": "approved", "by": "0501", "head": "1437b0c7"}, f)
+    for bad in (dict(by="0401", note="اعتمد المالك 7bba0e72"), dict(by="0501", note="اعتمد 7bba0e72"), dict(by="0501", note="اعتمد المالك")):
+        try:
+            ledger.reapprove("W-1", "7bba0e72", path=f, **bad)
+            raise AssertionError("كان يجب أن يُرفض")
+        except ledger.LedgerError:
+            pass
+    ledger.reapprove("W-1", "7bba0e72", "0501", "اعتمد المالك مباشرةً 7bba0e72 «اعتمد 013»", path=f)
+    assert ledger.reduce_state(ledger.load_events(f))["W-1"]["approved_head"] == "7bba0e72"
+    try:
+        ledger.reapprove("W-1", "7bba0e72", "0501", "اعتمد المالك 7bba0e72", path=f)
+        raise AssertionError("مكرَّر")
+    except ledger.LedgerError:
+        pass

@@ -637,6 +637,32 @@ def _docs_changed_files(approved: str, new_head: str, passed: list[str] | None) 
     return list(dict.fromkeys([*(passed or []), *real]))
 
 
+def reapprove(item_id: str, new_head: str, by: str, note: str, path=None) -> None:
+    """اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (D-146م: الاعتمادُ مربوطٌ بالرأس).
+
+    سدٌّ لثغرة 10-09 (W-20261008-013): اعتمد المالكُ رأساً جديداً بعد التعديل ولا أداةَ تنقل رأسَ البطاقة إليه
+    (`move approved` مكرَّرٌ مرفوض، و`waive-head` لا يغطّي تغييرَ كود). التسجيلُ لـ0501/0101 فقط كـ`move approved`،
+    والملاحظةُ تسمّي المالكَ والرأسَ الجديد؛ ولا يجوز بعد الدمج (merged/published) لأنّ الرأسَ حينها قد دُمج."""
+    check_recorder("approved", by)
+    if not by:
+        raise LedgerError("--by مطلوب: 0501 أو 0101")
+    head = new_head[:8]
+    if not HEAD_RE.match(new_head):
+        raise LedgerError("--head <sha8> رأسُ الإيداع الذي عاينه المالكُ")
+    items = reduce_state(load_events(path))
+    item = items.get(item_id)
+    if item is None:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    if item["state"] not in ("approved", "pushed"):
+        raise LedgerError(f"«{item['state']}»: إعادةُ الاعتماد لبطاقةٍ في approved أو pushed فقط (بعد الدمج الرأسُ دُمج)")
+    if (item.get("approved_head") or "")[:8] == head:
+        raise LedgerError("الرأسُ هو المعتمَد أصلاً — لا حاجةَ لإعادة الاعتماد")
+    if "المالك" not in note or head not in note:
+        raise LedgerError("الملاحظةُ يلزمها تسميةُ المالك والرأس الجديد (مثل: اعتمد المالك مباشرةً <الرأس> «نصُّ قوله»)")
+    append_event("state", item_id, {"state": item["state"], "by": by, "head": head}, path)
+    append_event("note", item_id, {"text": check_text("note", f"إعادةُ اعتمادٍ برأسٍ جديد {item.get('approved_head')}→{head} بتوقيع {by}: {note}")}, path)
+
+
 def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None) -> None:
     """استثناءٌ صريحٌ مسجَّلٌ لا ضمنيّ: تعديلٌ تافهٌ (وثائق أو .md) بعد الاعتماد بتوقيع 0501؛ لا كودَ ولا صلاحيّاتٍ ولا هجرات."""
     if by not in WAIVER_BY:
@@ -757,6 +783,8 @@ def main() -> None:
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
     wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only"])
+    ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
+    ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
     sh = sub.add_parser("show"); sh.add_argument("id")
     tg = sub.add_parser("tag", help="يكتب خطورةَ البطاقة ومجالها من مسارات عملها")
@@ -783,6 +811,8 @@ def main() -> None:
             reschedule(args.id, args.start, args.decision, args.reason, args.by); print("ok")
         elif args.cmd == "park":
             park(args.id, args.decision, args.reason); print("ok")
+        elif args.cmd == "reapprove":
+            reapprove(args.id, args.head, args.by, args.note); print("ok")
         elif args.cmd == "waive-head":
             waive_head(args.id, args.head, args.by, args.reason, kind=args.kind); print("ok")
         elif args.cmd == "tag":
