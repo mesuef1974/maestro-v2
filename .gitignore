@@ -12,3 +12,6 @@ tools/.preview_accounts.env
 # كلمة مرور المعاينة المحلية — لا تُتبَّع أبداً
 local_preview_pw.txt
 local_preview_pw.txt
+
+# أدلّة البوّابة البصريّة (لقطات PNG) — لا تُتبَّع (W-20261009-007)
+evidence/
