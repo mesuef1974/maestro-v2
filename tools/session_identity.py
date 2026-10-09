@@ -72,6 +72,15 @@ def main() -> int:
         names = {}
     sys.stdout.reconfigure(encoding="utf-8")
     print(message(lookup(cwd, names), tree))
+    try:  # دليلُ عناوين الجلسات: الإرسالُ بالمعرّف لا بالاسم (الاسمُ لا يوقظ خاملةً) — لا يُسقط الـhook أبداً
+        import session_directory
+
+        d = session_directory.entries()
+        print("[عناوين الجلسات] أرسل بالمعرّف `to: local_<uuid>` لا بالاسم، ولا تُمرِّر رسالتك عبر المالك (دورُه الاعتماد والمعاينة فقط). "
+              "المعرّفُ يتبدّل عند إعادة التشغيل فتحقّق قبل الإرسال: `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`. "
+              + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
+    except Exception:  # noqa: BLE001
+        pass
     return 0
 
 
