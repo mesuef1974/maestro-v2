@@ -143,8 +143,11 @@ def update_seen(rows: list[str], seen: dict, now: datetime) -> dict:
 
 
 def fmt_age(age: timedelta) -> str:
+    """عمرٌ مقرَّبٌ إلى الأسفل (5 دقائق ثمّ ساعة) فلا تتبدّل الأرقام كلَّ دقيقةٍ ويبقى الملفُّ مستقرّاً."""
     minutes = int(age.total_seconds() // 60)
-    return f"{minutes // 60} س {minutes % 60} د" if minutes >= 60 else f"{minutes} د"
+    if minutes >= 60:
+        return f"{minutes // 60} س"
+    return f"{minutes // 5 * 5} د"
 
 
 def short(text: str, n: int = 140) -> str:

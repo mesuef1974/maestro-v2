@@ -62,10 +62,7 @@ def test_idempotent_second_run_rewrites_nothing(tmp_path):
     p = sample(tmp_path)
     assert run(tmp_path, p) is True
     assert run(tmp_path, p) is False
-    latest = tmp_path / "out" / "latest.md"
-    stamp = latest.stat().st_mtime_ns
-    run(tmp_path, p, NOW + timedelta(minutes=1))  # فارقُ دقيقةٍ يغيّر «منذ» فقط عند تجاوز العتبة
-    assert latest.exists() and stamp <= latest.stat().st_mtime_ns
+    assert run(tmp_path, p, NOW + timedelta(minutes=1)) is False  # فارقُ دقيقةٍ لا يغيّر الملفّ
 
 
 def test_violations_baseline_then_new_row(tmp_path):
