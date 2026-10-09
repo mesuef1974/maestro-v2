@@ -51,6 +51,10 @@ def message(title: str | None, tree: str | None) -> str:
             + "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل.")
 
 
+#: إيداع ترقية مهارة الهويّة البصريّة (#897) على main؛ غيابُه من سلف الشجرة = مهارةٌ قديمة
+SKILL_UPGRADE = "130d8a56f"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--cwd")
@@ -81,6 +85,15 @@ def main() -> int:
         print("[عناوين الجلسات] أرسل بالمعرّف `to: local_<uuid>` لا بالاسم، ولا تُمرِّر رسالتك عبر المالك (دورُه الاعتماد والمعاينة فقط). "
               "المعرّفُ يتبدّل عند إعادة التشغيل فتحقّق قبل الإرسال: `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`. "
               + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
+    except Exception:  # noqa: BLE001
+        pass
+    try:  # تحذيرٌ فقط (لا حجب): شجرةٌ بلا ترقية مهارة الهويّة البصريّة (#897) تعمل بنسخةٍ قديمةٍ منها
+        import subprocess
+
+        gate = subprocess.run(["git", "merge-base", "--is-ancestor", SKILL_UPGRADE, "HEAD"], cwd=cwd, capture_output=True, timeout=10)
+        if gate.returncode == 1:
+            print("[تحذير: مهارة الهويّة قديمة] شجرتك لا تحتوي ترقية web-design-mastery (#897: قائمة المراجعة 95 والتحقّق البصريّ بالدور 55 وخانتا عقد جاهز). "
+                  "قبل أيّ عمل واجهة (قالب/CSS/JS) ادمج origin/main في شجرتك (أداة sync_with_base_branch أو git fetch ثمّ merge) ثمّ اقرأ .claude/skills/web-design-mastery/references/95-checklist.md؛ ولا تُعلن «جاهزٌ للمعاينة» لعمل واجهة دون خانتَي «الأجهزة المقيسة» و«نتيجة المسبار».")
     except Exception:  # noqa: BLE001
         pass
     return 0
