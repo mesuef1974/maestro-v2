@@ -598,7 +598,7 @@ def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[s
     if not bad:
         return changed
     # الطريقُ الموسَّع: دمجٌ آليٌّ نظيفٌ لملفّاتٍ لمستها الجلسةُ وmain معاً
-    if first != approved:
+    if first != _git(["rev-parse", "--verify", f"{approved}^{{commit}}"], repo).strip():  # الدفترُ يخزّن بادئةً قصيرة
         raise LedgerError(f"ملفّاتٌ تختلف عن جهة main والأبُ الأوّل ليس المعتمَد نفسَه فلا merge-tree: {bad[:5]}")
     mt = subprocess.run(["git", "merge-tree", "--write-tree", approved, second], capture_output=True, encoding="utf-8", cwd=cwd)
     tree = mt.stdout.split("\n")[0].strip()

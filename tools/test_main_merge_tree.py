@@ -41,6 +41,13 @@ class MainMergeTree(unittest.TestCase):
         new = g(self.d, "rev-parse", "HEAD")
         self.assertEqual(ledger.check_main_merge(approved, new, self.d), ["a.txt"])
 
+    def test_short_approved_head_prefix_is_accepted(self):
+        """الدفترُ يخزّن الرأسَ المعتمَد بثماني خانات: لا يُرفض الدمجُ الآليُّ النظيفُ لاختلاف الطول (#906)."""
+        approved, main2 = self._branch_edit_top_main_edit_bottom()
+        g(self.d, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", main2)
+        new = g(self.d, "rev-parse", "HEAD")
+        self.assertEqual(ledger.check_main_merge(approved[:8], new, self.d), ["a.txt"])
+
     def test_manual_extra_line_is_rejected(self):
         approved, main2 = self._branch_edit_top_main_edit_bottom()
         g(self.d, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-commit", "--no-edit", main2)
