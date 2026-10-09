@@ -8,3 +8,7 @@ ledger/pr_watch_heartbeat.json
 
 # كلمة مرور حسابات المعاينة (بيد المالك) — لا تُتتبَّع أبداً
 tools/.preview_accounts.env
+
+# كلمة مرور المعاينة المحلية — لا تُتبَّع أبداً
+local_preview_pw.txt
+local_preview_pw.txt
