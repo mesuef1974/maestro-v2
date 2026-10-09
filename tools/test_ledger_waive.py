@@ -144,3 +144,10 @@ class RenameVisibilityTest(unittest.TestCase):
         with mock.patch.object(ledger, "_git_read", side_effect=fake):
             ledger._docs_changed_files(APPROVED, NEW, None)
         self.assertTrue(any("--no-renames" in c for c in calls), calls)
+
+
+def test_tests_only_rejects_assertion_whose_content_changed():
+    """قرار المالك 2026-10-09 (تقييد D-155م): تغيّر مضمون assert لا يُعفى ولو تساوى العدد (ثغرة ae0a2faa)."""
+    weak = ledger.weakened_assertions("-    assert st in OK\n+    assert st != cp_model.MODEL_INVALID\n")
+    assert weak and "assert st in OK" in weak[0]
+    assert ledger.weakened_assertions("+    assert x == 1\n") == []

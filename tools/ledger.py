@@ -520,18 +520,27 @@ def weakened_assertions(diff_text: str) -> list[str]:
     """تعديلٌ داخل اختبارٍ عاديٍّ يُضعف تأكيداً: حذفُ assert أكثرَ مما أُضيف، أو إضافةُ skip/xfail (ملاحظةُ حدٍّ من 0104)."""
     removed = added = 0
     weak = []
+    gone: list[str] = []
+    came: set[str] = set()
     for ln in diff_text.splitlines():
         if ln.startswith("---") or ln.startswith("+++"):
             continue
         if ln.startswith("-") and ASSERT_LINE.match(ln[1:]):
             removed += 1
+            gone.append(ln[1:].strip())
         elif ln.startswith("+"):
             if ASSERT_LINE.match(ln[1:]):
                 added += 1
+                came.add(ln[1:].strip())
             if WEAKEN_LINE.search(ln[1:]):
                 weak.append(ln[1:].strip()[:80])
     if removed > added:
         weak.append(f"حُذف {removed - added} تأكيدٌ بلا بديل")
+    # قرارُ المالك 2026-10-09 (تقييدُ D-155م): تأكيدٌ تغيّر مضمونُه لا يُعفى ولو بقي عددُ التأكيدات؛ يُعرض على المالك.
+    # (ثغرةُ ae0a2faa: `assert st in OK` ← `assert st != MODEL_INVALID` مرّ لأنّ العدّ متساوٍ فصار INFEASIBLE مقبولاً.)
+    changed = [g for g in gone if g not in came]
+    if changed:
+        weak.append(f"تأكيدٌ تغيّر مضمونُه ({len(changed)}): {changed[0][:70]}")
     return weak
 
 
