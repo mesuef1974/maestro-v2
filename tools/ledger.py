@@ -570,31 +570,44 @@ def check_tests_only(approved: str, new: str, repo: str | None = None) -> list[s
 
 
 def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[str]:
-    """يتحقّق آلياً أنّ الإيداعَ الجديد «دمجُ main فقط» (D-154م): لا كودَ من الجلسة بعد الرأس المعتمَد.
+    """يتحقّق آلياً أنّ الإيداعَ الجديد «دمجُ main فقط» (D-154م، موسَّعٌ بقرار المالك 2026-10-09 «موافق»).
 
-    الشروط: (١) الإيداعُ دمجٌ بأبوين، أوّلُهما الرأسُ المعتمَد أو تالٍ له؛ (٢) كلُّ ملفٍّ تغيّر بين المعتمَد والجديد
-    **مطابقٌ بمحتواه** لما في أبيه الثاني (جهةِ main) — فلا شيءَ من عمل الجلسة اختلط؛ ويرفض غيرَ ذلك. يعيد قائمةَ الملفّات المغيَّرة."""
+    الشروط: (١) الإيداعُ دمجٌ بأبوين، أوّلُهما الرأسُ المعتمَد أو تالٍ له؛ (٢) الأبُ الثاني سلفٌ لـorigin/main — وإلّا
+    طابق أيُّ فرعٍ يحمل كوداً نفسَه؛ (٣) إمّا كلُّ ملفٍّ تغيّر مطابقٌ بمحتواه لجهة main (الأب الثاني)، أو شجرةُ الإيداع
+    تساوي حرفياً ناتجَ `git merge-tree --write-tree` بين المعتمَد والأب الثاني بلا تعارضٍ ولا حلٍّ يدويّ (الأبُ الأوّل
+    هو المعتمَد نفسُه حينئذٍ) ولا ملفَّ حاكمٌ بين المتغيّر. يعيد قائمةَ الملفّات المغيَّرة."""
+    cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
     parents = _git(["rev-list", "--parents", "-n", "1", new], repo).split()[1:]
     if len(parents) != 2:
         raise LedgerError(f"ليس دمجاً بأبوين ({len(parents)}): لا يُعفى إلا «دمجُ main فقط»")
     first, second = parents
-    if subprocess.run(["git", "merge-base", "--is-ancestor", approved, first], cwd=repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp"),
-                      capture_output=True).returncode != 0:
+    if subprocess.run(["git", "merge-base", "--is-ancestor", approved, first], cwd=cwd, capture_output=True).returncode != 0:
         raise LedgerError("الأبُ الأوّل ليس الرأسَ المعتمَد أو تالياً له — فيه إيداعاتٌ لا نعرفها")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", second, "origin/main"], cwd=cwd, capture_output=True).returncode != 0:
+        raise LedgerError("الأبُ الثاني ليس من origin/main (fetch أوّلاً؟) — فقد يكون فرعاً يحمل كوداً")
     changed = _git(["diff", "--no-renames", "--name-only", approved, new], repo).split("\n")
     changed = [f for f in changed if f]
-    bad = []
-    for f in changed:
-        ours = subprocess.run(["git", "rev-parse", "-q", "--verify", f"{new}:{f}"], capture_output=True, encoding="utf-8",
-                              cwd=repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")).stdout.strip()
-        theirs = subprocess.run(["git", "rev-parse", "-q", "--verify", f"{second}:{f}"], capture_output=True, encoding="utf-8",
-                                cwd=repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")).stdout.strip()
-        if ours != theirs:
-            bad.append(f)
-    if bad:
-        raise LedgerError(f"ملفّاتٌ تختلف عن جهة main (عملُ جلسةٍ مختلط): {bad[:5]}")
     if not changed:
         raise LedgerError("لا فرقَ عن الرأس المعتمَد — لا حاجةَ لاستثناء")
+
+    def blob(rev: str, f: str) -> str:
+        return subprocess.run(["git", "rev-parse", "-q", "--verify", f"{rev}:{f}"], capture_output=True, encoding="utf-8",
+                              cwd=cwd).stdout.strip()
+
+    bad = [f for f in changed if blob(new, f) != blob(second, f)]
+    if not bad:
+        return changed
+    # الطريقُ الموسَّع: دمجٌ آليٌّ نظيفٌ لملفّاتٍ لمستها الجلسةُ وmain معاً
+    if first != approved:
+        raise LedgerError(f"ملفّاتٌ تختلف عن جهة main والأبُ الأوّل ليس المعتمَد نفسَه فلا merge-tree: {bad[:5]}")
+    mt = subprocess.run(["git", "merge-tree", "--write-tree", approved, second], capture_output=True, encoding="utf-8", cwd=cwd)
+    tree = mt.stdout.split("\n")[0].strip()
+    new_tree = _git(["rev-parse", f"{new}^{{tree}}"], repo).strip()
+    if mt.returncode != 0 or tree != new_tree:
+        raise LedgerError(f"ملفّاتٌ تختلف عن جهة main وشجرةُ الدمج لا تطابق merge-tree الآليَّ (حلٌّ يدويٌّ أو تعارض): {bad[:5]}")
+    gov = governing_files(bad)
+    if gov:
+        raise LedgerError(f"ملفّاتٌ حاكمةٌ بين المتغيّر تحتاج اعتماداً جديداً: {gov[:5]}")
     return changed
 
 
