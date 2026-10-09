@@ -38,6 +38,14 @@ COMMON = """\
 """
 
 
+def common_tools(tabs: dict) -> str:
+    """سطرُ الأدوات المشتركة من tabs.json (common_tools) — مصدرٌ واحدٌ يدخل كلَّ بطاقة (D-119م)."""
+    ct = tabs.get("common_tools")
+    if not ct:
+        return ""
+    return chr(10).join([f"## {ct['title']}", *[f"- {i}" for i in ct["items"]], ""])
+
+
 def card(title: str, ch: dict, tab: dict | None) -> str:
     sid = title.split(" · ")[0]
     out = [f"# بطاقةُ دورٍ — {title}", "",
@@ -112,6 +120,8 @@ def main() -> int:
     project = sys.argv[1] if len(sys.argv) > 1 else "schoolos"
     tabs = json.loads((ROOT / "projects" / project / "tabs.json").read_text(encoding="utf-8"))
     by_number = {t.get("number"): t for t in tabs["tabs"]}
+    global COMMON
+    COMMON = COMMON + "\n" + common_tools(tabs)
     outdir = ROOT / "role_cards"
     outdir.mkdir(exist_ok=True)
     rows = []
