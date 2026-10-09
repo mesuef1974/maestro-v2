@@ -101,8 +101,9 @@ def confirmations_evidence(key: str, pr_head: str | None = None) -> list[tuple[s
     return out
 
 
-#: بطاقاتٌ أُنشئت قبل هذا التاريخ لا تُلزَم بالأدلّة عند فحص الاعتماد/الدفع (سبقت البوّابة)؛ وأمرُ `visual` الصريحُ يفحص دائماً.
-VISUAL_GATE_FROM = "2026-10-09"
+#: تفعيلُ الحجب في `card`/`pr`: فارغٌ = مُعطَّل (مرجع 55 ينتظر اعتمادَ المالك، قرار 0101)؛ وبعد الاعتماد يُضبط تاريخاً
+#: `"YYYY-MM-DD"` فلا تُلزَم بالأدلّة بطاقاتٌ أُنشئت قبله (سبقت البوّابة). وأمرُ `visual` الصريحُ يفحص دائماً.
+VISUAL_GATE_FROM = ""
 UI_PREFIXES = ("templates/", "static/css/", "static/js/")
 
 
@@ -129,7 +130,7 @@ def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) ->
         d, _ = json.JSONDecoder().raw_decode(out.lstrip())
     except ValueError:
         return None
-    if respect_cutoff and str(d.get("created", ""))[:10] < VISUAL_GATE_FROM:
+    if respect_cutoff and (not VISUAL_GATE_FROM or str(d.get("created", ""))[:10] < VISUAL_GATE_FROM):
         return None
     head = head or d.get("approved_head")
     if not ui_touched(d.get("files") or [], head):

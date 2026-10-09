@@ -74,7 +74,17 @@ def test_ui_card_without_a_head_cannot_be_checked(monkeypatch):
     assert "لا أدلة بصرية" in ac.visual_problem("W-20261009-007", None)
 
 
+def test_card_checks_are_disabled_until_the_flag_is_set(monkeypatch):
+    monkeypatch.setattr(ac, "ui_touched", lambda files, head: True)
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, '{"state": "approved", "created": "2026-10-10T10:00:00+03:00"}'))
+    assert ac.VISUAL_GATE_FROM == ""
+    assert ac.visual_problem("W-20261010-001", "abcd1234", respect_cutoff=True) is None
+    monkeypatch.setattr(ac, "VISUAL_GATE_FROM", "2026-10-09")
+    assert ac.visual_problem("W-20261010-001", "abcd1234", respect_cutoff=True) is not None
+
+
 def test_cards_created_before_the_gate_are_grandfathered_on_card_checks(monkeypatch):
+    monkeypatch.setattr(ac, "VISUAL_GATE_FROM", "2026-10-09")
     monkeypatch.setattr(ac, "ui_touched", lambda files, head: True)
     monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, '{"state": "approved", "created": "2026-10-08T10:00:00+03:00"}'))
     assert ac.visual_problem("W-20261008-004", "abcd1234", respect_cutoff=True) is None
