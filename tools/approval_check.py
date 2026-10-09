@@ -3,11 +3,16 @@
 
     python approval_check.py card W-20260930-005
     python approval_check.py pr 772
+    python approval_check.py visual W-20261009-007 --head ab12cd34   # الأدلّةُ البصريّة وحدَها — قبل «جاهزٌ للمعاينة»
 
 المصادر بالترتيب: (١) حالةُ البطاقة في الدفتر — لا تبلغ approved وما بعدها إلا بـ`ledger.py move … --note` (قاعدةُ D-73م)،
 (٢) أحداثُ الاعتماد approvals في الدفتر، (٣) سطرُ الاعتماد في وصف طلب الدمج، (٤) `owner_confirmations.md`.
 يخرج برمز 0 إن ثبت الاعتماد من مصدرٍ واحد على الأقلّ، و2 إن لم يثبت — وحينها تسأل الجلسةُ **0501 أو 0101** (من تلقّى الاعتماد) لا المالك.
 قراءةٌ فقط.
+
+**البوّابةُ البصريّة (W-20261009-007):** لبطاقةٍ تلمس واجهةً (`templates/` أو `static/css|js` في `files` أو في فرق رأسها عن main)
+يرجع بالرمز 4 برسالة «لا أدلة بصرية للرأس» عند غياب `evidence/<بطاقة>/<رأس8>/manifest.json` أو اختلاف رأسه أو مخالفةٍ غيرِ مبرَّرة
+(`visual_gate.py`). وغيرُ الواجهة لا يتغيّر سلوكُه.
 """
 
 from __future__ import annotations
@@ -19,6 +24,8 @@ import subprocess
 import sys
 from datetime import date
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 ROOT = Path(__file__).resolve().parent.parent
 REPO_DIR = "D:/shschool_mvp"
@@ -94,15 +101,60 @@ def confirmations_evidence(key: str, pr_head: str | None = None) -> list[tuple[s
     return out
 
 
+#: بطاقاتٌ أُنشئت قبل هذا التاريخ لا تُلزَم بالأدلّة عند فحص الاعتماد/الدفع (سبقت البوّابة)؛ وأمرُ `visual` الصريحُ يفحص دائماً.
+VISUAL_GATE_FROM = "2026-10-09"
+UI_PREFIXES = ("templates/", "static/css/", "static/js/")
+
+
+def _is_ui_path(path: str) -> bool:
+    norm = path.replace("\\", "/").lstrip("./")
+    norm = norm.replace(REPO_DIR.rstrip("/") + "/", "")
+    return norm.startswith(UI_PREFIXES)
+
+
+def ui_touched(ledger_files: list[str], head: str | None) -> bool:
+    """هل تلمس البطاقةُ واجهةً: في `files` الدفتر، أو في فرق رأسها عن origin/main (إن عُرف الرأسُ في المستودع)."""
+    if any(_is_ui_path(f) for f in ledger_files or []):
+        return True
+    if not head:
+        return False
+    code, out = run(["git", "diff", "--name-only", f"origin/main...{head}"], cwd=REPO_DIR)
+    return code == 0 and any(_is_ui_path(f) for f in out.splitlines())
+
+
+def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) -> str | None:
+    """رسالةُ الفشل إن كانت البطاقةُ واجهةً بلا أدلّتها البصريّة السليمةِ للرأس؛ وإلّا `None`."""
+    code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
+    try:
+        d, _ = json.JSONDecoder().raw_decode(out.lstrip())
+    except ValueError:
+        return None
+    if respect_cutoff and str(d.get("created", ""))[:10] < VISUAL_GATE_FROM:
+        return None
+    head = head or d.get("approved_head")
+    if not ui_touched(d.get("files") or [], head):
+        return None
+    if not head:
+        return "لا أدلة بصرية للرأس: بطاقةُ واجهةٍ بلا رأسٍ للمقارنة (مرّري --head)"
+    import visual_gate
+
+    ok, msg = visual_gate.evidence_status(card, head)
+    return None if ok else msg
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("kind", choices=["card", "pr"])
+    ap.add_argument("kind", choices=["card", "pr", "visual"])
     ap.add_argument("target")
     ap.add_argument("--head", help="للبطاقة: رأسُ الإيداع الحاليّ للمقارنة (sha8)")
     a = ap.parse_args()
     ev: list[tuple[str, str]] = []
     pr_head = a.head
+    if a.kind == "visual":
+        problem = visual_problem(a.target, a.head)
+        print(("✘ " + problem) if problem else "✔ لا أدلةَ بصريّةً مطلوبة أو هي سليمة للرأس")
+        return 4 if problem else 0
     if a.kind == "card":
         ev += card_evidence(a.target, pr_head)
     else:
@@ -114,6 +166,11 @@ def main() -> int:
     good = [e for e in ev if e[1] in ("ok", "legacy")]
     stale = [e for e in ev if e[1] == "stale"]
     if good:
+        card_key = a.target if a.kind == "card" else (card if a.kind == "pr" and card else None)
+        problem = visual_problem(card_key, pr_head, respect_cutoff=True) if card_key else None
+        if problem:
+            print("✘ " + problem)
+            return 4
         print("✔ الاعتمادُ ثابتٌ من المصدر — لا تسألي المالكَ:")
         for t, st in good:
             print(f"  - {t}" + ("  ⚠ بلا رأسٍ (مقبولٌ حتى 2026-10-09 ثمّ يُرفض)" if st == "legacy" else ""))

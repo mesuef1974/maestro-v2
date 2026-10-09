@@ -42,3 +42,40 @@ def test_waiver_only_for_0501_and_docs(tmp_path):
         ledger.waive_head(iid, "bbbb2222", "0501", "x", path=p, changed=["core/permissions.py"])
     ledger.waive_head(iid, "bbbb2222", "0501", "وثيقةٌ فقط", path=p, changed=["docs/a.md"])
     assert ledger.reduce_state(ledger.load_events(p))[iid]["approved_head"] == "bbbb2222"
+
+
+# ── البوّابةُ البصريّة (W-20261009-007) ─────────────────────────────────────────────
+
+def test_ui_paths_are_detected_and_others_are_not():
+    assert ac._is_ui_path("templates/dashboard/roles/director.html")
+    assert ac._is_ui_path("D:/shschool_mvp/static/css/custom/40-themes.css")
+    assert ac._is_ui_path("static" + chr(92) + "js" + chr(92) + "app.js")
+    assert not ac._is_ui_path("operations/schedule_evaluator.py")
+    assert not ac._is_ui_path("docs/visual_gate.md")
+
+
+def test_non_ui_card_is_unchanged_by_the_visual_gate(monkeypatch):
+    monkeypatch.setattr(ac, "ui_touched", lambda files, head: False)
+    assert ac.visual_problem("W-20261009-007", "abcd1234") is None
+
+
+def test_ui_card_without_evidence_fails_with_the_documented_message(monkeypatch, tmp_path):
+    import visual_gate
+
+    monkeypatch.setattr(ac, "ui_touched", lambda files, head: True)
+    monkeypatch.setattr(visual_gate, "EVIDENCE_DIR", tmp_path)
+    msg = ac.visual_problem("W-20261009-007", "abcd1234")
+    assert msg and "لا أدلة بصرية للرأس" in msg
+
+
+def test_ui_card_without_a_head_cannot_be_checked(monkeypatch):
+    monkeypatch.setattr(ac, "ui_touched", lambda files, head: True)
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, '{"state": "captured"}'))
+    assert "لا أدلة بصرية" in ac.visual_problem("W-20261009-007", None)
+
+
+def test_cards_created_before_the_gate_are_grandfathered_on_card_checks(monkeypatch):
+    monkeypatch.setattr(ac, "ui_touched", lambda files, head: True)
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, '{"state": "approved", "created": "2026-10-08T10:00:00+03:00"}'))
+    assert ac.visual_problem("W-20261008-004", "abcd1234", respect_cutoff=True) is None
+    assert ac.visual_problem("W-20261008-004", "abcd1234") is not None  # الأمر الصريح يفحص دائماً
