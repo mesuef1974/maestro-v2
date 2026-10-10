@@ -592,6 +592,86 @@ def check_tests_only(approved: str, new: str, repo: str | None = None) -> list[s
     return changed
 
 
+_TYPING_MODULES = {"typing", "typing_extensions", "collections.abc", "__future__"}
+
+
+def _strip_types(source: str) -> str:
+    """AST مجرَّدٌ من كلّ ما هو أنواعٌ فقط: التعليقاتُ التوضيحيّة، واستيراداتُ typing، وكتلُ TYPE_CHECKING."""
+    import ast
+
+    class Strip(ast.NodeTransformer):
+        def visit_arg(self, node):
+            node.annotation = None
+            return node
+
+        def _fn(self, node):
+            node.returns = None
+            self.generic_visit(node)
+            return node
+
+        visit_FunctionDef = visit_AsyncFunctionDef = _fn
+
+        def visit_AnnAssign(self, node):
+            if node.value is None:
+                return None
+            return ast.copy_location(ast.Assign(targets=[node.target], value=self.visit(node.value), type_comment=None), node)
+
+        def visit_ImportFrom(self, node):
+            return None if (node.module or "") in _TYPING_MODULES else node
+
+        def visit_Import(self, node):
+            node.names = [a for a in node.names if a.name not in _TYPING_MODULES]
+            return node if node.names else None
+
+        def visit_If(self, node):
+            t = node.test
+            if (isinstance(t, ast.Name) and t.id == "TYPE_CHECKING") or (isinstance(t, ast.Attribute) and t.attr == "TYPE_CHECKING"):
+                return None
+            self.generic_visit(node)
+            return node
+
+    tree = Strip().visit(ast.parse(source))
+    ast.fix_missing_locations(tree)
+    return ast.dump(tree, annotate_fields=True, include_attributes=False)
+
+
+def check_types_only(approved: str, new: str, repo: str | None = None) -> list[str]:
+    """«إصلاحُ أنواعٍ لفشل mypy» (قرارُ المالك 10-10): الفرقُ عن المعتمَد في ملفّات .py وmypy_ratchet_baseline.json وحدَها؛
+    وكلُّ .py مطابقٌ بالـAST بعد تجريد الأنواع (تعليقات توضيحيّة، استيرادات typing، TYPE_CHECKING)؛ والخطُّ الأساس لا يرتفع
+    لأيّ ملف؛ ولا هجراتٍ ولا ملفّاتٍ حاكمة. يعيد قائمةَ الملفّات المغيَّرة."""
+    import json
+
+    cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", approved, new], cwd=cwd, capture_output=True).returncode != 0:
+        raise LedgerError("الإيداعُ الجديد لا يتلو الرأسَ المعتمَد — لا يُعفى")
+    changed = [f for f in _git(["diff", "--no-renames", "--name-only", approved, new], repo).splitlines() if f]
+    if not changed:
+        raise LedgerError("لا فرقَ عن الرأس المعتمَد — لا حاجةَ لاستثناء")
+    baseline = "mypy_ratchet_baseline.json"
+    outside = [f for f in changed if not (f.endswith(".py") or f.endswith(baseline))]
+    if outside:
+        raise LedgerError(f"ملفّاتٌ غيرُ .py وغيرُ خطّ mypy الأساس: {outside[:5]}")
+    bad = [f for f in changed if "/migrations/" in f or f.startswith("migrations/")] + governing_files(changed)
+    if bad:
+        raise LedgerError(f"هجراتٌ أو ملفّاتٌ حاكمة تُعرض على المالك: {bad[:5]}")
+    for f in changed:
+        if f.endswith(baseline):
+            old = json.loads(_git(["show", f"{approved}:{f}"], repo) or "{}").get("files", {})
+            cur = json.loads(_git(["show", f"{new}:{f}"], repo) or "{}").get("files", {})
+            risen = [k for k, v in cur.items() if v > old.get(k, 0)]
+            if risen:
+                raise LedgerError(f"الخطُّ الأساس يرتفع (يُعرض على المالك): {risen[:5]}")
+            continue
+        try:
+            before = _strip_types(_git(["show", f"{approved}:{f}"], repo))
+        except LedgerError:
+            before = None  # ملفٌّ جديد
+        after = _strip_types(_git(["show", f"{new}:{f}"], repo))
+        if before != after:
+            raise LedgerError(f"تغييرٌ يتجاوز الأنواع في {f} (AST بعد تجريد الأنواع يختلف) — يُعرض على المالك")
+    return changed
+
+
 def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[str]:
     """يتحقّق آلياً أنّ الإيداعَ الجديد «دمجُ main فقط» (D-154م، موسَّعٌ بقرار المالك 2026-10-09 «موافق»).
 
@@ -714,6 +794,9 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     elif kind == "tests-only":
         check_tests_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ اختباراتٍ فقط بلا حراسةٍ أمنيّة (تحقّق آليّ) — {reason}"
+    elif kind == "types-only":
+        check_types_only(item["approved_head"], new_head, repo)
+        reason = f"إصلاحُ أنواعٍ فقط لفشل mypy بقرار المالك 10-10 (تحقّق آليّ: AST مطابق) — {reason}"
     elif kind == "docs":
         changed = _docs_changed_files(item["approved_head"], new_head, changed)
         governing = governing_files(changed)
@@ -725,7 +808,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge أو tests-only")
+        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -820,7 +903,7 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only"])
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")

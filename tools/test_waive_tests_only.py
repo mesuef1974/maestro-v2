@@ -95,3 +95,29 @@ def test_added_skip_is_rejected_but_assert_rewrite_passes(tmp_path):
         ledger.check_tests_only(base, skipped, str(repo))
     rewritten = commit(repo, "tests/test_plain_thing.py", "import pytest\ndef test_a():\n    assert 1 == 2 - 1\n")
     assert ledger.check_tests_only(skipped, rewritten, str(repo)) == ["tests/test_plain_thing.py"]
+
+
+def test_types_only_passes_annotations_and_baseline_not_rising(tmp_path):
+    repo, approved = setup(tmp_path)
+    old = commit(repo, "app/svc.py", "def f(x):" + chr(10) + "    return x" + chr(10))
+    commit(repo, "tests/mypy_ratchet_baseline.json", '{"files": {"app/svc.py": 3}}')
+    old = git(repo, "rev-parse", "HEAD")
+    commit(repo, "app/svc.py", "from typing import Any" + chr(10) + "def f(x: Any) -> Any:" + chr(10) + "    return x" + chr(10))
+    new = commit(repo, "tests/mypy_ratchet_baseline.json", '{"files": {"app/svc.py": 1}}')
+    assert ledger.check_types_only(old, new, str(repo)) == ["app/svc.py", "tests/mypy_ratchet_baseline.json"]
+
+
+def test_types_only_rejects_behaviour_change_and_rising_baseline_and_migrations(tmp_path):
+    repo, approved = setup(tmp_path)
+    commit(repo, "app/svc.py", "def f(x):" + chr(10) + "    return x" + chr(10))
+    commit(repo, "tests/mypy_ratchet_baseline.json", '{"files": {"app/svc.py": 3}}')
+    base = git(repo, "rev-parse", "HEAD")
+    new = commit(repo, "app/svc.py", "def f(x: int) -> int:" + chr(10) + "    return x + 1" + chr(10))
+    with pytest.raises(ledger.LedgerError):
+        ledger.check_types_only(base, new, str(repo))
+    up = commit(repo, "tests/mypy_ratchet_baseline.json", '{"files": {"app/svc.py": 9}}')
+    with pytest.raises(ledger.LedgerError):
+        ledger.check_types_only(new, up, str(repo))
+    mig = commit(repo, "app/migrations/0001_x.py", "x = 1")
+    with pytest.raises(ledger.LedgerError):
+        ledger.check_types_only(up, mig, str(repo))
