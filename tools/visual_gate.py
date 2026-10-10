@@ -125,6 +125,9 @@ MEASURE_JS = r"""
     const cs = getComputedStyle(el);
     for (const prop of ['margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'row-gap', 'column-gap']) {
       const v = px(cs.getPropertyValue(prop));
+      // margin:auto داخل flex/grid يُحسب px كبيراً — ليس مسافةً مكتوبة
+      const pd = el.parentElement ? getComputedStyle(el.parentElement).display : '';
+      if (prop.startsWith('margin') && v > 64 && /flex|grid/.test(pd)) continue;
       if (v !== null && !near(v, sp)) add('spacing', el, `${prop} ${v}px`);
     }
     for (const prop of ['border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius', 'border-bottom-right-radius']) {
@@ -144,6 +147,9 @@ MEASURE_JS = r"""
     const cs = getComputedStyle(el);
     for (const prop of ['row-gap', 'column-gap']) {
       const v = px(cs.getPropertyValue(prop));
+      // margin:auto داخل flex/grid يُحسب px كبيراً — ليس مسافةً مكتوبة
+      const pd = el.parentElement ? getComputedStyle(el.parentElement).display : '';
+      if (prop.startsWith('margin') && v > 64 && /flex|grid/.test(pd)) continue;
       if (v !== null && !near(v, sp)) add('spacing', el, `${prop} ${v}px`);
     }
   }
@@ -236,11 +242,11 @@ def national_id_of(role: str) -> str | None:
     return None
 
 
-def login_state(browser: Any, base: str, role: str) -> dict[str, Any] | None:
+def login_state(browser: Any, base: str, role: str, username: str | None = None) -> dict[str, Any] | None:
     """حالةُ جلسةٍ مسجَّلةٍ لدورٍ من حسابات المعاينة؛ `None` للزائر. الكلمةُ لا تُطبع ولا تُخزَّن."""
     if role in ("anonymous", "public", ""):
         return None
-    national_id, password = national_id_of(role), read_password()
+    national_id, password = username or national_id_of(role), read_password()
     if not national_id or not password:
         raise SystemExit(f"لا حسابَ معاينةٍ للدور {role!r} أو لا كلمةَ في {PASSWORD_VAR}")
     ctx = browser.new_context(viewport={"width": 1280, "height": 800})
@@ -324,9 +330,10 @@ def run(card: str, head: str, base: str, entries: list[dict[str, Any]]) -> dict[
         states: dict[str, Any] = {}
         for entry in entries:
             role = entry.get("role", "anonymous")
-            if role not in states:
-                states[role] = login_state(browser, base, role)
-            pages.append(capture_page(browser, base, entry, outdir, states[role]))
+            who = (role, entry.get("username"))
+            if who not in states:
+                states[who] = login_state(browser, base, role, entry.get("username"))
+            pages.append(capture_page(browser, base, entry, outdir, states[who]))
         browser.close()
     manifest = build_manifest(card, head, base, pages)
     (outdir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
