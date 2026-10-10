@@ -100,3 +100,18 @@ def test_cards_created_before_the_gate_are_grandfathered_on_card_checks(monkeypa
     monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, '{"state": "approved", "created": "2026-10-08T10:00:00+03:00"}'))
     assert ac.visual_problem("W-20261008-004", "abcd1234", respect_cutoff=True) is None
     assert ac.visual_problem("W-20261008-004", "abcd1234") is not None  # الأمر الصريح يفحص دائماً
+
+
+def test_known_head_is_judged_by_actual_diff_not_ledger_files(monkeypatch):
+    wide = ["operations/", "templates/", "static/", "tests/"]
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, "operations/x.py" + chr(10) + "tests/test_x.py"))
+    assert ac.ui_touched(wide, "abcd1234") is False
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, "operations/x.py" + chr(10) + "templates/a/b.html"))
+    assert ac.ui_touched([], "abcd1234") is True
+
+
+def test_unknown_head_falls_back_to_ledger_files(monkeypatch):
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (128, ""))
+    assert ac.ui_touched(["templates/a.html"], "abcd1234") is True
+    assert ac.ui_touched(["operations/x.py"], "abcd1234") is False
+    assert ac.ui_touched(["templates/a.html"], None) is True

@@ -115,12 +115,11 @@ def _is_ui_path(path: str) -> bool:
 
 def ui_touched(ledger_files: list[str], head: str | None) -> bool:
     """هل تلمس البطاقةُ واجهةً: في `files` الدفتر، أو في فرق رأسها عن origin/main (إن عُرف الرأسُ في المستودع)."""
-    if any(_is_ui_path(f) for f in ledger_files or []):
-        return True
-    if not head:
-        return False
-    code, out = run(["git", "diff", "--name-only", f"origin/main...{head}"], cwd=REPO_DIR)
-    return code == 0 and any(_is_ui_path(f) for f in out.splitlines())
+    if head:
+        code, out = run(["git", "diff", "--name-only", f"origin/main...{head}"], cwd=REPO_DIR)
+        if code == 0:  # الرأسُ معروفٌ في المستودع: الحكمُ بالفرق الفعليّ وحدَه، وملفّاتُ الدفتر الواسعةُ لا تُحجب به (0103، 10-10)
+            return any(_is_ui_path(f) for f in out.splitlines())
+    return any(_is_ui_path(f) for f in ledger_files or [])
 
 
 def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) -> str | None:
