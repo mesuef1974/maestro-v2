@@ -409,6 +409,17 @@ def check_wip(items: dict, item_id: str, by: str | None, waive: str | None) -> s
     raise LedgerError(f"للجلسة {by} بطاقةٌ جاريةٌ أخرى: {others[0]['id']} — أنهِها أو انقلها إلى ready_for_review قبل بدء {item_id} (أو --waive-wip \"السبب\"، أو أولويّة P0)")
 
 
+def check_holder_on_route(item: dict, state: str, held_by: str | None) -> None:
+    """D-293م: لا توجيهَ (routed) بلا حامل — معاملٌ صريحٌ أو حاملٌ سابق؛ و«-» عند routed تُرفض لأنها تُصفّر الحامل."""
+    if state != "routed":
+        return
+    if held_by == "-":
+        raise LedgerError("routed لا يقبل --held-by - (التصفيرُ يترك البطاقةَ بلا مسؤول): سمِّ الحامل برقم جلسته")
+    if held_by or item.get("held_by"):
+        return
+    raise LedgerError("routed يلزمه --held-by <رقم الجلسة> (لا حاملَ سابقاً للبطاقة): البطاقةُ الموجَّهةُ بلا حامل تبقى بلا مسؤول (D-293م)")
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
          branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None) -> None:
     if state not in STATES:
@@ -421,6 +432,7 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if item_id not in items:
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
     check_transition(items[item_id]["state"], state, note)
+    check_holder_on_route(items[item_id], state, held_by)
     check_recorder(state, by)
     history = {e["data"].get("state") for e in load_events(path) if e["id"] == item_id and e["kind"] == "state"}
     spec_warning = check_spec_gate(items[item_id], state, history, waive_spec)

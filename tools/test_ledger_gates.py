@@ -48,3 +48,30 @@ class TestRecorders(unittest.TestCase):
             check_recorder("approved", "0405")
         with self.assertRaises(LedgerError):
             check_recorder("merged", "0403")
+
+
+class TestHolderOnRoute(unittest.TestCase):
+    """D-293م: held_by إلزاميٌّ عند التوجيه (W-20261009-015)."""
+
+    def test_route_without_holder_is_rejected(self):
+        from ledger import LedgerError, check_holder_on_route
+        with self.assertRaises(LedgerError):
+            check_holder_on_route({"state": "verified"}, "routed", None)
+        with self.assertRaises(LedgerError):
+            check_holder_on_route({"state": "verified", "held_by": ""}, "routed", None)
+
+    def test_route_with_param_or_previous_holder_passes(self):
+        from ledger import check_holder_on_route
+        check_holder_on_route({"state": "verified"}, "routed", "0403")
+        check_holder_on_route({"state": "verified", "held_by": "0403"}, "routed", None)
+
+    def test_release_dash_on_route_is_rejected_even_with_previous_holder(self):
+        from ledger import LedgerError, check_holder_on_route
+        with self.assertRaises(LedgerError):
+            check_holder_on_route({"state": "verified", "held_by": "0403"}, "routed", "-")
+
+    def test_other_states_unaffected(self):
+        from ledger import check_holder_on_route
+        for st in ("in_progress", "ready_for_review", "notes", "closed"):
+            check_holder_on_route({"state": "routed"}, st, None)
+            check_holder_on_route({"state": "routed"}, st, "-")
