@@ -6,6 +6,22 @@ import ledger
 
 
 class Gates(unittest.TestCase):
+    def test_add_note_appends_note_only_and_validates(self):
+        got = []
+        orig = (ledger.load_events, ledger.append_event, ledger.reduce_state)
+        ledger.load_events = lambda path=None: []
+        ledger.reduce_state = lambda ev: {"W-1": {"state": "ready_for_review"}}
+        ledger.append_event = lambda kind, i, data, path=None: got.append((kind, i, data))
+        try:
+            ledger.add_note("W-1", "حزمة الأدلة evidence/W-1/abcd1234/pack.md", "0502")
+            self.assertEqual([g[0] for g in got], ["note"])
+            with self.assertRaises(ledger.LedgerError):
+                ledger.add_note("W-9", "x", "0502")
+            with self.assertRaises(ledger.LedgerError):
+                ledger.add_note("W-1", "  ", "0502")
+        finally:
+            ledger.load_events, ledger.append_event, ledger.reduce_state = orig
+
     def test_no_push_without_approval(self):
         with self.assertRaises(ledger.LedgerError):
             ledger.check_transition("in_progress", "pushed", None)

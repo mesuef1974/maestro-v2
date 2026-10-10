@@ -366,6 +366,17 @@ def check_spec_gate(item: dict, target: str, history_states: set[str], waive: st
 RETURNABLE = {"verified", "routed", "in_progress", "ready_for_review", "notes"}
 
 
+def add_note(item_id: str, text: str, by: str, path=None) -> None:
+    """ملاحظةٌ على بطاقةٍ دون نقل حالتها (0103، 2026-10-10: تحتاجها 0502 لتسجيل مسار pack.md). لا تغيّر حالةً ولا حاملاً."""
+    item = reduce_state(load_events(path)).get(item_id)
+    if not item:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    if not text or not text.strip():
+        raise LedgerError("--text إلزاميّ: نصُّ الملاحظة")
+    check_session(by or "")
+    append_event("note", item_id, {"text": check_text("note", f"({by}) {text.strip()}")}, path)
+
+
 def return_card(item_id: str, reason: str, by: str, path=None) -> None:
     """إعادةُ بطاقةٍ إلى captured لنقص مواصفتها بسببٍ مكتوب؛ يعدّها intake_kpis (RETURNED_MARK)."""
     item = reduce_state(load_events(path)).get(item_id)
@@ -798,6 +809,8 @@ def main() -> None:
     sp.add_argument("--allowed-diffs"); sp.add_argument("--assumption", action="append"); sp.add_argument("--source-of-truth")
     sp.add_argument("--files-allowed", nargs="*"); sp.add_argument("--files-forbidden", nargs="*")
     sp.add_argument("--accept", action="append"); sp.add_argument("--step", action="append"); sp.add_argument("--by", required=True)
+    nt = sub.add_parser("note", help="ملاحظةٌ على بطاقةٍ دون نقل حالتها")
+    nt.add_argument("id"); nt.add_argument("--text", required=True); nt.add_argument("--by", required=True)
     rt = sub.add_parser("return", help="تعيد بطاقةً لنقص المواصفة إلى captured")
     rt.add_argument("id"); rt.add_argument("--reason", required=True); rt.add_argument("--by", required=True)
     pk = sub.add_parser("park", help="وسمُ بطاقةٍ مركونةٍ بقرارٍ مسجَّل")
@@ -828,6 +841,8 @@ def main() -> None:
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
                      args.files_allowed, args.files_forbidden, args.accept, args.step, args.by); print("ok")
+        elif args.cmd == "note":
+            add_note(args.id, args.text, args.by); print("ok")
         elif args.cmd == "return":
             return_card(args.id, args.reason, args.by); print("ok")
         elif args.cmd == "raise-priority":
