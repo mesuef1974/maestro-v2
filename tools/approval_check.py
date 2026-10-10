@@ -93,7 +93,14 @@ def confirmations_evidence(key: str, pr_head: str | None = None) -> list[tuple[s
     if not f.exists():
         return []
     out = []
-    for ln in f.read_text(encoding="utf-8").splitlines():
+    lines = f.read_text(encoding="utf-8").splitlines()
+    # ملحقُ تصحيح: «ملغى[<بطاقة>@<رأس>]» يُبقي السطرَ الأصليّ ولا يُحسب دليلاً (لا حذفَ لسجلّ تأكيدات المالك)
+    voided = re.findall(r"ملغى\[(\S+?)@(\w+)\]", chr(10).join(lines))
+    for ln in lines:
+        if "ملغى[" in ln:
+            continue
+        if any(re.search(re.escape(c) + r"\s*@" + re.escape(h), ln) for c, h in voided):
+            continue
         if key in ln:
             h = HEAD_IN_LINE.search(ln)
             tail = " ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else ""
