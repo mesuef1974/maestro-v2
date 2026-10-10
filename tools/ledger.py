@@ -779,6 +779,27 @@ def reapprove(item_id: str, new_head: str, by: str, note: str, path=None) -> Non
     append_event("note", item_id, {"text": check_text("note", f"إعادةُ اعتمادٍ برأسٍ جديد {item.get('approved_head')}→{head} بتوقيع {by}: {note}")}, path)
 
 
+def check_red_fix(item: dict, approved: str, new: str, repo: str | None = None) -> list[str]:
+    """«إصلاحُ فحصٍ أحمر بعد الدفع» (قرارُ المالك 10-10، D-332م): الرأسُ المعتمَد دُفع فعلاً (حالةُ البطاقة pushed)؛
+    والجديدُ يتلوه؛ ولا هجراتٍ ولا ملفّاتٍ حاكمةً ولا واجهةً (templates وstatic/css وstatic/js) ولا مساراتِ صلاحيّاتٍ/أمن.
+    لا ينطبق على عملٍ لم يُدفع. يعيد الملفّاتِ المغيَّرة."""
+    if item.get("state") != "pushed":
+        raise LedgerError("إعفاءُ إصلاح الفحص الأحمر لعملٍ دُفع فقط (حالة pushed)؛ ما لم يُدفع يحتاج اعتماداً جديداً")
+    cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", approved, new], cwd=cwd, capture_output=True).returncode != 0:
+        raise LedgerError("الإيداعُ الجديد لا يتلو الرأسَ المعتمَد — لا يُعفى")
+    changed = [f for f in _git(["diff", "--no-renames", "--name-only", approved, new], repo).splitlines() if f]
+    if not changed:
+        raise LedgerError("لا فرقَ عن الرأس المعتمَد — لا حاجةَ لاستثناء")
+    ui = ("templates/", "static/css/", "static/js/")
+    sensitive = ("permission", "auth", "security", "settings", "middleware", "capabilit", "/migrations/")
+    bad = [f for f in changed if f.startswith(ui) or "/templates/" in f or f.startswith("migrations/")
+           or any(k in f.lower() for k in sensitive)] + governing_files(changed)
+    if bad:
+        raise LedgerError(f"واجهةٌ أو هجراتٌ أو صلاحيّاتٌ/أمنٌ أو ملفّاتٌ حاكمة تُعرض على المالك: {bad[:5]}")
+    return changed
+
+
 def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None) -> None:
     """استثناءٌ صريحٌ مسجَّلٌ لا ضمنيّ: تعديلٌ تافهٌ (وثائق أو .md) بعد الاعتماد بتوقيع 0501؛ لا كودَ ولا صلاحيّاتٍ ولا هجرات."""
     if by not in WAIVER_BY:
@@ -797,6 +818,9 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     elif kind == "types-only":
         check_types_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ أنواعٍ فقط لفشل mypy بقرار المالك 10-10 (تحقّق آليّ: AST مطابق) — {reason}"
+    elif kind == "red-fix":
+        check_red_fix(item, item["approved_head"], new_head, repo)
+        reason = f"إصلاحُ فحصٍ أحمر بعد الدفع بقرار المالك 10-10 D-332م (تحقّق آليّ: pushed، بلا واجهة/هجرات/أمن) — {reason}"
     elif kind == "docs":
         changed = _docs_changed_files(item["approved_head"], new_head, changed)
         governing = governing_files(changed)
@@ -808,7 +832,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only")
+        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only أو red-fix")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -903,7 +927,7 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only", "red-fix"])
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
