@@ -125,3 +125,51 @@ def test_evidence_passes_only_without_unjustified_violations(tmp_path):
     good = dict(bad, justified=True, reason="مقصود")
     write_evidence(tmp_path / "W-1" / "eeee5555", "eeee5555", [page([good])])
     assert vg.evidence_status("W-1", "eeee5555", tmp_path)[0]
+
+
+def _conf(tmp_path, text):
+    f = tmp_path / "oc.md"
+    f.write_text(text, encoding="utf-8")
+    return f
+
+
+def test_waive_requires_owner_line(tmp_path):
+    with pytest.raises(ValueError):
+        vg.waive("W-1", "abcd1234", "r", "0101", tmp_path, _conf(tmp_path, "| x | W-1 @abcd1234 |"))
+
+
+def test_waive_exact_pair_only(tmp_path):
+    c = _conf(tmp_path, "| 1 | «هيا» | إعفاء manifest | W-1 @abcd1234 |")
+    vg.waive("W-1", "abcd1234", "للمطوّر وحده", "0101", tmp_path, c)
+    assert vg.evidence_status("W-1", "abcd1234", tmp_path, c)[0]
+    assert not vg.evidence_status("W-1", "ffff0000", tmp_path, c)[0]
+    assert not vg.evidence_status("W-2", "abcd1234", tmp_path, c)[0]
+
+
+def test_waiver_dies_if_owner_line_removed(tmp_path):
+    c = _conf(tmp_path, "| إعفاء manifest | W-1 @abcd1234 |")
+    vg.waive("W-1", "abcd1234", "r", "0101", tmp_path, c)
+    c.write_text("", encoding="utf-8")
+    assert not vg.evidence_status("W-1", "abcd1234", tmp_path, c)[0]
+
+
+def test_waiver_wins_over_existing_bad_manifest(tmp_path):
+    folder = tmp_path / "W-1" / "abcd1234"
+    folder.mkdir(parents=True)
+    (folder / "manifest.json").write_text(json.dumps({"head": "abcd1234", "pages": [{"path": "/x", "shots": [], "violations": [{"justified": False}]}]}), encoding="utf-8")
+    c = _conf(tmp_path, "| إعفاء manifest | W-1 @abcd1234 |")
+    assert not vg.evidence_status("W-1", "abcd1234", tmp_path, c)[0]
+    vg.waive("W-1", "abcd1234", "r", "0101", tmp_path, c)
+    assert vg.evidence_status("W-1", "abcd1234", tmp_path, c)[0]
+
+
+def test_voided_line_does_not_waive(tmp_path):
+    c = _conf(tmp_path, "| إعفاء manifest | W-1 @abcd1234 |\n| تصحيح | ملغى[W-1@abcd1234] |")
+    with pytest.raises(ValueError):
+        vg.waive("W-1", "abcd1234", "r", "0101", tmp_path, c)
+
+
+def test_card_suffix_does_not_match(tmp_path):
+    c = _conf(tmp_path, "| إعفاء manifest | W-1-0081 @abcd1234 |")
+    with pytest.raises(ValueError):
+        vg.waive("W-1-008", "abcd1234", "r", "0101", tmp_path, c)

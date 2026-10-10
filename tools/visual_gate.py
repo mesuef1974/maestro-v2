@@ -340,11 +340,72 @@ def run(card: str, head: str, base: str, entries: list[dict[str, Any]]) -> dict[
     return manifest
 
 
-def evidence_status(card: str, head: str, evidence_dir: Path | None = None) -> tuple[bool, str]:
+CONFIRMATIONS = ROOT / "owner_confirmations.md"
+WAIVER_MARK = "إعفاء manifest"
+
+
+def owner_waiver_line(card: str, head: str, confirmations: Path | None = None) -> str | None:
+    """سطرُ المالك المسجَّل لإعفاء manifest هذا الزوجِ (بطاقة + رأس) بعينه، وإلا None."""
+    f = confirmations or CONFIRMATIONS
+    if not f.exists():
+        return None
+    lines = f.read_text(encoding="utf-8").splitlines()
+    # ملحقُ الإلغاء «ملغى[بطاقة@رأس]» (كما في approval_check.confirmations_evidence) يُسقط السطرَ المقصود
+    voided = re.findall(r"ملغى\[(\S+?)@(\w+)\]", chr(10).join(lines))
+    card_re = re.escape(card) + r"(?!\w)"
+    head_re = "@" + re.escape(head[:8]) + r"(?!\w)"
+    for ln in lines:
+        if "ملغى[" in ln:
+            continue
+        if any(re.search(re.escape(c) + r"\s*@" + re.escape(h), ln) for c, h in voided):
+            continue
+        if WAIVER_MARK in ln and re.search(card_re, ln) and re.search(head_re, ln):
+            return ln.strip()
+    return None
+
+
+def waive(card: str, head: str, reason: str, by: str, evidence_dir: Path | None = None, confirmations: Path | None = None) -> str:
+    """يسجّل إعفاءً بصريّاً لرأسٍ بعينه: لا يُكتب بلا سطر المالك المطابق في owner_confirmations.md، ولا يعمّ ما بعده."""
+    head = head[:8]
+    if not re.fullmatch(r"[0-9a-f]{8}", head):
+        raise ValueError("--head8 غير صالح")
+    if not reason.strip() or not by.strip():
+        raise ValueError("السببُ والتوقيعُ لازمان")
+    line = owner_waiver_line(card, head, confirmations)
+    if not line:
+        raise ValueError(f"لا سطرَ للمالك بـ«{WAIVER_MARK}» للبطاقة {card} @{head} في owner_confirmations.md")
+    d = evidence_dir or EVIDENCE_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    rec = {"card": card, "head": head, "by": by, "reason": reason, "owner_line": line, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    with (d / "waivers.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + chr(10))
+    return line
+
+
+def waiver_for(card: str, head: str, evidence_dir: Path | None = None, confirmations: Path | None = None) -> dict | None:
+    """إعفاءٌ ساري لهذا الزوجِ بعينه: سجلٌّ مطابقٌ وسطرُ المالك ما زال قائماً."""
+    f = (evidence_dir or EVIDENCE_DIR) / "waivers.jsonl"
+    if not f.exists():
+        return None
+    for ln in f.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        if r.get("card") == card and r.get("head") == head[:8] and owner_waiver_line(card, head, confirmations):
+            return r
+    return None
+
+
+def evidence_status(card: str, head: str, evidence_dir: Path | None = None, confirmations: Path | None = None) -> tuple[bool, str]:
     """(ناجح؟، رسالة) — هل للرأس أدلّةٌ بصريّةٌ كاملةٌ بلا مخالفةٍ غيرِ مبرَّرة. قراءةٌ فقط."""
     head = head[:8]
     folder = (evidence_dir or EVIDENCE_DIR) / card / head
     manifest_file = folder / "manifest.json"
+    # الإعفاءُ يُقدَّم على فحص manifest: يُعفى الزوجُ (بطاقة+رأس) رغم وجود manifest بمخالفات
+    w = waiver_for(card, head, evidence_dir, confirmations)
+    if w:
+        return True, f"إعفاءٌ بصريٌّ للرأس {head} بقول المالك (وقّع {w['by']}): {w['reason']}"
     if not manifest_file.exists():
         return False, f"لا أدلة بصرية للرأس {head}: لا manifest في {folder} (شغّلي visual_gate.py run)"
     try:
@@ -380,7 +441,20 @@ def main() -> int:
     c = sub.add_parser("check", help="يتحقّق من الأدلّة المكتوبة")
     c.add_argument("--card", required=True)
     c.add_argument("--head", required=True)
+    w = sub.add_parser("waive", help="إعفاءُ manifest لرأسٍ بعينه بسطر المالك المسجَّل")
+    w.add_argument("--card", required=True)
+    w.add_argument("--head8", required=True)
+    w.add_argument("--reason", required=True)
+    w.add_argument("--by", required=True)
     a = ap.parse_args()
+    if a.cmd == "waive":
+        try:
+            line = waive(a.card, a.head8, a.reason, a.by)
+        except ValueError as e:
+            print("✘ " + str(e))
+            return 2
+        print(f"✔ أُعفي {a.card} @{a.head8[:8]} بتوقيع {a.by}؛ سطر المالك: {line[:100]}")
+        return 0
     if a.cmd == "check":
         ok, msg = evidence_status(a.card, a.head)
         print(("✔ " if ok else "✘ ") + msg)
