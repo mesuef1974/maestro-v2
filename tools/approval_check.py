@@ -103,7 +103,7 @@ def confirmations_evidence(key: str, pr_head: str | None = None) -> list[tuple[s
 
 #: تفعيلُ الحجب في `card`/`pr`: فارغٌ = مُعطَّل (مرجع 55 ينتظر اعتمادَ المالك، قرار 0101)؛ وبعد الاعتماد يُضبط تاريخاً
 #: `"YYYY-MM-DD"` فلا تُلزَم بالأدلّة بطاقاتٌ أُنشئت قبله (سبقت البوّابة). وأمرُ `visual` الصريحُ يفحص دائماً.
-VISUAL_GATE_FROM = ""
+VISUAL_GATE_FROM = "2026-10-10"  # قرار المالك 10-10: حجبٌ لبطاقات الواجهة المُنشأة من هذا اليوم بلا أدلّة بصريّة
 UI_PREFIXES = ("templates/", "static/css/", "static/js/")
 
 
