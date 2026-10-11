@@ -66,6 +66,17 @@ def test_upgraded_with_ack_passes(repo, capsys):
     assert g.decide(edit(top, tool="Write", rel="static/css/custom/20-components.css")) is None
 
 
+def test_ack_records_head_at_read_time(repo):
+    """D-376م: الإيصالُ يحمل رأسَ HEAD وقتَ القراءة لتربطه الأدواتُ برأسٍ."""
+    import json
+    top, _ = repo
+    sys.argv = ["identity_ack.py", "--cwd", str(top)]
+    assert ack.main() == 0
+    rec = json.loads(g.ack_path(top).read_text(encoding="utf-8"))
+    assert rec["head"] == run(top, "rev-parse", "HEAD").strip()
+    assert len(rec["head"]) == 40
+
+
 def test_non_ui_file_passes_even_if_stale(repo):
     top, old = repo
     run(top, "checkout", "-q", old)
