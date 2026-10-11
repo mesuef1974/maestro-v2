@@ -115,3 +115,88 @@ def test_unknown_head_falls_back_to_ledger_files(monkeypatch):
     assert ac.ui_touched(["templates/a.html"], "abcd1234") is True
     assert ac.ui_touched(["operations/x.py"], "abcd1234") is False
     assert ac.ui_touched(["templates/a.html"], None) is True
+
+
+# ── التنازلُ البصريّ (قرار المالك D-352م) وامتدادُه التلقائيّ (D-356م) ─────────────────────
+
+WAIVER = "تنازلٌ بصريّ بقرار المالك D-352م: الرأس bdcb4628 — معاينته اليدويّة بدل المانيفست"
+
+
+def _card_with(*texts):
+    return {"notes": [{"text": t} for t in texts]}
+
+
+def test_waiver_applies_to_named_head_only(monkeypatch):
+    monkeypatch.setattr(ac, "_diff_paths", lambda old, new: None)  # بلا امتداد: git يفشل
+    card = _card_with(WAIVER)
+    assert ac.visual_waived(card, "bdcb4628") is True
+    assert ac.visual_waived(card, "bdcb46289abc") is True  # رأسٌ كاملٌ يبدأ بالثماني خانات
+    assert ac.visual_waived(card, "c98dbd3d") is False
+    assert ac.visual_waived(_card_with("ملاحظةٌ عاديّة فيها bdcb4628"), "bdcb4628") is False  # لا تبدأ بالعبارة
+
+
+def test_waiver_extends_to_backend_only_head(monkeypatch):
+    seen = []
+
+    def fake(old, new):
+        seen.append((old, new))
+        return ["operations/schedule_edges.py", "tests/test_x.py"]
+
+    monkeypatch.setattr(ac, "_diff_paths", fake)
+    assert ac.visual_waived(_card_with(WAIVER), "63328b05") is True
+    assert seen == [("bdcb4628", "63328b05")]
+
+
+def test_waiver_does_not_extend_over_template_or_static(monkeypatch):
+    monkeypatch.setattr(ac, "_diff_paths", lambda old, new: ["operations/a.py", "templates/schedule/x.html"])
+    assert ac.visual_waived(_card_with(WAIVER), "63328b05") is False
+    monkeypatch.setattr(ac, "_diff_paths", lambda old, new: ["static/css/custom/a.css"])
+    assert ac.visual_waived(_card_with(WAIVER), "63328b05") is False
+
+
+def test_waiver_does_not_extend_when_git_fails_or_other_card(monkeypatch):
+    monkeypatch.setattr(ac, "_diff_paths", lambda old, new: None)
+    assert ac.visual_waived(_card_with(WAIVER), "63328b05") is False
+    monkeypatch.setattr(ac, "_diff_paths", lambda old, new: ["operations/a.py"])
+    assert ac.visual_waived(_card_with(), "63328b05") is False  # بطاقةٌ بلا تنازلٍ في دفترها
+
+
+def test_diff_paths_returns_none_on_git_failure(monkeypatch):
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (128, ""))
+    assert ac._diff_paths("aaaaaaaa", "bbbbbbbb") is None
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, "a.py" + chr(10) + "b.py" + chr(10)))
+    assert ac._diff_paths("aaaaaaaa", "bbbbbbbb") == ["a.py", "b.py"]
+
+
+def test_waiver_accepts_ledger_author_prefix(monkeypatch):
+    monkeypatch.setattr(ac, "_diff_paths", lambda old, new: None)
+    assert ac.visual_waived(_card_with("(0502) " + WAIVER), "bdcb4628") is True  # ledger note --by يضيف «(NNNN) »
+    assert ac.visual_waived(_card_with("(0502) ملاحظةٌ عاديّة bdcb4628"), "bdcb4628") is False
+
+
+# ── إيصالُ الهويّة لرأس الإيداع (D-376م) ─────────────────────────────────────────
+
+def test_identity_ack_is_off_by_default():
+    assert ac.IDENTITY_ACK_FROM == ""
+    assert ac.identity_ack_problem("W-1", "abcd1234ffff", "2026-10-11") is None
+
+
+def test_identity_ack_requires_the_line_for_the_same_head(tmp_path, monkeypatch):
+    import visual_gate
+
+    monkeypatch.setattr(visual_gate, "EVIDENCE_DIR", tmp_path)
+    assert "لا إيصالَ" in ac.identity_ack_problem("W-1", "abcd1234ffff", enforce=True)
+    d = tmp_path / "W-1" / "abcd1234"
+    d.mkdir(parents=True)
+    (d / ac.IDENTITY_ACK_FILE).write_text("identity_ack: abcd1234 سقط\n", encoding="utf-8")
+    assert ac.identity_ack_problem("W-1", "abcd1234ffff", enforce=True)
+    (d / ac.IDENTITY_ACK_FILE).write_text("identity_ack: abcd1234 نجح\n", encoding="utf-8")
+    assert ac.identity_ack_problem("W-1", "abcd1234ffff", enforce=True) is None
+    # إيصالُ رأسٍ آخر لا يكفي
+    assert ac.identity_ack_problem("W-1", "ffff0000aaaa", enforce=True)
+
+
+def test_identity_ack_cutoff_by_card_creation_date(monkeypatch):
+    monkeypatch.setattr(ac, "IDENTITY_ACK_FROM", "2026-10-12")
+    assert ac.identity_ack_problem("W-1", "abcd1234", "2026-10-11") is None
+    assert ac.identity_ack_problem("W-1", "abcd1234", "2026-10-12")
