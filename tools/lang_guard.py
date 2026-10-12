@@ -24,6 +24,9 @@ MODE_FILE = Path(__file__).resolve().parent.parent / "lang_guard.mode"
 AR = re.compile(r"[؀-ۿ]")
 LAT = re.compile(r"[A-Za-z]{3,}")
 MIN_WORDS = 4
+#: حدّا المنع (D-411م): وصفُ الأداة 3 كلماتٍ لاتينيّة فأكثر؛ والنصُّ 6 فأكثر. ما بين 4 و5 في النصّ تحذيرٌ فقط.
+DESC_BLOCK_WORDS = 3
+TEXT_BLOCK_WORDS = 6
 TAIL_BYTES = 400_000
 
 
@@ -38,12 +41,12 @@ def mode() -> str:
         return "warn"
 
 
-def is_english(text: str) -> bool:
+def is_english(text: str, min_words: int = MIN_WORDS) -> bool:
     text = re.sub(r"```.*?```", "", text, flags=re.S)
     text = re.sub(r"`[^`]*`", "", text)
     text = re.sub(r"https?://\S+|[A-Za-z]:[\\/]\S+|\S+[\\/]\S+|\S+_\S+", "", text)
     words = LAT.findall(text)
-    return len(words) >= MIN_WORDS and len(AR.findall(text)) <= len(words) * 2
+    return len(words) >= min_words and len(AR.findall(text)) <= len(words) * 2
 
 
 def last_assistant_text(path: str) -> str:
@@ -85,11 +88,14 @@ def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         tool_in = payload.get("tool_input") or {}
-        offenders = []
-        if is_english(str(tool_in.get("description", ""))):
+        offenders, hard = [], False
+        if is_english(str(tool_in.get("description", "")), DESC_BLOCK_WORDS):
             offenders.append("وصف الأداة")
-        if is_english(last_assistant_text(payload.get("transcript_path", ""))):
+            hard = True
+        before = last_assistant_text(payload.get("transcript_path", ""))
+        if is_english(before, MIN_WORDS):
             offenders.append("النصّ الذي كتبتَه قبل الأداة")
+            hard = hard or is_english(before, TEXT_BLOCK_WORDS)
         log(payload, offenders)
         if not offenders:
             return 0
@@ -98,7 +104,7 @@ def main() -> int:
             + "، ".join(offenders)
             + ". أعد الصياغة بالعربيّة ثمّ أعد الاستدعاء (الأسماء والأوامر والمسارات تبقى كما هي)."
         )
-        if mode() == "block":
+        if mode() == "block" and hard:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                      "permissionDecisionReason": msg}}, ensure_ascii=False))
         else:

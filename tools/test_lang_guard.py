@@ -120,3 +120,29 @@ def test_main_bad_input_never_fails_the_session(monkeypatch, capsys, raw):
     monkeypatch.setattr(sys, "stdin", io.StringIO(raw))
     assert lg.main() == 0
     assert capsys.readouterr().out == ""
+
+
+def _tr_one(tmp_path, text):
+    p = tmp_path / "t.jsonl"
+    p.write_text(json.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}, ensure_ascii=False) + "\n", encoding="utf-8")
+    return str(p)
+
+
+def test_block_three_word_description_denied(monkeypatch, capsys):
+    """D-411م: وصف الأداة الإنجليزي ثلاث كلماتٍ فأكثر يُمنع."""
+    _, out = _run_main(monkeypatch, capsys, {"tool_input": {"description": "Update message counter"}}, "block")
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_block_text_five_words_only_warns(monkeypatch, capsys, tmp_path):
+    """نصٌّ بخمس كلماتٍ لاتينيّة تحذيرٌ لا منع."""
+    t = _tr_one(tmp_path, "Now the new decision module.")
+    _, out = _run_main(monkeypatch, capsys, {"tool_input": {"description": "عرض"}, "transcript_path": t}, "block")
+    data = json.loads(out)["hookSpecificOutput"]
+    assert "additionalContext" in data and "permissionDecision" not in data
+
+
+def test_block_text_six_words_denied(monkeypatch, capsys, tmp_path):
+    t = _tr_one(tmp_path, "Run the real generation again with early stop.")
+    _, out = _run_main(monkeypatch, capsys, {"tool_input": {"description": "عرض"}, "transcript_path": t}, "block")
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
