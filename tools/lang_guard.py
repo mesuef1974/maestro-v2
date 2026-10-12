@@ -69,6 +69,19 @@ def last_assistant_text(path: str) -> str:
     return ""
 
 
+def log(payload: dict, offenders: list) -> None:
+    """سطرٌ لكل استدعاء في lang_guard.log: الوقت|الجلسة|المجلد|المخالف — لقياس أسبوع warn."""
+    try:
+        from datetime import datetime, timezone
+        row = "|".join([datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), str(payload.get("session_id", ""))[:8],
+                        os.path.basename(str(payload.get("cwd", ""))), ",".join(offenders) or "-"])
+        with open(MODE_FILE.with_name("lang_guard.log"), "a", encoding="utf-8") as fh:
+            fh.write(row + "
+")
+    except Exception:  # noqa: BLE001 — السجل لا يُسقط الحارس
+        pass
+
+
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -78,6 +91,7 @@ def main() -> int:
             offenders.append("وصف الأداة")
         if is_english(last_assistant_text(payload.get("transcript_path", ""))):
             offenders.append("النصّ الذي كتبتَه قبل الأداة")
+        log(payload, offenders)
         if not offenders:
             return 0
         msg = (
