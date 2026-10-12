@@ -76,8 +76,7 @@ def log(payload: dict, offenders: list) -> None:
         row = "|".join([datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), str(payload.get("session_id", ""))[:8],
                         os.path.basename(str(payload.get("cwd", ""))), ",".join(offenders) or "-"])
         with open(MODE_FILE.with_name("lang_guard.log"), "a", encoding="utf-8") as fh:
-            fh.write(row + "
-")
+            fh.write(row + chr(10))
     except Exception:  # noqa: BLE001 — السجل لا يُسقط الحارس
         pass
 
