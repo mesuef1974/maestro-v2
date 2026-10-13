@@ -44,6 +44,52 @@ COMMON = """\
 - **عند الشكّ في صلاحيّتك:** توقّف واسأل المايسترو؛ لا مُضيَّ حذِراً.
 """
 
+#: جلساتُ التجربة فقط (W-20261013-031): نواةٌ ≤4 كيلوبايت + details/<رقم>.md بالنصّ الكامل + COMMON.md.
+NUCLEUS_ROLES = ("0101", "04")
+NUCLEUS_MAX_BYTES = 4096
+#: قواعدُ حاكمةٌ لا تسقط من النواة أبداً (يفحصها tests/test_render_role_cards.py بعباراتها المفتاحيّة).
+GOVERNING = """## قواعدي الحاكمة (لا تُستثنى)
+- العربيّةُ وحدَها في المحادثة وملخّصات الرسائل ووصف الأدوات (D-102م)؛ ولا تُكتب «سيدي» بتاتاً في أيّ ردٍّ للمالك.
+- لا دفعَ ولا دمجَ قبل اعتماد المالك بالرأس؛ والدمجُ والنشرُ و`gh pr create` لـ0601 وحدَها (D-88م، D-321م/D-322م).
+- الجدولُ المعتمد الحيّ على الإنتاج خطٌّ أحمر: لا يُلمس ولا يُحذف ولا يُستبدل إلا بقول المالك (D-381م).
+- لا بطاقةَ من نقاشٍ أو عصفٍ أو شكوى إلا بأمر المالك الصريح (D-421م).
+- لا يُسأل المالك إلا في أربع حالاتٍ (D-130م)؛ ولا ختمَ بـ«هل تريد…؟» بل «ما سأفعله تالياً: …».
+- حدُّ الرسائل 150 لكلّ جلسة؛ بعد كلّ إرسال `python C:/Users/mesue/delivery_manager_work/tools/msg_counter.py add <رقمك>` (D-414م).
+- لا تنقل حالةً من ذاكرةٍ أو رسالة: `python C:/Users/mesue/delivery_manager_work/tools/ground_truth.py pr|branch|alert|card|url <هدف>` قبل ذكرها (D-107م).
+- رقمُك أوّل أربع خانات من اسم جلستك؛ وأبلغ 0101 من تلقاء نفسك في الردّ نفسه عند كلّ إيداعٍ أو دفعٍ أو عائق.
+- `MEMORY.md` لـ0103 وحدَها؛ والرسالةُ فوق 1000 حرف ملفٌّ في `handover_notes/` بملخّص.
+"""
+
+
+def _pointers(sid: str) -> list[str]:
+    base = "C:/Users/mesue/delivery_manager_work"
+    return ["## التفصيل (عند الحاجة لا عند كلّ بدء)",
+            f"- بطاقتي الكاملة (مهامّي ومداي ومخرجاتي): `{base}/role_cards/details/{sid}.md`",
+            f"- القواعد المشتركة الكاملة: `{base}/role_cards/COMMON.md` · الخريطة: `role_cards/INDEX.md` · القرارات: `decisions.md`",
+            ""]
+
+
+def nucleus(title: str, ch: dict, tab: dict | None) -> str:
+    sid = title.split(" · ")[0]
+    out = [f"# بطاقةُ دورٍ (نواة) — {title}", "",
+           "> مولَّدةٌ من `tabs.json`. هذه النواةُ وحدها تُقرأ عند البدء؛ وكلُّ نصٍّ آخر في `details/` و`COMMON.md` لم يُحذف.", "",
+           "## من أنا", ch["role"], "", "## أهدافي", *[f"- {g}" for g in ch["goals"]], "",
+           "## حدودي (ما لا أفعله)", ch["boundaries"], "", GOVERNING, *_pointers(sid)]
+    return chr(10).join(out)
+
+
+def nucleus_flexible(tab: dict) -> str:
+    out = [f"# بطاقةُ دورٍ (نواة) — الجلسات المرنة (التبويب {tab.get('number', '04')} · {tab['name']})", "",
+           "> مولَّدةٌ من `tabs.json`. لكلّ جلسةٍ مرنةٍ مهمّةٌ واحدة؛ هذه النواةُ تُقرأ عند البدء ولم يُحذف نصٌّ من التفصيل.", "",
+           "## من أنا", tab["purpose"], "",
+           "## تسلسلي المختصر (التفصيل في details)",
+           "1. أعمل في شجرتي وأودِع محلّيّاً بمسارات صريحة ولا أدفع قبل الاعتماد.",
+           "2. «جاهزٌ للمعاينة» إلى 0501: الرابط الكامل، ما يُعاين، الدور وخطورته، الرأس؛ ثمّ أتوقّف.",
+           "3. `approval_check.py card <رمزي>` ثبت ← أدفع `HEAD:refs/heads/claude/<اسم>` وأسلّم 0501 فـ0601؛ لا أفتح طلباً.",
+           "4. واجهةٌ: مهارات التصميم تُستدعى فعلاً قبل «جاهز» ولا ادّعاءَ بصريّاً بلا قياس.", "",
+           GOVERNING, *_pointers("04")]
+    return chr(10).join(out)
+
 
 def common_tools(tabs: dict) -> str:
     """سطرُ الأدوات المشتركة من tabs.json (common_tools) — مصدرٌ واحدٌ يدخل كلَّ بطاقة (D-119م)."""
@@ -133,13 +179,24 @@ def main() -> int:
     outdir = ROOT / "role_cards"
     outdir.mkdir(exist_ok=True)
     rows = []
+    details = outdir / "details"
+    details.mkdir(exist_ok=True)
+    (outdir / "COMMON.md").write_text(COMMON, encoding="utf-8")
     for title, ch in sorted(tabs["session_policy"]["charters"].items()):
         sid = title.split(" · ")[0]
-        (outdir / f"{sid}.md").write_text(card(title, ch, by_number.get(sid[:2])), encoding="utf-8")
+        full = card(title, ch, by_number.get(sid[:2]))
+        if sid in NUCLEUS_ROLES:
+            (details / f"{sid}.md").write_text(full, encoding="utf-8")
+            full = nucleus(title, ch, by_number.get(sid[:2]))
+        (outdir / f"{sid}.md").write_text(full, encoding="utf-8")
         rows.append((title, ch["role"].split("؛")[0].split("。")[0][:140]))
     for tab in tabs["tabs"]:
         if tab.get("id") == "execute":
-            (outdir / "04.md").write_text(flexible_card(tab), encoding="utf-8")
+            full = flexible_card(tab)
+            if "04" in NUCLEUS_ROLES:
+                (details / "04.md").write_text(full, encoding="utf-8")
+                full = nucleus_flexible(tab)
+            (outdir / "04.md").write_text(full, encoding="utf-8")
     (outdir / "INDEX.md").write_text(index(rows), encoding="utf-8")
     print(f"role_cards/ ✔ ({len(rows)} بطاقة + INDEX)")
     return 0
