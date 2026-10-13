@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SWOT — تسريع الدمج والنشر</title>
+<style>
+:root{--bg:#f7f4f1;--card:#fff;--fg:#1d1a1a;--muted:#6b6464;--line:#ddd5d0;--maroon:#8a1538;--s:#166534;--w:#b91c1c;--o:#1d4ed8;--t:#b45309;--s-bg:#e8f5ec;--w-bg:#fdeaea;--o-bg:#e8efff;--t-bg:#fff3e2;--bar:#8a1538;--bar2:#d6a3b3}
+@media (prefers-color-scheme:dark){:root{--bg:#161214;--card:#211a1d;--fg:#eee7e7;--muted:#a79d9d;--line:#3a3033;--maroon:#e38aa5;--s:#7ad39a;--w:#f28b8b;--o:#8fb0ff;--t:#f0b361;--s-bg:#17271d;--w-bg:#2c1a1a;--o-bg:#1a2234;--t-bg:#2b2216;--bar:#e38aa5;--bar2:#6b3a4a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:Tajawal,"Segoe UI",Tahoma,sans-serif;line-height:1.75;padding:20px 16px}
+main{max-width:1100px;margin-inline:auto}
+header{border-block-end:3px solid var(--maroon);padding-block-end:10px;margin-block-end:14px}
+h1{margin:0;color:var(--maroon);font-size:1.6rem}
+.sub{color:var(--muted);font-size:.88rem}
+h2{color:var(--maroon);font-size:1.12rem;margin:22px 0 8px}
+.verdict{background:var(--card);border:1px solid var(--line);border-inline-start:6px solid var(--maroon);border-radius:10px;padding:12px 16px;font-size:1.02rem}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-block:12px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.tile b{display:block;font-size:1.55rem;color:var(--maroon);line-height:1.2}
+.tile span{font-size:.82rem;color:var(--muted)}
+.swot{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:10px}
+.q{border-radius:10px;padding:10px 16px;border:1px solid var(--line)}
+.q h3{margin:0 0 4px;font-size:1.05rem}
+.q ul{margin:0;padding-inline-start:20px;font-size:.92rem}
+.q li{margin-block:3px}
+.S{background:var(--s-bg)}.S h3{color:var(--s)}
+.W{background:var(--w-bg)}.W h3{color:var(--w)}
+.O{background:var(--o-bg)}.O h3{color:var(--o)}
+.T{background:var(--t-bg)}.T h3{color:var(--t)}
+.t{display:inline-block;font-size:.72rem;padding:0 7px;border-radius:99px;border:1px solid currentColor;margin-inline-start:4px;white-space:nowrap;color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+.row{display:grid;grid-template-columns:150px 1fr 120px;gap:8px;align-items:center;margin-block:5px;font-size:.88rem}
+.bar{position:relative;height:16px;background:var(--line);border-radius:4px;overflow:hidden}
+.bar i{position:absolute;inset-block:0;inset-inline-start:0;background:var(--bar2)}
+.bar u{position:absolute;inset-block:0;inset-inline-start:0;background:var(--bar);text-decoration:none}
+table{border-collapse:collapse;width:100%;font-size:.88rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:5px 9px;text-align:start;vertical-align:top}
+th{background:rgba(138,21,56,.09)}
+code{background:rgba(138,21,56,.08);padding:0 4px;border-radius:4px;direction:ltr;unicode-bidi:embed}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px}
+footer{margin-block:18px 6px;color:var(--muted);font-size:.82rem}
+@media (max-width:560px){.swot,.two{grid-template-columns:1fr}.row{grid-template-columns:100px 1fr 90px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>SWOT — كيف نسرّع الدمج والنشر؟</h1>
+<div class="sub">0102 · 2026-10-13 05:40 (الدوحة) · مصادر القياس: GitHub (آخر 100 طلب مدموج، 25–60 تشغيلًا لكلّ وركفلو)، سجلّ الدفتر (4855 حدثًا)، <code>flow_metrics.py</code> و<code>ledger_lead_time.py</code> · <span class="t">مقروء</span> قيس الآن · <span class="t">تقدير</span> حساب من المقروء · <span class="t">لم يُقَس</span></div>
+</header>
+
+<div class="verdict"><b>الحكم في سطرين:</b> الوسيط سريع (طلب يُدمج في 1.9 س، وبطاقة تُنشر في نحو 5.5 س من الاعتماد)، والمشكلة في <b>الذيل</b>: متوسّط الانتظار بين الاعتماد والنشر 21.8 س وp90 48.7 س. فتسريع الفحوص يوفّر دقائق، أمّا الساعات فتضيع في <b>انتظارٍ بشريٍّ وسياساتيّ</b> (المعاينة، الدفع بعد الاعتماد، دفعة 14:00) وفي <b>فشل الطابور 32%</b>.</div>
+
+<div class="tiles">
+<div class="tile"><b>1.9 س</b><span>وسيط عمر الطلب من الفتح إلى الدمج (40 طلبًا؛ p90 = 4.6 س). نصفُ الطلبات يُدمج في أقلّ من ساعتين تقريبًا.</span></div>
+<div class="tile"><b>24 د</b><span>وسيط جدار بوّابة الجودة على GitHub (من البدء إلى النهاية). أطول مهمة 16.7 د والأقصر بين الخمس 8.7 د.</span></div>
+<div class="tile"><b>6 من 19</b><span>تشغيلات طابور الدمج المكتملة التي فشلت (32%). في الستّ كلّها فشل «كشف الأسرار» مع shards pytest معًا.</span></div>
+<div class="tile"><b>21.8 س</b><span>متوسّط الزمن من «اعتماد المالك» إلى «منشور» (213 بطاقة)؛ الوسيط 5.5 س وp90 48.7 س.</span></div>
+<div class="tile"><b>2.2×</b><span>نسبة التراكم: المفتوح فعلًا 15 طلبًا مقابل 6.7 المتوقّع بقانون ليتل؛ وسيط عمر المفتوح 52 س وأقدمها 194 س.</span></div>
+<div class="tile"><b>1.3 د</b><span>وسيط تشغيل نشر Railway؛ والتحقّق بعد النشر (canary) 0.4 د. أي أنّ النشر التقني ليس العنق.</span></div>
+</div>
+
+<h2>أين يضيع الوقت؟ الوسيط مقابل الذيل (ساعات، من الدفتر) <span class="t">مقروء</span></h2>
+<div class="card">
+<div class="row"><span>العمل (توجيه ← جاهزٌ للمعاينة)</span><div class="bar"><i style="width:100%"></i><u style="width:1.8%"></u></div><span>وسيط 2.3 · p90 126.9</span></div>
+<div class="row"><span>المعاينة (جاهزٌ ← اعتماد)</span><div class="bar"><i style="width:19.9%"></i><u style="width:.4%"></u></div><span>وسيط 0.5 · p90 25.3</span></div>
+<div class="row"><span>الدفع بعد الاعتماد</span><div class="bar"><i style="width:24.2%"></i><u style="width:1.5%"></u></div><span>وسيط 1.9 · p90 30.7</span></div>
+<div class="row"><span>الدفع ← منشور</span><div class="bar"><i style="width:13.9%"></i><u style="width:.5%"></u></div><span>وسيط 0.65 · p90 17.6</span></div>
+<div class="sub">الشريط الداكن = الوسيط، والفاتح = p90 (عُشر الحالات أبطأ منه). المقياس نسبةٌ إلى أطول p90. العيّنات تختلف بين المراحل فلا تُجمع الأرقام. ملاحظة منهج: مراحل «دُفع ← دُمج» و«دُمج ← نُشر» تُسجَّل في الدفتر دفعةً واحدة غالبًا (وسيط 0.0)، فزمنها الحقيقيّ يؤخذ من GitHub لا من الدفتر.</div>
+</div>
+
+<h2>SWOT</h2>
+<div class="swot">
+<div class="q S"><h3>S — نقاط القوّة</h3><ul>
+<li>الطلب يُدمج في وسيط 1.9 س؛ دمج 83 طلبًا في 3 أيام (27.7 يوميًّا) <span class="t">مقروء</span></li>
+<li>طابور الدمج يفحص «main + الطلب» فلا تحديث يدويّ للفرع، وshards خمسة متوازية <span class="t">مقروء</span></li>
+<li>النشر والتحقّق بعده آليّان وسريعان (1.3 د + 0.4 د) <span class="t">مقروء</span></li>
+<li>حارس نافذة النشر آليّ (<code>deploy_window.py</code>) وسجلّ اعتمادٍ مُسنَد برأسٍ محدّد <span class="t">مقروء</span></li>
+<li>أدواتُ قياسٍ جاهزة (<code>flow_metrics</code>، <code>ledger_lead_time</code>) تُمكّن من متابعة أيّ تحسين</li>
+</ul></div>
+<div class="q W"><h3>W — نقاط الضعف</h3><ul>
+<li><b>طابور يفشل 32%</b> (6 من 19)، ولكلّ فشل ≥ 24 د ثم إعادة <span class="t">مقروء</span>؛ سببه الجذريّ <span class="t">لم يُقَس</span></li>
+<li><b>shards غير متوازنة:</b> 16.7 / 13.0 / 10.0 / 10.0 / 8.7 د؛ المسار الحرج shard 3 <span class="t">مقروء</span></li>
+<li><b>البوّابة الثقيلة تُشغَّل ثلاثًا</b> لكلّ تغيير: على PR وعلى merge_group وعلى push؛ وعلى push ألغيت 8 من 13 بالتزامن <span class="t">مقروء</span></li>
+<li><b>ذيل الانتظار:</b> الاعتماد ← الدفع p90 30.7 س؛ جاهز ← اعتماد متوسّط 10.1 س <span class="t">مقروء</span></li>
+<li><b>دفعة نشر يوميّة واحدة</b> بعد 14:00 تُنتج انتظارًا حتى ~24 س بحكم السياسة (D-196م) <span class="t">استنتاج</span></li>
+<li>تراكم 2.2× وطلبات عمرها حتى 194 س <span class="t">مقروء</span></li>
+<li>تناقضٌ موثَّق: الدستور يقول «الدمج إلى main نشرٌ فوريّ» ووركفلو النشر يقول يدويّ منذ 09-18 <span class="t">مقروء</span></li>
+</ul></div>
+<div class="q O"><h3>O — الفرص</h3><ul>
+<li>موازنة الـshards: مجموع مدد shards الخمس 58.4 د، فالتوازن التامّ ≈ 11.7 د بدل 16.7 ← <b>توفير ≈ 5 د لكلّ تشغيل</b> وهو يُتكرَّر ثلاثًا <span class="t">تقدير</span></li>
+<li>إسقاط البوّابة الثقيلة من push على main (يكفي ما في الطابور) أو تخفيفها لحارسٍ خفيف ← يلغي تشغيلات مُلغاة وحمراءَ كاذبةً على main <span class="t">تقدير</span></li>
+<li>تحليل جذر فشل الطابور (كشف الأسرار + shards معًا) قد يُسقط المعدّل من 32% إلى أقلّ من 10% <span class="t">تقدير</span></li>
+<li>أتمتة «الدفع فور الاعتماد» (سطر الفلو 5) لإلغاء ذيل 30.7 س <span class="t">تقدير</span></li>
+<li>موعد نشر ثانٍ بعد 14:00 (مثلًا 19:00) أو ترقية آليّة عند اخضرار canary؛ والنشر التقنيّ دقيقتان فقط <span class="t">مقروء</span></li>
+<li>معاينةٌ دفعيّة وتصنيف بطاقات بلا واجهة لتمرّ بلا معاينة بصريّة <span class="t">اقتراح</span></li>
+<li>قطع تراكم WIP: سقف للمفتوح وإغلاق ما فوق 72 س <span class="t">اقتراح</span></li>
+</ul></div>
+<div class="q T"><h3>T — التهديدات</h3><ul>
+<li><b>أثر سوء النشر على المدرسة:</b> حادثة 2026-09-17 أسقطت الموقع 3.5 ساعات؛ تسريع بلا حواجز يرفع احتمالها <span class="t">مقروء</span></li>
+<li>البوّابة الخضراء عمياء عن بيانات الإنتاج والهجرات الثقيلة (الجدول المعتمد الحيّ خطٌّ أحمر D-381م) <span class="t">استنتاج</span></li>
+<li>عنق بشريّ وحيد: اعتماد المالك على 8500؛ أيّ تسريع للمعاينة يعتمد على حضوره <span class="t">مقروء</span></li>
+<li>قدرة تشغيل GitHub Actions ودقائقها؛ تضاعف التشغيلات الثلاثية يستهلكها <span class="t">لم يُقَس</span></li>
+<li>تعارضات الدمج بين فروع متوازية عند رفع الإنتاجية <span class="t">استنتاج</span></li>
+<li>«الأخضر الكاذب»: إسقاط فحصٍ لتسريعه قد يمرّر عيبًا إلى main <span class="t">استنتاج</span></li>
+</ul></div>
+</div>
+
+<h2>الرافعات مرتّبةً بالأثر والمخاطرة <span class="t">تقدير</span></h2>
+<table>
+<tr><th>#</th><th>الرافعة</th><th>الأثر المتوقّع</th><th>المخاطرة</th><th>صاحب القرار</th></tr>
+<tr><td>1</td><td>سبب فشل الطابور 32% (كشف الأسرار + shards)</td><td>أعلى: يُسقط إعادات 24+ د ويزيل الأحمر على main</td><td>منخفضة (تشخيص)</td><td>0103 / 0701</td></tr>
+<tr><td>2</td><td>الدفع الآليّ فور الاعتماد</td><td>يلغي ذيل p90 30.7 س بين الاعتماد والدفع</td><td>منخفضة (الاعتماد مسجَّل برأسه)</td><td>0501 + 0101</td></tr>
+<tr><td>3</td><td>موازنة shards pytest</td><td>≈ 5 د لكلّ تشغيل ×3 تشغيلات</td><td>منخفضة</td><td>0103</td></tr>
+<tr><td>4</td><td>إسقاط/تخفيف البوّابة على push إلى main</td><td>تشغيلات أقلّ وبلا حمراء كاذبة؛ أقلّ ضجيجًا</td><td>متوسّطة: يلزم ضمان أنّ الطابور كافٍ</td><td>0103</td></tr>
+<tr><td>5</td><td>نشران يوميّان (14:30 و19:00) أو ترقية عند اخضرار canary</td><td>يقصّ الانتظار الأسوأ من ~24 س إلى ~5 س</td><td>متوسّطة (نافذة الدوام تبقى محميّة)</td><td>المالك (D-196م)</td></tr>
+<tr><td>6</td><td>معاينة دفعية وتصنيف بلا واجهة</td><td>يقصّ متوسّط 10.1 س</td><td>متوسّطة: يعتمد على المالك</td><td>المالك + 0501</td></tr>
+<tr><td>7</td><td>سقف WIP وإغلاق ما عمره > 72 س</td><td>يخفّض التراكم 2.2×</td><td>منخفضة</td><td>0101</td></tr>
+<tr><td>8</td><td>توضيح تناقض «الدمج نشر فوريّ» مقابل «النشر يدويّ»</td><td>يحسم أيّ قاعدةٍ تحكم نافذة الدمج</td><td>لا شيء</td><td>0103</td></tr>
+</table>
+
+<div class="two">
+<div class="card"><b>ما يمكن فعله الليلة بلا قرار سياسة:</b> (1) تشخيص الفشل، (3) موازنة shards، (7) سقف WIP. <b>ما يحتاج قرارك:</b> (5) موعد ثانٍ للنشر أو ترقية آليّة، و(6) معاينة دفعية.</div>
+<div class="card"><b>أقيس بعد أيّ تغيير:</b> وسيط وp90 «الاعتماد ← منشور»، نسبة فشل الطابور، جدار البوّابة، نسبة التراكم، ومعدّل فشل التغيير بعد النشر (حتى لا يُشترى التسريع بسقوط).</div>
+</div>
+
+<h2>أسئلة وُجِّهت للجلسات (الردود تُضاف عند وصولها)</h2>
+<table>
+<tr><th>الجلسة</th><th>السؤال</th><th>الحالة</th></tr>
+<tr><td>0601 (الدمج والنشر)</td><td>أين يضيع وقتك بين «معتمَد أخضر» و«منشور»؟ نسبة الحمراء وأسبابها؟ ما يُؤتمَت؟ دفعتان يوميًّا؟ أخطر خطر؟</td><td>مُرسلة (في الطابور)</td></tr>
+<tr><td>0501 (المعاينة)</td><td>سبب ذيل «جاهز ← اعتماد»؟ معاينة دفعية؟ ما يؤتمَت من الفحص البصريّ؟</td><td>مُرسلة (في الطابور)</td></tr>
+<tr><td>0103 (الحوكمة)</td><td>فحصٌ مكرَّر بين PR/queue/push؟ موازنة shards؟ قاعدة تبطئ بلا فائدة؟ معنى نافذة 07–14 للدمج؟</td><td>مُرسلة (سُلّمت)</td></tr>
+<tr><td>0701 (الجودة والأتمتة)</td><td>ما يعلّق الطلبات الخمسة عشر؟ أثر canary؟ إعادة العمل؟ المؤشّر الناقص؟</td><td>مُرسلة (سُلّمت)</td></tr>
+</table>
+
+<h2>ما لم يُقَس</h2>
+<ul class="sub">
+<li>سبب فشل الطابور الجذريّ (رأيتُ أنّ الأسرار وshards فشلت معًا في الست كلّها، وأحد الـshards فشل بحجة «offenders»)، وهل هو اختبار حارس يحمر لكلّ طلب بعد تغيير في main.</li>
+<li>تكلفة دقائق GitHub Actions وسقفها، وأثر الدمج داخل نافذة 07–14 (وُجدت دمجات ساعات 7–13 ولم أتحقّق من إذن كلٍّ منها).</li>
+<li>زمن «اعتُمد ← سُلِّم لـ0601» وزمن انتظار الطلب في الطابور نفسه قبل بدء الفحص.</li>
+</ul>
+<footer>المصدر الخام: <code>delivery_manager_work/ledger/events.jsonl</code> و<code>gh run list / gh pr list</code> بتاريخ 2026-10-13 05:30–05:40. لا بطاقات من هذا العصف إلا بأمر المالك الصريح (D-421م).</footer>
+</main>
+</body>
+</html>
