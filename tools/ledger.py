@@ -287,6 +287,37 @@ def spec_status(item: dict) -> str:
     return f"{tier}: " + ("مكتملة" if not miss else "ناقصة — " + "؛ ".join(miss))
 
 
+def brief_lines(it: dict | None, item_id: str = "") -> list[str]:
+    """ملخّصُ بطاقةٍ في ≤12 سطراً (--brief، W-20261013-033): قراءةٌ فقط، لا يمسّ الإخراج الافتراضيّ."""
+    if not it:
+        return [f"بطاقةٌ غيرُ موجودة: {item_id}"]
+
+    def cut(v, n):
+        t = " ".join(str(v or "").split())
+        return t if len(t) <= n else t[: n - 1] + "…"
+
+    ref = it.get("ref") or {}
+    files = it.get("files_allowed") or it.get("files") or []
+    acc = it.get("accept_measurable") or []
+    steps = it.get("steps") or []
+    notes = it.get("notes") or []
+    appr = it.get("approvals") or []
+    out = [
+        f"{it['id']}  {it.get('priority', '—')}  {it.get('state', '?')}",
+        "المشكلة: " + cut(it.get("problem"), 140),
+        f"الأصل: {it.get('origin', '—')}" + (f" · أمر المالك {str(it.get('owner_order_at', ''))[:10]}" if it.get("owner_order_at") else ""),
+        f"الحاجز: {it.get('held_by') or '—'} · الاعتماد: " + (f"{len(appr)} (الرأس {it.get('approved_head')})" if appr and it.get("approved_head") else (str(len(appr)) if appr else "غائب")),
+        "المواصفة: " + cut(spec_status(it), 140),
+        "المرجع: " + cut(ref.get("path") or ref.get("kind") or "—", 110),
+        f"الملفات ({len(files)}): " + cut("؛ ".join(str(f) for f in files[:3]), 150),
+        "أوّل خطوة: " + cut(steps[0] if steps else "—", 140),
+        "القبول: " + cut(acc[0] if acc else it.get("accept"), 140),
+    ]
+    if notes:
+        out.append("آخر ملاحظة: " + cut(notes[-1].get("text") if isinstance(notes[-1], dict) else notes[-1], 140))
+    return out[:12]
+
+
 def parse_assumption(text: str) -> dict:
     m = re.match(r"^\s*(محسوم|افتراض)(?:\s*معلن)?\s*[:：]\s*(.+)$", text)
     if not m:
@@ -931,7 +962,7 @@ def main() -> None:
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
-    sh = sub.add_parser("show"); sh.add_argument("id")
+    sh = sub.add_parser("show"); sh.add_argument("id"); sh.add_argument("--brief", action="store_true", help="ملخّصٌ ≤12 سطراً")
     tg = sub.add_parser("tag", help="يكتب خطورةَ البطاقة ومجالها من مسارات عملها")
     tg.add_argument("id")
     src = tg.add_mutually_exclusive_group(required=True)
@@ -979,6 +1010,10 @@ def main() -> None:
             items = reduce_state(load_events())
             if args.cmd == "show":
                 it = items.get(args.id)
+                if args.brief:
+                    print("
+".join(brief_lines(it, args.id)))
+                    return
                 print(json.dumps(it, ensure_ascii=False, indent=2))
                 if it:
                     print("المواصفة — " + spec_status(it))

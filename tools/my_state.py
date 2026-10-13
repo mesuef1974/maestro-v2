@@ -170,17 +170,42 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
     return "\n".join(lines)
 
 
+def brief_report(session: str, events: list[dict], now: datetime | None = None) -> str:
+    """حالةٌ موجزةٌ ≤12 سطراً (--brief، W-20261013-033): رأسٌ بالعدد ثمّ سطرٌ لكلّ بطاقةٍ حتى عشرة."""
+    items = ledger.reduce_state(events)
+    owners = infer_owners(events)
+    mine = {cid: it for cid, it in items.items() if owners.get(cid) == session}
+    late_ids = {i["id"] for i in ledger.late_items(mine, now=now)}
+    label = dict(ACTIONS)
+    rows = []
+    for item in sorted(mine.values(), key=ledger.order_key):
+        action = classify(item, events, late_ids)
+        if action is not None:
+            rows.append(f"{item['id']} [{item.get('state', '?')}] {label[action]}")
+    head = f"== {session}: {len(mine)} بطاقةً، المطلوب {len(rows)}"
+    if not rows:
+        return head + " — لا شيءَ يلزم الآن."
+    lines = [head, *rows[:10]]
+    if len(rows) > 10:
+        lines.append(f"+{len(rows) - 10} أخرى")
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="أين بطاقتي الآن؟ — من الدفتر، قراءةٌ فقط")
     parser.add_argument("session", help="رقمُ الجلسة (0402) أو اسمُها الظاهر («0402 · …»)")
     parser.add_argument("--all", action="store_true", help="اعرض المنتهيةَ أيضاً")
     parser.add_argument("--check-remote", action="store_true", help="افحص بـgit ls-remote بطاقاتِ pushed (شبكة)")
+    parser.add_argument("--brief", action="store_true", help="حالةٌ موجزةٌ ≤12 سطراً")
     args = parser.parse_args()
     m = re.match(r"\s*(\d{4})\b", args.session)  # يقبل الاسمَ الظاهر كاملاً: نأخذ أوّل أربع خانات
     if not m:
         sys.exit("رقمُ الجلسة أربعةُ أرقام، مثلاً 0402")
     args.session = m.group(1)
     sys.stdout.reconfigure(encoding="utf-8")
+    if args.brief:
+        print(brief_report(args.session, ledger.load_events()))
+        return
     print(report(args.session, ledger.load_events(), show_all=args.all, check_remote=args.check_remote))
 
 
