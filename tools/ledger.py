@@ -1011,8 +1011,7 @@ def main() -> None:
             if args.cmd == "show":
                 it = items.get(args.id)
                 if args.brief:
-                    print("
-".join(brief_lines(it, args.id)))
+                    print(chr(10).join(brief_lines(it, args.id)))
                     return
                 print(json.dumps(it, ensure_ascii=False, indent=2))
                 if it:
