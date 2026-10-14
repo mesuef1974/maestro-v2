@@ -451,6 +451,47 @@ def check_wip(items: dict, item_id: str, by: str | None, waive: str | None) -> s
     raise LedgerError(f"للجلسة {by} بطاقةٌ جاريةٌ أخرى: {others[0]['id']} — أنهِها أو انقلها إلى ready_for_review قبل بدء {item_id} (أو --waive-wip \"السبب\"، أو أولويّة P0)")
 
 
+#: حدُّ العمل غير المنشور لكل دور (W-20261014-011): إنذارٌ فقط؛ يُضبط بـROLE_WIP_LIMIT وقلبُه إلى رفضٍ بـROLE_WIP_ENFORCE=1 بقرارٍ موثَّق.
+ROLE_WIP_LIMIT = 3
+#: approved يخرج من العدّ: صار عند 0501 للدفع (تسليم، توضيح 0101 في 2026-10-14).
+ROLE_WIP_STATES = {"in_progress", "ready_for_review", "pushed", "merged"}
+#: الجلسات الشقيقة بادئةً واحدةً (مرنة 04SS)؛ وما عداها دورٌ منفردٌ هو الجلسة نفسها.
+ROLE_PREFIXES = ("04",)
+
+
+def role_of(session: str) -> str:
+    return next((p for p in ROLE_PREFIXES if session.startswith(p)), session)
+
+
+def role_unpublished(items: dict, role: str, exclude: str | None = None) -> list[dict]:
+    """بطاقاتُ الدور غيرُ المنشورة بحسب حاجزها (held_by)؛ نقلُ الحجز لجلسةٍ أخرى يُخرجها من العدّ."""
+    out = [i for i in items.values()
+           if i["id"] != exclude and i.get("state") in ROLE_WIP_STATES and i.get("held_by") and role_of(i["held_by"]) == role]
+    return sorted(out, key=lambda i: i.get("state_ts", ""))
+
+
+def role_wip_limit() -> int:
+    try:
+        return int(os.environ.get("ROLE_WIP_LIMIT", ROLE_WIP_LIMIT))
+    except ValueError:
+        return ROLE_WIP_LIMIT
+
+
+def check_role_wip(items: dict, item_id: str, by: str | None) -> str | None:
+    """نصُّ الإنذار إن كان للدور فوق الحدّ بطاقاتٌ غيرُ منشورة؛ P0 معفى؛ لا يرفض إلا بـROLE_WIP_ENFORCE=1."""
+    if not by or items[item_id].get("priority") == "P0":
+        return None
+    others = role_unpublished(items, role_of(by), exclude=item_id)
+    if len(others) < role_wip_limit():
+        return None
+    ids = "، ".join(f"{i['id']} [{i['state']}]" for i in others)
+    msg = (f"إنذار العمل الجاري للدور {role_of(by)}: عندكم {len(others)} بطاقاتٍ غيرِ منشورة (الحدّ {role_wip_limit()}) "
+           f"قبل بدء {item_id} — {ids}. انشروا أو سلّموا (انقلوا الحجز) قبل التوسّع.")
+    if os.environ.get("ROLE_WIP_ENFORCE") == "1":
+        raise LedgerError(msg)
+    return msg
+
+
 def check_holder_on_route(item: dict, state: str, held_by: str | None) -> None:
     """D-293م: لا توجيهَ (routed) بلا حامل — معاملٌ صريحٌ أو حاملٌ سابق؛ و«-» عند routed تُرفض لأنها تُصفّر الحامل."""
     if state != "routed":
@@ -486,6 +527,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         wip_note = check_wip(items, item_id, by, waive_wip)
         if wip_note:
             note = f"{note + ' — ' if note else ''}{wip_note}"
+        role_note = check_role_wip(items, item_id, by)
+        if role_note:
+            print(role_note, file=sys.stderr)
+            note = f"{note + ' — ' if note else ''}{role_note}"
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
