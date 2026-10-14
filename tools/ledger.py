@@ -503,8 +503,34 @@ def check_holder_on_route(item: dict, state: str, held_by: str | None) -> None:
     raise LedgerError("routed يلزمه --held-by <رقم الجلسة> (لا حاملَ سابقاً للبطاقة): البطاقةُ الموجَّهةُ بلا حامل تبقى بلا مسؤول (D-293م)")
 
 
+def _run_preflight(card_id: str, repo: str) -> tuple[int, str]:
+    import subprocess
+    r = subprocess.run([sys.executable, str(Path(__file__).with_name("pr_open_prep.py")), card_id, "--repo", repo, "--preflight"],
+                       capture_output=True, text=True, encoding="utf-8", timeout=180)
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
+def check_preflight_ready(item: dict, state: str, repo: str | None, waive: str | None, runner=None) -> str | None:
+    """الفحصُ المسبق قبل «جاهزٌ للمعاينة» (W-20261014-022): يمنع إعادة الاعتماد من أساسٍ غير مدفوعٍ أو متأخّر أو mypy مختلف.
+    مع --preflight-repo يُشغَّل pr_open_prep --preflight ويُرفض الانتقال عند الفشل؛ بدونه إنذارٌ (PREFLIGHT_ENFORCE=1 يجعله رفضاً).
+    P0 معفى؛ والاستثناءُ المسجَّل --waive-preflight "السبب" يُدوَّن في ملاحظة."""
+    if state != "ready_for_review" or item.get("priority") == "P0":
+        return None
+    if waive:
+        return f"استثناءُ الفحص المسبق: {waive}"
+    if not repo:
+        msg = "لم يُشغَّل الفحصُ المسبق قبل «جاهزٌ للمعاينة» — مرِّر --preflight-repo <شجرتك> (أو --waive-preflight \"السبب\")"
+        if os.environ.get("PREFLIGHT_ENFORCE") == "1":
+            raise LedgerError(msg)
+        return msg
+    code, out = (runner or _run_preflight)(item["id"], repo)
+    if code != 0:
+        raise LedgerError(f"فشل الفحصُ المسبق (رمز {code}) — أصلِح ثمّ أعِد:{chr(10)}{out}")
+    return None
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
-         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None) -> None:
+         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None, preflight_repo: str | None = None, waive_preflight: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
     if held_by is not None and held_by != "-":
@@ -531,6 +557,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         if role_note:
             print(role_note, file=sys.stderr)
             note = f"{note + ' — ' if note else ''}{role_note}"
+    pre_note = check_preflight_ready(items[item_id], state, preflight_repo, waive_preflight)
+    if pre_note:
+        print(pre_note, file=sys.stderr)
+        note = f"{note + ' — ' if note else ''}{pre_note}"
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
@@ -1021,6 +1051,8 @@ def main() -> None:
     m.add_argument("--held-by", help="الجلسةُ الحاجزة للبطاقة؛ «-» للتصفير")
     m.add_argument("--waive-spec", help="استثناءٌ مسجَّل لبوّابة المواصفة الكاملة (السبب)")
     m.add_argument("--waive-wip", help="استثناءٌ مسجَّل لحدِّ العمل الجاري: بطاقةٌ واحدةٌ جاريةٌ للجلسة (السبب)")
+    m.add_argument("--preflight-repo", help="لـready_for_review: مجلّدُ شجرتك لتشغيل الفحص المسبق (pr_open_prep --preflight)")
+    m.add_argument("--waive-preflight", help="استثناءٌ مسجَّل للفحص المسبق (السبب)")
     sp = sub.add_parser("spec", help="يضبط حقولَ المواصفة الكاملة")
     sp.add_argument("id"); sp.add_argument("--tier", choices=SPEC_TIERS); sp.add_argument("--ref"); sp.add_argument("--roles-states")
     sp.add_argument("--allowed-diffs"); sp.add_argument("--assumption", action="append"); sp.add_argument("--source-of-truth")
@@ -1054,7 +1086,7 @@ def main() -> None:
                            start=args.start, priority=args.priority, held_by=args.held_by or ""))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
-                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip); print("ok")
+                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight); print("ok")
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
                      args.files_allowed, args.files_forbidden, args.accept, args.step, args.by); print("ok")
