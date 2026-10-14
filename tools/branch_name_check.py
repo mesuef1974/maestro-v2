@@ -27,6 +27,7 @@ CARD_IN_NAME = re.compile(r"(?:^|/)W-(\d{8}-\d{3})(?:-|$)")
 WELL_FORMED = re.compile(r"^claude/W-\d{8}-\d{3}(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?$")
 ENDED_STATES = {"closed", "published", "deferred"}  # = RELEASING_STATES في ledger.py (تأكيد 0103)
 EXEMPT = re.compile(r"^(main|master|HEAD|backup[/-].*|rebuild/.*|worktree-.*)$")
+LOOSE = re.compile(r"W-\d{8}-\d{3}|(?<![A-Za-z0-9])w\d{3}(?![0-9])", re.I)  # الأساس الواسع (اتفاق 0102)
 DEADLINE = "2026-10-28"
 
 
@@ -70,7 +71,8 @@ def report(names: list[str], cards: dict) -> dict:
             bad.append(n)
     scored = len(names) - counts["exempt"]
     pct = round(100 * counts["live"] / scored, 1) if scored else 0.0
-    return {"total": len(names), "counts": counts, "live_pct": pct, "violations": sorted(bad)}
+    loose = sum(1 for n in names if not EXEMPT.match(n) and LOOSE.search(n))
+    return {"total": len(names), "counts": counts, "live_pct": pct, "loose_baseline": loose, "loose_pct": round(100 * loose / scored, 1) if scored else 0.0, "violations": sorted(bad)}
 
 
 def suggest(card: str, slug: str = "") -> str:
@@ -105,6 +107,7 @@ def main() -> int:
         return 0
     c = rep["counts"]
     print(f"الفروع المحلّيّة: {rep['total']} · لبطاقةٍ حيّة {c['live']} ({rep['live_pct']}% من غير المستثنى) · لبطاقةٍ منتهية {c['ended']} · رمزٌ غيرُ موجود {c['unknown']} · بلا رمز {c['none']} · مستثناة {c['exempt']}")
+    print(f"الأساس الواسع (يحوي رمزاً بأي صيغة): {rep['loose_baseline']} ({rep['loose_pct']}%)؛ الصارمُ هو الهدف للفروع الجديدة بعد {DEADLINE}")
     print(f"المخالفة: {len(rep['violations'])} (تحذيرٌ فقط حتى {DEADLINE}؛ الهدفُ 95% قبل الإلزام)")
     for n in rep["violations"][:20]:
         print("  -", n)
