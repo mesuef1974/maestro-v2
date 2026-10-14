@@ -10,6 +10,9 @@
   tmp       مجلّد tmp_reports.
   worktrees (عرضٌ فقط) شجراتُ العمل الخالية من تعديلاتٍ وفرعُها مدموجٌ في main — يُحذف بـ`git worktree remove` يدويّاً.
   containers(عرضٌ فقط) حاوياتُ جلساتٍ متوقّفة (Exited).
+  session_dbs قواعدُ Postgres للجلسات (ss_<slug> وtest_ss_<slug>) التي لا شجرةَ عملٍ لها ولا اتصالَ بها — تُحذف بـ`--apply`
+             (W-20261014-028). لا تُمسّ: قاعدةُ شجرةٍ حيّة، قاعدةٌ بها اتصال، ss_main_preview وss_integration_preview
+             وأجيالُها ss_main_preview_g<N> وss_base_*؛ وأجيالُ المعاينة تُعرض عدداً وحجماً فقط (قرارُها لـ0501).
 
 الأمان: داخل الجذر فقط؛ لا روابطَ رمزيّة؛ لا يمسّ رأساً معتمداً لم يُنشر؛ ترفض ما حالتُه مجهولةٌ في الدفتر؛
 سماحُ الرأس الأخير ثلاثةُ أيّام؛ سجلٌّ بالأحجام في prune_log.jsonl.
@@ -20,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -139,6 +143,97 @@ def scan_containers() -> dict:
     return {"names": names}
 
 
+DB_CONTAINER = "shschool-dev-db"
+REPO = "D:/shschool_mvp"
+#: لا تُحذف قطّ: المعاينةُ المركزيّة وأجيالُها والقواعدُ الأساس والنظام.
+PROTECTED_DB = re.compile(r"^(ss_main_preview(_g\d+)?|ss_integration_preview|ss_base_.*|postgres|shschool_db|template[01])$")
+PREVIEW_GEN_DB = re.compile(r"^ss_main_preview_g\d+$")
+SESSION_DB = re.compile(r"^(test_)?ss_[a-z0-9_]+$")
+
+
+def tree_slug(path: str) -> str:
+    """اسمُ القاعدة من اسم الشجرة كما يشتقّه scripts/session-db.sh (حروفٌ وأرقام، 40 محرفاً، دون شرطةٍ سفليّةٍ أخيرة)."""
+    slug = (re.sub(r"[^a-z0-9]", "_", Path(path).name.lower()) + "_")[:40]
+    return slug[:-1] if slug.endswith("_") else slug
+
+
+def _psql(sql: str, container: str = DB_CONTAINER) -> list[str]:
+    r = subprocess.run(
+        ["docker", "exec", container, "sh", "-c", 'psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -tAF "|" -c "$0"', sql],
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or "psql failed")
+    return [ln for ln in r.stdout.splitlines() if ln.strip()]
+
+
+def live_tree_slugs(repo: str = REPO) -> set[str]:
+    """أسماءُ كلّ الأشجار المسجَّلة (الرئيسةُ وشجراتُ العمل)؛ فشلُ القراءة يرفع خطأً فلا حذفَ على أساس قائمةٍ فارغة."""
+    out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=repo, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    if out.returncode != 0:
+        raise RuntimeError("git worktree list failed")
+    slugs = {tree_slug(ln[9:]) for ln in out.stdout.splitlines() if ln.startswith("worktree ")}
+    if not slugs:
+        raise RuntimeError("no worktrees listed")
+    return slugs
+
+
+def classify_session_dbs(rows: list[tuple[str, int, int]], slugs: set[str]) -> dict:
+    """rows = (اسم، حجم بالبايت، عددُ الاتصالات). نقيّ بلا دخولٍ ولا خروج فيُختبر."""
+    out = {"orphans": [], "kept_live": 0, "kept_connected": [], "preview_gens": {"count": 0, "bytes": 0}, "bytes": 0}
+    for name, size, conns in rows:
+        if PREVIEW_GEN_DB.match(name):
+            out["preview_gens"]["count"] += 1
+            out["preview_gens"]["bytes"] += size
+            continue
+        if PROTECTED_DB.match(name) or not SESSION_DB.match(name):
+            continue
+        slug = name.removeprefix("test_").removeprefix("ss_")
+        if slug in slugs:
+            out["kept_live"] += 1
+        elif conns > 0:
+            out["kept_connected"].append(name)
+        else:
+            out["orphans"].append({"name": name, "bytes": size})
+            out["bytes"] += size
+    return out
+
+
+def scan_session_dbs(repo: str = REPO, container: str = DB_CONTAINER) -> dict:
+    """عرضٌ: قواعدُ جلساتٍ بلا شجرةٍ ولا اتصال. فشلُ docker/git ⇒ خطأٌ مسجَّلٌ بلا حذف."""
+    try:
+        rows = [
+            (n, int(sz), int(c))
+            for n, sz, c in (
+                ln.split("|")
+                for ln in _psql(
+                    "select d.datname, pg_database_size(d.datname), "
+                    "(select count(*) from pg_stat_activity a where a.datname=d.datname) from pg_database d",
+                    container,
+                )
+            )
+        ]
+        res = classify_session_dbs(rows, live_tree_slugs(repo))
+        res["error"] = None
+        return res
+    except Exception as e:  # noqa: BLE001 — الحاويةُ غائبةٌ أو git فاشل ⇒ لا حذف
+        return {"orphans": [], "kept_live": 0, "kept_connected": [], "preview_gens": {"count": 0, "bytes": 0}, "bytes": 0, "error": str(e)}
+
+
+def drop_session_dbs(orphans: list[dict], container: str = DB_CONTAINER) -> int:
+    freed = 0
+    for o in orphans:
+        name = o["name"]
+        if not SESSION_DB.match(name) or PROTECTED_DB.match(name):
+            continue
+        try:
+            _psql(f'DROP DATABASE "{name}"', container)  # بلا FORCE: ترفضه بوستغريس إن اتّصل أحدٌ بعد الفحص
+            freed += o["bytes"]
+        except RuntimeError:
+            pass
+    return freed
+
+
 def apply_files(files: list[str], roots: list[Path]) -> int:
     freed = 0
     for f in files:
@@ -155,7 +250,7 @@ def apply_files(files: list[str], roots: list[Path]) -> int:
 
 
 def run(apply: bool = False, evidence: Path = EVIDENCE, tmp: Path = TMP, states: dict | None = None,
-        worktrees: bool = True, containers: bool = True) -> dict:
+        worktrees: bool = True, containers: bool = True, session_dbs: bool = True) -> dict:
     states = card_states() if states is None else states
     ev, tm = scan_evidence(states, root=evidence), scan_tmp(tmp)
     res = {
@@ -165,11 +260,13 @@ def run(apply: bool = False, evidence: Path = EVIDENCE, tmp: Path = TMP, states:
         "tmp": {"files": len(tm["files"]), "bytes": tm["bytes"]},
         "worktrees": scan_worktrees() if worktrees else {"candidates": [], "bytes": 0},
         "containers": scan_containers() if containers else {"names": []},
+        "session_dbs": scan_session_dbs() if session_dbs else classify_session_dbs([], set()) | {"error": None},
     }
     if apply:
         res["freed_bytes"] = apply_files(ev["files"], [evidence]) + apply_files(tm["files"], [tmp])
+        res["freed_db_bytes"] = drop_session_dbs(res["session_dbs"]["orphans"])
         with LOG.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), **{k: res[k] for k in ("evidence", "tmp", "freed_bytes")}}, ensure_ascii=False) + chr(10))
+            fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), **{k: res[k] for k in ("evidence", "tmp", "freed_bytes", "freed_db_bytes")}, "session_dbs_dropped": len(res["session_dbs"]["orphans"])}, ensure_ascii=False) + chr(10))
     return res
 
 
@@ -188,7 +285,14 @@ def main() -> int:
     print(f"tmp_reports: {res['tmp']['files']} ملفاً ({mb(res['tmp']['bytes'])})")
     print(f"شجراتُ عملٍ مدموجةٌ نظيفة (عرضٌ فقط): {len(res['worktrees']['candidates'])} ({res['worktrees']['bytes'] / 1e9:.2f} غ)")
     print(f"حاوياتٌ متوقّفة (عرضٌ فقط): {len(res['containers']['names'])}")
+    sd = res["session_dbs"]
+    if sd["error"]:
+        print(f"قواعدُ الجلسات: لم تُفحص ({sd['error']}) — لا حذف")
+    else:
+        print(f"قواعدُ جلساتٍ بلا شجرةٍ ولا اتصال: {len(sd['orphans'])} ({sd['bytes'] / 1e9:.2f} غ)؛ حيّةٌ محفوظة: {sd['kept_live']}؛ متّصلةٌ بلا شجرة (محفوظة): {len(sd['kept_connected'])}")
+        print(f"أجيالُ المعاينة ss_main_preview_g<N> (عرضٌ فقط، قرارُها لـ0501): {sd['preview_gens']['count']} ({sd['preview_gens']['bytes'] / 1e9:.2f} غ)")
     if a.apply:
+        print(f"المحرَّر فعلاً من القواعد: {res['freed_db_bytes'] / 1e6:.0f} م")
         print(f"المحرَّر فعلاً: {mb(res['freed_bytes'])}")
     return 0
 
