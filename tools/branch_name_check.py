@@ -27,7 +27,7 @@ CARD_IN_NAME = re.compile(r"(?:^|/)W-(\d{8}-\d{3})(?:-|$)")
 WELL_FORMED = re.compile(r"^claude/W-\d{8}-\d{3}(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?$")
 ENDED_STATES = {"closed", "published", "deferred"}  # = RELEASING_STATES في ledger.py (تأكيد 0103)
 EXEMPT = re.compile(r"^(main|master|HEAD|backup[/-].*|rebuild/.*|worktree-.*)$")
-LOOSE = re.compile(r"W-\d{8}-\d{3}|(?<![A-Za-z0-9])w\d{3}(?![0-9])", re.I)  # الأساس الواسع (اتفاق 0102)
+LOOSE = re.compile(r"W-\d{8}-\d{3}|w\d{3}", re.I)  # الواسع: الصيغة الكاملة أو المختصرة wNNN/MMDD-wNNN (اتفاق 0102)
 DEADLINE = "2026-10-28"
 
 
@@ -95,6 +95,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default=".")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--lenient", action="store_true", help="يطبع الأساس الواسع وحده: عددُ الفروع التي تحمل رمزاً بأي صيغة ونسبتها")
     ap.add_argument("--suggest", metavar="CARD")
     ap.add_argument("--slug", default="")
     a = ap.parse_args()
@@ -102,6 +103,9 @@ def main() -> int:
         print(suggest(a.suggest, a.slug))
         return 0
     rep = report(list_branches(a.repo), load_cards())
+    if a.lenient:
+        print(f"الأساس الواسع: {rep['loose_baseline']} من {rep['total']} ({rep['loose_pct']}% من غير المستثنى)")
+        return 0
     if a.json:
         print(json.dumps(rep, ensure_ascii=False, indent=2))
         return 0
