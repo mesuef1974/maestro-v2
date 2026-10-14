@@ -20,7 +20,7 @@ def items_of(*cards):
     return {c["id"]: c for c in cards}
 
 
-THREE = [card("A", "in_progress", "0401"), card("B", "ready_for_review", "0402"), card("C", "approved", "0403")]
+THREE = [card("A", "in_progress", "0401"), card("B", "ready_for_review", "0402"), card("C", "pushed", "0403")]
 
 
 class RoleOf(unittest.TestCase):
@@ -39,7 +39,7 @@ class Check(unittest.TestCase):
         items = items_of(*THREE, card("N", "routed", "0404"))
         msg = ledger.check_role_wip(items, "N", "0404")
         self.assertIn("A [in_progress]", msg)
-        self.assertIn("C [approved]", msg)
+        self.assertIn("C [pushed]", msg)
         self.assertIn("الحدّ 3", msg)
 
     def test_p0_is_exempt(self):
@@ -48,7 +48,7 @@ class Check(unittest.TestCase):
 
     def test_published_and_handed_over_leave_the_count(self):
         items = items_of(card("A", "published", "0401"), card("B", "ready_for_review", "0501"), card("C", "approved", "0403"),
-                         card("N", "routed", "0404"))
+                         card("D", "closed", "0402"), card("N", "routed", "0404"))
         self.assertIsNone(ledger.check_role_wip(items, "N", "0404"))
 
     def test_other_roles_are_not_counted(self):

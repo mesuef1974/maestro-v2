@@ -453,7 +453,8 @@ def check_wip(items: dict, item_id: str, by: str | None, waive: str | None) -> s
 
 #: حدُّ العمل غير المنشور لكل دور (W-20261014-011): إنذارٌ فقط؛ يُضبط بـROLE_WIP_LIMIT وقلبُه إلى رفضٍ بـROLE_WIP_ENFORCE=1 بقرارٍ موثَّق.
 ROLE_WIP_LIMIT = 3
-ROLE_WIP_STATES = {"in_progress", "ready_for_review", "approved", "pushed", "merged"}
+#: approved يخرج من العدّ: صار عند 0501 للدفع (تسليم، توضيح 0101 في 2026-10-14).
+ROLE_WIP_STATES = {"in_progress", "ready_for_review", "pushed", "merged"}
 #: الجلسات الشقيقة بادئةً واحدةً (مرنة 04SS)؛ وما عداها دورٌ منفردٌ هو الجلسة نفسها.
 ROLE_PREFIXES = ("04",)
 
