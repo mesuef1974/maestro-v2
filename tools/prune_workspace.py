@@ -30,8 +30,8 @@ EVIDENCE = ROOT / "evidence"
 TMP = ROOT / "tmp_reports"
 LOG = ROOT / "prune_log.jsonl"
 GRACE_DAYS = 3
-#: حالاتُ البطاقة التي يجوز معها تقليمُ مرفقاتها (بعد النشر).
-PRUNABLE_STATES = {"published", "merged"}
+#: يجوز تقليمُ مرفقات البطاقة بعد تأكّد النشر فقط (published: دُمجت ونُشرت وتُحقّق من الإنتاج) — أمر المالك 2026-10-14.
+PRUNABLE_STATES = {"published"}
 #: ملفّاتٌ تبقى دائماً.
 KEEP_NAMES = {"manifest.json"}
 KEEP_SUFFIX = {".md", ".txt", ".json"}

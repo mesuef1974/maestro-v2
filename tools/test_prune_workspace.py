@@ -46,6 +46,13 @@ def test_apply_keeps_manifest_and_text_and_unknown_and_unpublished(tmp_path):
     assert (ev / "W-2/ccc/c.png").exists() and (ev / "W-3/ddd/d.png").exists()
 
 
+def test_merged_not_yet_published_is_kept(tmp_path):
+    ev = tmp_path / "ev"
+    mk(ev, "W-9", "aaa", {"a.png": 10}, OLD)
+    run(tmp_path, {"W-9": "merged"}, apply=True)
+    assert (ev / "W-9/aaa/a.png").exists()
+
+
 def test_latest_head_grace_3_days(tmp_path):
     ev = tmp_path / "ev"
     mk(ev, "W-1", "new", {"n.png": 10}, time.time() - 3600)
