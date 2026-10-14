@@ -67,5 +67,35 @@ class Commands(unittest.TestCase):
         self.assertIn("25cef9a", text)
 
 
+class Digest(unittest.TestCase):
+    ROWS = [
+        {"id": "W-1", "state": "approved", "head": "aaaaaaaa", "pr": 10, "merge": "1111111"},
+        {"id": "W-2", "state": "merged", "head": "bbbbbbbb", "pr": 11, "merge": "2222222"},
+    ]
+    STATES = {"W-1": {"held_by": "0417"}, "W-2": {"held_by": "0417"}, "W-3": {}}
+
+    def test_digest_note_carries_whole_batch(self):
+        text = ps.digest_note(self.ROWS[0], self.ROWS, "331f3ae")
+        self.assertIn("#10", text)
+        self.assertIn("W-2 (#11)", text)
+
+    def test_one_message_per_owner(self):
+        msgs = ps.messages_by_owner(self.ROWS, self.STATES, "331f3ae")
+        self.assertEqual(list(msgs), ["0417"])
+        self.assertIn("W-1 (#10)", msgs["0417"])
+        self.assertIn("W-2 (#11)", msgs["0417"])
+
+    def test_no_owner_goes_to_0701(self):
+        msgs = ps.messages_by_owner([{"id": "W-3", "pr": 12}], self.STATES, "331f3ae")
+        self.assertEqual(list(msgs), ["0701"])
+
+    def test_write_notes_only_writes_notes(self):
+        calls = []
+        done = ps.write_notes(self.ROWS, "331f3ae", "0601", add_note=lambda *a: calls.append(a))
+        self.assertEqual(done, ["W-1", "W-2"])
+        self.assertEqual([c[0] for c in calls], ["W-1", "W-2"])
+        self.assertTrue(all(c[2] == "0601" for c in calls))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -117,12 +117,45 @@ def report_text(rows: list[dict], prod: str) -> str:
     return f"منشور على الإنتاج {prod} (فحص /health/ سليم): {cards}. الدفتر published."
 
 
+def digest_note(row: dict, rows: list[dict], prod: str) -> str:
+    """ملاحظةُ الدفتر المجمَّعة بالرأس: كلُّ بطاقةٍ تحمل الدفعةَ نفسَها (رأس الإنتاج وبطاقاتُها) بدل رسالةٍ لكلّ جلسة."""
+    batch = "، ".join(f"{r['id']} (#{r['pr']})" for r in rows)
+    return f"نُشر #{row['pr']} على الإنتاج {prod}؛ دفعةُ هذا الرأس: {batch}."
+
+
+def messages_by_owner(rows: list[dict], states: dict[str, dict], prod: str) -> dict[str, str]:
+    """رسالةٌ واحدةٌ لكلّ صاحبِ بطاقة (held_by) بكلِّ بطاقاته في الدفعة؛ بلا صاحبٍ تذهب إلى 0701."""
+    grouped: dict[str, list[dict]] = {}
+    for r in rows:
+        grouped.setdefault(states.get(r["id"], {}).get("held_by") or "0701", []).append(r)
+    return {
+        owner: f"منشور على الإنتاج {prod}: " + "، ".join(f"{r['id']} (#{r['pr']})" for r in rs) + "."
+        for owner, rs in sorted(grouped.items())
+    }
+
+
+def write_notes(rows: list[dict], prod: str, by: str, add_note=None) -> list[str]:
+    """يكتب الملاحظةَ المجمَّعة على كلّ بطاقةٍ مستحقّة (ملاحظةٌ فقط، لا نقلَ حالة: النقلُ لـ0601 وحدها)."""
+    add_note = add_note or ledger.add_note
+    done = []
+    for r in rows:
+        add_note(r["id"], digest_note(r, rows, prod), by)
+        done.append(r["id"])
+    return done
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--commit", help="بدل قراءة /health/ (للاختبار أو الفحص اليدويّ)")
     ap.add_argument("--limit", type=int, default=80, help="عدد الطلبات المدموجة المفحوصة")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--digest", action="store_true", help="يطبع الملاحظةَ المجمَّعة بالرأس ورسالةً واحدةً لكلّ صاحب بطاقة")
+    ap.add_argument("--write-notes", action="store_true", help="يكتب الملاحظةَ المجمَّعة في الدفتر (يلزم --by)")
+    ap.add_argument("--by", help="رقمُ جلسةِ كاتب الملاحظة مع --write-notes")
     a = ap.parse_args(argv)
+    if a.write_notes and not a.by:
+        print("✘ --write-notes يلزمه --by <رقم جلستك>", file=sys.stderr)
+        return 2
     try:
         prod = a.commit or fetch_health()
         states = ledger.reduce_state(ledger.load_events())
