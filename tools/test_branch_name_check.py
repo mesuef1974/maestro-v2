@@ -1,11 +1,12 @@
 import branch_name_check as b
 
-CARDS = {"W-20261014-008": "in_progress", "W-20261001-001": "published"}
+CARDS = {"W-20261014-008": "in_progress", "W-20261001-001": "published", "W-20261002-002": "merged"}
 
 
 def test_live_ended_unknown_none_exempt():
     assert b.classify("claude/W-20261014-008-git-names", CARDS) == "live"
     assert b.classify("claude/W-20261001-001", CARDS) == "ended"
+    assert b.classify("claude/W-20261002-002", CARDS) == "live"
     assert b.classify("claude/W-20269999-999-x", CARDS) == "unknown"
     assert b.classify("claude/schedule-fix", CARDS) == "none"
     assert b.classify("main", CARDS) == "exempt"

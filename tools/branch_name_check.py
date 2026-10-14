@@ -7,7 +7,7 @@
 
 النمطُ المطلوب: claude/W-YYYYMMDD-NNN أو claude/W-YYYYMMDD-NNN-<وصف>.
 الفئاتُ: live (رمزُ بطاقةٍ حيّة) · ended (بطاقةٌ منتهية) · unknown (رمزٌ غيرُ موجودٍ في الدفتر) · none (بلا رمز) · exempt (main وbackup وrebuild).
-«حيّة» = بطاقةٌ حالتُها captured..ready_for_review/notes/approved/pushed؛ والمنتهية merged/published/closed/deferred.
+«حيّة» = حالتُها ليست من closed/published/deferred (فتشمل merged)؛ والمنتهية هذه الثلاث (تأكيد 0103).
 لا يحذف ولا يعيد تسميةً ولا يدفع.
 """
 
@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 CARD_IN_NAME = re.compile(r"(?:^|/)W-(\d{8}-\d{3})(?:-|$)")
 WELL_FORMED = re.compile(r"^claude/W-\d{8}-\d{3}(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?$")
-ENDED_STATES = {"merged", "published", "closed", "deferred"}
+ENDED_STATES = {"closed", "published", "deferred"}  # = RELEASING_STATES في ledger.py (تأكيد 0103)
 EXEMPT = re.compile(r"^(main|master|HEAD|backup[/-].*|rebuild/.*|worktree-.*)$")
 DEADLINE = "2026-10-28"
 
