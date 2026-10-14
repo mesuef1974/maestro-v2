@@ -132,6 +132,15 @@ def pushed_without_remote(items: dict, lookup=None) -> list[str]:
     return sorted(bad)
 
 
+def role_wip_line(items: dict, session: str) -> str | None:
+    """سطرُ إنذارٍ حين يتجاوز دورُ الجلسة حدَّ العمل غير المنشور (W-20261014-011)؛ وإلا لا شيء فيبقى المخرج كما هو."""
+    role = ledger.role_of(session)
+    pending = ledger.role_unpublished(items, role)
+    if len(pending) <= ledger.role_wip_limit():
+        return None
+    return f"!! إنذار: للدور {role} {len(pending)} بطاقاتٍ غيرِ منشورة (الحدّ {ledger.role_wip_limit()}): " + "، ".join(i["id"] for i in pending)
+
+
 def report(session: str, events: list[dict], show_all: bool = False, now: datetime | None = None,
            check_remote: bool = False, remote_lookup=None) -> str:
     items = ledger.reduce_state(events)
@@ -151,6 +160,9 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
             groups[action].append(item)
 
     lines = []
+    role_warn = role_wip_line(items, session)
+    if role_warn:
+        lines.append(role_warn + chr(10))
     if warn:
         lines.append(f"!! تحذير: بطاقات pushed بلا فرع بعيد ({len(warn)}): {'، '.join(warn)}\n")
     lines.append(f"== {session}: {len(mine)} بطاقةً بالمالك المستنتَج")
