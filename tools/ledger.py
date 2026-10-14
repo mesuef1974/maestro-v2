@@ -790,6 +790,37 @@ def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[s
     return changed
 
 
+def _patch_id(rev: str, repo: str | None = None) -> str:
+    """بصمةُ عملِ الفرع وحدَه: `git patch-id --stable` لـ`origin/main...rev` (فرقٌ عن أساسه المشترك مع main)."""
+    cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    diff = _git(["diff", "--no-renames", f"origin/main...{rev}"], repo)
+    if not diff:
+        return ""
+    out = subprocess.run(["git", "patch-id", "--stable"], input=diff + chr(10), capture_output=True, encoding="utf-8",
+                         errors="replace", cwd=cwd, check=False).stdout.split()
+    return out[0] if out else ""
+
+
+#: مساراتُ صلاحيّاتٍ وأمنٍ وهجراتٍ لا يُعفى فيها أيُّ فرقٍ (كما check_red_fix).
+SENSITIVE_PATH_PARTS = ("permission", "auth", "security", "settings", "middleware", "capabilit", "/migrations/")
+
+
+def check_patch_id(approved: str, new: str, repo: str | None = None) -> list[str]:
+    """W-20261014-006: رأسان لهما بصمةُ patch-id مطابقةٌ تماماً لعمل الفرع عن main (أعيد أساسُه أو دُمج فيه main بلا تغيير
+    لعمله). يرفض أيَّ فرقٍ في العمل نفسِه، وأيَّ ملفٍّ حاكمٍ أو هجرةٍ أو صلاحيّاتٍ/أمنٍ في الفرق. يعيد ملفّات الفرع."""
+    pa, pn = _patch_id(approved, repo), _patch_id(new, repo)
+    if not pa or not pn:
+        raise LedgerError("فرقٌ فارغٌ عن origin/main (fetch أوّلاً؟) — لا بصمةَ تقارَن")
+    if pa != pn:
+        raise LedgerError("بصمةُ patch-id تختلف: عملُ الفرع تغيّر عن المعتمَد — يحتاج اعتماداً جديداً")
+    changed = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{new}"], repo).splitlines() if f]
+    bad = governing_files(changed) + [f for f in changed if "/migrations/" in f or f.startswith("migrations/")
+                                       or any(k in f.lower() for k in SENSITIVE_PATH_PARTS)]
+    if bad:
+        raise LedgerError(f"ملفّاتٌ حاكمةٌ أو هجراتٌ أو صلاحيّاتٌ/أمنٌ في العمل تُعرض على المالك: {sorted(set(bad))[:5]}")
+    return changed
+
+
 WAIVER_BY = {"0501"}
 
 #: ملفّاتٌ حاكمةٌ لا يُستثنى تعديلُها بـwaive-head «وثائق» (W-20261003-040، مواصفة 0103): تُحمَّل في كلّ جلسةٍ أو بالمسار فتوجّه السلوك.
@@ -888,6 +919,9 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     if kind == "main-merge":
         check_main_merge(item["approved_head"], new_head, repo)
         reason = f"دمجُ main فقط (تحقّق آليّ) — {reason}"
+    elif kind == "patch-id":
+        check_patch_id(item["approved_head"], new_head, repo)
+        reason = f"تطابقُ patch-id تامٌّ لعمل الفرع بعد دمج main/إعادة الأساس (تحقّق آليّ، W-20261014-006) — {reason}"
     elif kind == "tests-only":
         check_tests_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ اختباراتٍ فقط بلا حراسةٍ أمنيّة (تحقّق آليّ) — {reason}"
@@ -908,7 +942,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only أو red-fix")
+        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only أو red-fix أو patch-id")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -1003,7 +1037,7 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only", "red-fix"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only", "red-fix", "patch-id"])
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
