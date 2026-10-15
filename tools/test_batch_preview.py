@@ -90,6 +90,28 @@ class Batch(unittest.TestCase):
         row = bp.plan({"W-1": it}, self.repo, "main", 48, now=self.now, registry=reg)["included"][0]
         self.assertEqual((row["link"], row["role"], row["account"]), ("http://localhost:8500/dashboard/", "principal", "99900001"))
 
+    def test_an_empty_batch_still_lists_every_exclusion_with_its_reason(self):
+        self.branch("a")
+        commit(self.repo, "a", "W-1", "b.html", "x\n", self.now - 100 * 3600)
+        rep = bp.plan({"W-1": card("W-1"), "W-3": {**card("W-3", files=("tools/",)), "type": "tools"}}, self.repo, "main", 48, now=self.now)
+        text = bp.render_text(rep)
+        self.assertIn("الدفعة فارغة", text)
+        self.assertIn("W-1", text)
+        self.assertIn("خاملٌ", text)
+        self.assertIn("W-3", text)  # غيرُ الواجهيّة تُعدّ وتُسمّى لا تُخفى
+        self.assertIn("خاملٌ", bp.render_html(rep))
+
+    def test_a_missing_ledger_fails_loudly_instead_of_reading_empty(self):
+        old = os.environ.get("LEDGER_PATH")
+        os.environ["LEDGER_PATH"] = str(Path(self.tmp) / "none.jsonl")
+        try:
+            self.assertEqual(bp.main(["--repo", self.repo, "--base", "main"]), 2)
+        finally:
+            if old is None:
+                os.environ.pop("LEDGER_PATH", None)
+            else:
+                os.environ["LEDGER_PATH"] = old
+
     def test_the_planning_is_read_only(self):
         self.branch("a")
         commit(self.repo, "a", "W-1", "b.html", "x\n", self.now - 100)

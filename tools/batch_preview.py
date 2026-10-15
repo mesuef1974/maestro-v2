@@ -80,7 +80,9 @@ def plan(items: dict[str, dict], repo: str, base: str, max_age_h: int, now: floa
          only: list[str] | None = None, registry: list[dict] | None = None) -> dict:
     now = now or time.time()
     registry = registry or []
-    ready = [i for i in items.values() if i["state"] == "ready_for_review" and is_ui(i) and (not only or i["id"] in only)]
+    all_ready = [i for i in items.values() if i["state"] == "ready_for_review"]
+    ready = [i for i in all_ready if is_ui(i) and (not only or i["id"] in only)]
+    skipped = [i["id"] for i in all_ready if i not in ready]
     rows = []
     for it in sorted(ready, key=lambda i: i["id"]):
         h = head_of(repo, base, it["id"])
@@ -112,11 +114,17 @@ def plan(items: dict[str, dict], repo: str, base: str, max_age_h: int, now: floa
         rc, merged = git(repo, "-c", "user.name=batch", "-c", "user.email=batch@local", "commit-tree", files, "-p", cur, "-p", r["head"], "-m", "batch")
         cur = merged if rc == 0 and merged else cur
         included.append(r)
-    return {"base": base, "included": included, "excluded": excluded}
+    return {"base": base, "included": included, "excluded": excluded,
+            "considered": {"cards": len(items), "ready": len(all_ready), "ui": len(ready), "not_ui_or_filtered": skipped}}
 
 
 def render_text(rep: dict) -> str:
-    out = [f"الدفعة على {rep['base']}: تدخل {len(rep['included'])} وتُستبعد {len(rep['excluded'])}"]
+    c = rep["considered"]
+    out = [f"الدفعة على {rep['base']}: تدخل {len(rep['included'])} وتُستبعد {len(rep['excluded'])}",
+           f"المقروء من الدفتر: {c['cards']} بطاقة، منها «جاهز للمعاينة» {c['ready']}، والواجهية المعتبرة {c['ui']}"
+           + (f"؛ خارج الاعتبار (غير واجهية أو خارج --cards): {'، '.join(c['not_ui_or_filtered'])}" if c["not_ui_or_filtered"] else "")]
+    if not rep["included"]:
+        out.append("الدفعة فارغة" + (": كلُّ ما قُرئ مستبعدٌ بسببه أدناه" if rep["excluded"] else ": لا بطاقةَ واجهيّةً جاهزةً في الدفتر"))
     for r in rep["included"]:
         out.append(f"✔ {r['id']} [{r['held_by']}] رأس {r['head'][:8]} ({r['ref']}) · {r['role']} {r['account']} · {r['link']}")
     for r in rep["excluded"]:
@@ -131,7 +139,8 @@ def render_html(rep: dict) -> str:
     head = "<tr><th>البطاقة</th><th>الحاملة</th><th>الرأس</th><th>الفرع</th><th>الدور</th><th>الرقم التجريبي</th><th>الرابط</th><th>الحالة</th></tr>"
     body = "".join(row(r) for r in rep["included"]) + "".join(row(r, r["why"]) for r in rep["excluded"])
     return ("<!doctype html><html lang='ar' dir='rtl'><meta charset='utf-8'><title>جدول المعاينة الدفعية</title><body>"
-            f"<h1>الدفعة على {html.escape(rep['base'])}</h1>"
+            f"<h1>الدفعة على {html.escape(rep['base'])}: تدخل {len(rep['included'])} وتُستبعد {len(rep['excluded'])}</h1>"
+            f"<p>المقروء من الدفتر: {rep['considered']['cards']} بطاقة، «جاهز للمعاينة» {rep['considered']['ready']}، واجهية {rep['considered']['ui']}.</p>"
             "<p>الاعتمادُ صريحٌ من المالك لكلّ رأسٍ مطابقٍ للمعروض هنا؛ هذا الجدولُ لا يعتمد ولا يدفع.</p>"
             f"<table border='1' cellpadding='4'>{head}{body}</table></body></html>")
 
@@ -145,6 +154,11 @@ def main(argv=None) -> int:
     ap.add_argument("--html")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    path = ledger.ledger_path()
+    if not path.is_file():
+        # دفترٌ غائبٌ (شجرةٌ نظيفةٌ بلا ledger/events.jsonl غير المتتبَّع) لا يُقرأ فارغاً بصمت فيُظنّ أن لا جاهزَ
+        print(f"✗ لا دفترَ في {path} — شغّل الأداةَ من مجلّد المايسترو أو اضبط LEDGER_PATH", file=sys.stderr)
+        return 2
     registry = json.loads(REGISTRY.read_text(encoding="utf-8")) if REGISTRY.is_file() else []
     rep = plan(ledger.reduce_state(ledger.load_events()), a.repo, a.base, a.max_age_h, only=a.cards, registry=registry)
     if a.html:
