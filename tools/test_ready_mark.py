@@ -89,6 +89,25 @@ class ReadyMark(unittest.TestCase):
         self.assertIn("[dry]", self.mark(dry=True))
         self.assertEqual(len(ledger.load_events(self.ledger)), n)
 
+    def test_a_missing_ledger_exits_2_with_the_same_message_as_batch_preview(self):
+        import io
+        from contextlib import redirect_stderr
+
+        old = os.environ.get("LEDGER_PATH")
+        os.environ["LEDGER_PATH"] = str(Path(self.tmp) / "none.jsonl")
+        buf = io.StringIO()
+        try:
+            with redirect_stderr(buf):
+                rc = rm.main([self.card, "--head", self.head, "--by", "0702", "--repo", self.repo])
+        finally:
+            if old is None:
+                os.environ.pop("LEDGER_PATH", None)
+            else:
+                os.environ["LEDGER_PATH"] = old
+        self.assertEqual(rc, 2)
+        self.assertIn("لا دفترَ في", buf.getvalue())
+        self.assertNotIn("غيرُ موجودة", buf.getvalue())
+
     def test_unknown_card_is_refused(self):
         with self.assertRaises(ledger.LedgerError):
             rm.mark("W-20261015-000", self.head, "0702", self.repo, base="main", path=self.ledger)

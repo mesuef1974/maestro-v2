@@ -76,6 +76,11 @@ def main(argv=None) -> int:
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
+    path = ledger.ledger_path()
+    if not path.is_file():
+        # دفترٌ غائبٌ (شجرةٌ نظيفةٌ بلا ledger/events.jsonl غير المتتبَّع) لا يُقال عنه «بطاقةٌ غيرُ موجودة»
+        print(f"✗ لا دفترَ في {path} — شغّل الأداةَ من مجلّد المايسترو أو اضبط LEDGER_PATH", file=sys.stderr)
+        return 2
     try:
         print(mark(a.card, a.head, a.by, a.repo, a.link, a.role, a.base, a.dry_run))
     except ledger.LedgerError as e:
