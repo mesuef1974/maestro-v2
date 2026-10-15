@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ملحق عصف الغياب</title>
+<style>
+:root{--bg:#f7f4f1;--card:#fff;--fg:#1d1a1a;--muted:#6b6464;--line:#ddd5d0;--maroon:#8a1538}
+@media (prefers-color-scheme:dark){:root{--bg:#161214;--card:#211a1d;--fg:#eee7e7;--muted:#a79d9d;--line:#3a3033;--maroon:#e38aa5}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:Tajawal,"Segoe UI",Tahoma,sans-serif;line-height:1.8;padding:20px 16px}
+main{max-width:980px;margin-inline:auto}
+h1{margin:0 0 4px;color:var(--maroon);font-size:1.45rem}
+h2{color:var(--maroon);font-size:1.08rem;margin:20px 0 6px}
+.sub{color:var(--muted);font-size:.86rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;margin-block:8px}
+table{border-collapse:collapse;width:100%;font-size:.88rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:5px 9px;text-align:start;vertical-align:top}
+th{background:rgba(138,21,56,.09)}
+code{background:rgba(138,21,56,.08);padding:0 4px;border-radius:4px;direction:ltr;unicode-bidi:embed}
+.t{display:inline-block;font-size:.72rem;padding:0 7px;border-radius:99px;border:1px solid currentColor;margin-inline-start:4px;white-space:nowrap;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>ملحق على تقرير 0104: «راصد الغياب» وعلاقته بمشرف الجناح</h1>
+<div class="sub">0102 · 2026-10-13 · عصفٌ فقط، لا بطاقات (D-421م) · يكمّل <code>absence_brainstorm_0104_2026-10-13.html</code> ولا يكرّره · <span class="t">مقروء</span> من الشيفرة · <span class="t">استنتاج</span> · <span class="t">لم يُقَس</span></div>
+
+<h2>١. تصحيح لما ورد في تقرير 0104: الراصد ممثَّل في الشيفرة</h2>
+<div class="card">0104 بحثت بالاسم «absence_recorder» و«راصد الغياب» فلم تجد، لكنه ممثَّل باسم <b>«حاصر الغياب العامّ»</b> وفي القوالب وملفات المعاينة <b>«كاتب الغياب»</b>. هو <b>قدرة مفوَّضة</b> (<code>wings.school_wide</code> في <code>core/capabilities.py:636</code>، قرار المالك 2026-10-06) لا دور: مشرف إداري (<code>admin_supervisor</code>) يمنحه المدير أو النائب الأكاديمي المنحة من شاشة المنح <span class="t">مقروء</span>. نصّ مسوّغها حرفياً: يرى الأجنحة الخمسة، يعتمد رصد المعلمين ويصحّحه، يحوّل العذر بمهلته، <b>ويرفع ملخص الحصتين الأولى والثانية للوزارة يدوياً</b>، ويبقى محجوباً عنه ما يُحجب عن مشرف الجناح (الدرجات وملاحظات الأخصائيين وسبب العيادة). فسؤال «هل يصير الراصد دوراً؟» جوابه الحالي: هو منحة على شخص، وهذا ما أوصت به 0104 (قدرة تُسنَد لشخص).</div>
+
+<h2>٢. علاقته بطابور مشرف الجناح</h2>
+<table>
+<tr><th>الوظيفة</th><th>صاحبها اليوم</th><th>المصدر</th></tr>
+<tr><td>رفع قائمة غاب ح1 وح2 إلى نظام الوزارة</td><td>الراصد (المنحة)، يدوياً خارج المنصة</td><td><code>core/capabilities.py:636</code> <span class="t">مقروء</span></td></tr>
+<tr><td>إصدار إخطار الأولياء بعد الحصة الرابعة</td><td>الراصد، بزرّ في <code>/wings/absence-notices/</code>؛ ومشرف الجناح بلا منحة <b>يرى 404</b></td><td>D-246م وD-250م، <code>docs/preview_held_alerts_seed.py</code> <span class="t">مقروء</span></td></tr>
+<tr><td>طابور مشرف الجناح</td><td>أرقام العتبات فقط: «عند العتبات» عدد لا أسماء، والإخطار صار عند الراصد</td><td><code>core/dashboard_selectors.py:544</code> و<code>templates/wings/partials/supervisor_day.html:25</code> <span class="t">مقروء</span></td></tr>
+<tr><td>اعتماد رصد المعلمين</td><td>لا أحد: أُلغي اعتماد المشرف، الرصد نهائي فوري</td><td>D-245م وD-262م (<code>decisions.md</code>) <span class="t">مقروء</span></td></tr>
+<tr><td>اعتماد العذر</td><td>المشرف يرفع، ومنسق شؤون الطلبة أو النائب الإداري يعتمد</td><td>D-271م <span class="t">مقروء</span></td></tr>
+</table>
+<div class="card"><b>أثر ذلك على تقرير 0104:</b> (أ) قولها إن المشرف «يُخطِر» ويرى قائمة «ينتظرون إخطار ولي الأمر» قديم بعد D-246م؛ الإخطار انتقل إلى الراصد. (ب) فصلها بين «قائمة الرفع» عند الراصد و«الإخطار والعذر والمخالفات» عند المشرف صائب في القسم الأول، لكن الإخطار عند الراصد لا المشرف. (ج) شاشة «يوم المشرف» التي تقترحها (قائمة الوزارة + مخالفات مقترحة + إخطارات + نسب الجناح) <b>تخلط عمل شخصين</b>: قائمة الوزارة والإخطارات من الراصد، والمخالفات والعذر عند المشرف والمنسق. <span class="t">استنتاج</span></div>
+
+<h2>٣. ما ينقص التقرير وأقترح إضافته</h2>
+<ul>
+<li><b>النسب لكل صف موجودة:</b> 0104 لم تجد تجميعاً لكل صف، لكن <code>student_affairs/views.py:1327</code> (<code>class_rows</code>) يحسب نسبة التواجد بالحصص لكل صف، ولوحة المدير للمدرسة (<code>core/dashboard_selectors.py:102</code>). الناقص الجناح، ونسبة الغياب <b>الوزاري</b> بتعريفها. <span class="t">مقروء</span></li>
+<li><b>مهلة العذر:</b> يومان دراسيان من عودة الطالب وبأثر رجعي (<code>operations/absence_policy.py:115</code>). فاقتراح 0104 (مخالفة «مقترحة») ينبغي أن يُعرض <b>بعد انتهاء المهلة</b> لا فور الرصد، وإلا اقترحنا مخالفة على غائب سيُقدَّم له عذر. وسؤال 0104 عن سحب المخالفة بعذر لاحق يُحسم بذلك. <span class="t">استنتاج</span></li>
+<li><b>الملخص اليومي للأولياء مجمَّد (D-272م)</b>؛ فجوابها على «هل يُراسَل الولي عند كل مخالفة؟» يسبقه أنّ الإرسال متوقف أصلاً حتى يقرّر المالك الأمن.</li>
+<li><b>الراصد خارج لوحة المشرف:</b> المنحة تفتح له شاشة الإخطارات لا لوحة المشرف؛ فلا طابور موحَّد بين الراصد والمشرف اليوم. <span class="t">مقروء</span></li>
+</ul>
+
+<h2>٤. سؤال إضافي للمالك (يُلحق بقائمة 0104، يُسأل منفرداً)</h2>
+<div class="card">منحة «حاصر الغياب العامّ» هل هي مسجّلة فعلاً باسم الحبيب الحروش في الإنتاج؟ <span class="t">لم يُقَس</span> — بيانات لا شيفرة. وإن كانت، فهل يريد المالك أن يرى مشرف الجناح <b>حالة «رُفع/لم يُرفع»</b> لطلبة جناحه قراءةً فقط (اقتراح 0104)، أم يبقى الرفع شأن الراصد وحده؟</div>
+</main>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>عصف توفير التوكنز</title>
+<style>
+:root{--bg:#f7f4f1;--card:#fff;--fg:#1d1a1a;--muted:#6b6464;--line:#ddd5d0;--maroon:#8a1538;--bar:#8a1538;--bar2:#d6a3b3}
+@media (prefers-color-scheme:dark){:root{--bg:#161214;--card:#211a1d;--fg:#eee7e7;--muted:#a79d9d;--line:#3a3033;--maroon:#e38aa5;--bar:#e38aa5;--bar2:#6b3a4a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:Tajawal,"Segoe UI",Tahoma,sans-serif;line-height:1.8;padding:20px 16px}
+main{max-width:1040px;margin-inline:auto}
+header{border-block-end:3px solid var(--maroon);padding-block-end:10px;margin-block-end:14px}
+h1{margin:0;color:var(--maroon);font-size:1.55rem}
+h2{color:var(--maroon);font-size:1.1rem;margin:22px 0 8px}
+.sub{color:var(--muted);font-size:.86rem}
+.verdict{background:var(--card);border:1px solid var(--line);border-inline-start:6px solid var(--maroon);border-radius:10px;padding:12px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;margin-block:8px}
+table{border-collapse:collapse;width:100%;font-size:.88rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:5px 9px;text-align:start;vertical-align:top}
+th{background:rgba(138,21,56,.09)}
+.t{display:inline-block;font-size:.72rem;padding:0 7px;border-radius:99px;border:1px solid currentColor;margin-inline-start:4px;white-space:nowrap;color:var(--muted)}
+code{background:rgba(138,21,56,.08);padding:0 4px;border-radius:4px;direction:ltr;unicode-bidi:embed}
+.row{display:grid;grid-template-columns:200px 1fr 130px;gap:8px;align-items:center;margin-block:4px;font-size:.86rem}
+.bar{height:15px;background:var(--line);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--bar)}
+ul{margin:4px 0;padding-inline-start:22px;font-size:.93rem}
+li{margin-block:3px}
+.q{border-inline-start:4px solid var(--maroon);padding:6px 12px;margin-block:8px;background:var(--card);border-radius:6px}
+footer{margin-block:18px 6px;color:var(--muted);font-size:.82rem}
+@media (max-width:560px){.row{grid-template-columns:110px 1fr 80px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>عصف توفير التوكنز في المشروع</h1>
+<div class="sub">0102 · 2026-10-13 · بطلب 0103 بأمر المالك · عصفٌ فقط، لا بطاقات (D-421م) · الرمز ≈ عدد الحروف ÷ 2.2 على نهج 0103، <b>تقدير لا محلّل رموز حقيقي</b> · <span class="t">مقروء</span> قيس الآن · <span class="t">استنتاج</span> · <span class="t">لم يُقَس</span></div>
+</header>
+
+<div class="verdict"><b>الخلاصة:</b> أكبر ما يُحمَّل عند بدء كل جلسة هو <b>فهرس الذاكرة</b> (≈9,000 رمز) ثم <b>بطاقة الدور</b> (≈8,800)، لا <code>CLAUDE.md</code> (≈4,600). وأخطر تكرار ليس حجماً ثابتاً بل <b>إعادة حقن الفهرس كاملاً في كل جلسة حيّة كلما عدّلته جلسة أخرى</b>. وفي الجلسة الطويلة الواحدة، أثقل البنود صور الصفحات (PDF والصور) وتقارير الوكلاء ورسائل الجلسات. فالتوفير الأكبر في <b>ثلاث رافعات</b> بلا مساس بالقواعد: تثبيت الفهرس، وتقليص بطاقات الأدوار إلى نواة، وإحالة الرسائل الطويلة إلى ملفات.</div>
+
+<h2>١. ما يُحمَّل عند بدء الجلسة (قياس هذا الصباح)</h2>
+<div class="card">
+<div class="row"><span>فهرس الذاكرة <code>MEMORY.md</code></span><div class="bar"><i style="width:100%"></i></div><span>19,833 حرفاً ≈ 9,000</span></div>
+<div class="row"><span>بطاقة الدور (0102 مثلاً)</span><div class="bar"><i style="width:97%"></i></div><span>19,286 ≈ 8,770</span></div>
+<div class="row"><span><code>CLAUDE.md</code> المشروع (في شجرتي)</span><div class="bar"><i style="width:51%"></i></div><span>10,085 ≈ 4,580</span></div>
+<div class="row"><span><code>flow.md</code> المستورد</span><div class="bar"><i style="width:18%"></i></div><span>3,669 ≈ 1,670</span></div>
+<div class="row"><span><code>INDEX.md</code> للبطاقات</span><div class="bar"><i style="width:17%"></i></div><span>3,301 ≈ 1,500</span></div>
+<div class="row"><span><code>CLAUDE.md</code> العام</span><div class="bar"><i style="width:15%"></i></div><span>3,014 ≈ 1,370</span></div>
+<div class="sub">المجموع ≈ 59,200 حرفاً ≈ <b>26,900 رمز لكل جلسة عند البدء</b> قبل أي عمل. شجرتي ما زالت على <code>CLAUDE.md</code> القديم (15.8 ك.ب)؛ تقليص 0103 (11.2 ك.ب) في فرع آخر. <span class="t">مقروء</span> أحجام الملفات؛ والرموز <span class="t">تقدير</span></div>
+</div>
+<div class="card"><b>قواعد المسار المشروطة:</b> <code>design-system.md</code> 12,856 حرفاً و<code>identity-colours-core</code> 4,552 و<code>identity-colours-more</code> 6,717 و<code>identity-reference</code> 5,159 = 29,284 حرفاً ≈ 13,300 رمز تُحمَّل كلّها (إن شُرطت بمسار واحد) عند لمس <code>static/</code> أو <code>templates/</code>. <span class="t">مقروء</span> الأحجام؛ <span class="t">لم يُقَس</span> أيُّها يُحمَّل متى فعلاً.</div>
+
+<h2>٢. ما يتضخّم أثناء العمل (سجل هذه الجلسة: 54 م.ب خاماً)</h2>
+<div class="card">
+<div class="sub">حجم السجل بالبايت لا يساوي رموز السياق (السجل يحمل لقطات وتكراراً)، لكن النِّسَب تدلّ على الأثقل. <span class="t">مقروء</span></div>
+<table>
+<tr><th>البند</th><th>الحجم في السجل</th><th>الدلالة</th></tr>
+<tr><td>إعادة حقن الفهرس والتعليمات</td><td>61 سجلاً، 3.2 م.ب</td><td>تتكرر كلما تغيّرت الملفات (رسالة «Instruction files were re-read» ظهرت مراراً في هذه الجلسة)، وكل حقن نحو 25–50 ك.ب</td></tr>
+<tr><td>رسائل الجلسات المتبادلة</td><td>684 سجلاً، 1.7 م.ب</td><td>بعضها 3–6 ك.ب (تقارير كاملة بدل مرجع ملف)</td></tr>
+<tr><td>تقارير الوكلاء الفرعيين</td><td>287 سجلاً، 1.6 م.ب</td><td>تقرير 6–10 ك.ب كلٌّ منها يدخل السياق كاملاً</td></tr>
+<tr><td>صور (صفحات PDF ولقطات)</td><td>أكبر خمس نتائج أدوات 0.4–0.8 م.ب لكلٍّ</td><td>صفحات الدليل الوزاري الممسوحة؛ الأثقل منفرداً</td></tr>
+</table></div>
+
+<h2>٣. الرافعات مرتّبة بالأثر والمخاطرة</h2>
+<table>
+<tr><th>#</th><th>الرافعة</th><th>الأثر المقدَّر</th><th>المخاطرة</th></tr>
+<tr><td>1</td><td><b>تثبيت <code>MEMORY.md</code></b>: لا تُعدِّله الجلسات لتسجيل كل مخالفة؛ تذهب المخالفات إلى ملف فهرس واحد (قد فعلته 0101 جزئياً) والفهرس الرئيسي يُنقَّح مرة يومياً</td><td>يمنع إعادة حقن ≈9,000 رمز في كل جلسة حيّة عند كل تعديل؛ ×14 جلسة ≈ 126,000 رمز لكل تعديل <span class="t">تقدير</span></td><td>منخفضة؛ يضيع تحديث الفهرس لحظياً</td></tr>
+<tr><td>2</td><td><b>بطاقة الدور نواة + تفاصيل عند الطلب</b>: أول 3–4 ك.ب تحمل الهوية والقواعد والأدوات؛ والباقي يُقرأ بقسم عند الحاجة</td><td>من ≈8,800 إلى ≈1,800 رمز لكل جلسة؛ توفير ≈7,000 ×14 ≈ 98,000 <span class="t">تقدير</span></td><td>متوسطة؛ تحتاج مراجعة 0301 كي لا تضيع قاعدة حاكمة</td></tr>
+<tr><td>3</td><td><b>الرسائل: ملخص من خمسة أسطر + مسار الملف</b> بدل نص التقرير كاملاً</td><td>يخفّف سياق المستلم والمرسل؛ يتناسب مع 1.7 م.ب رسائل في جلسة واحدة <span class="t">استنتاج</span></td><td>منخفضة</td></tr>
+<tr><td>4</td><td><b>الصور إلى وكيل فرعي</b> يعيد نصاً موجزاً بدل أن تدخل الصفحات سياق الجلسة الرئيسية</td><td>أكبر عنصر منفرد؛ قد يوفّر مئات الآلاف من الرموز في جلسات الوثائق <span class="t">استنتاج</span></td><td>منخفضة؛ يلزم طلب «الصورة حَكَم» بتفاصيل</td></tr>
+<tr><td>5</td><td><b>قواعد المسار بمسارات أضيق</b> (تقسيم design-system إلى مكوّنات وجداول وألوان)</td><td>حتى ≈13,000 رمز لكل جلسة واجهية <span class="t">لم يُقَس</span> الاستعمال الفعلي</td><td>متوسطة؛ مخالفات الهوية عادت سابقاً من نقص التحميل (قرار 10-11 على تفعيل مهارة التصميم)</td></tr>
+<tr><td>6</td><td><b><code>flow.md</code> مستورد بالشرط</b> لا لكل جلسة (≈1,670 رمزاً)</td><td>صغير؛ لا يستحق مخاطرة فلو الاعتماد</td><td>مرتفعة نسبياً: هو القاعدة الحاكمة</td></tr>
+<tr><td>7</td><td>قراءة <code>decisions.md</code> (228,830 حرفاً ≈ 104,000 رمز) بالكامل ممنوعة؛ ملخص قصير مولَّد منها</td><td>يمنع خطأً مكلفاً جداً إن قرأتها جلسة كاملة <span class="t">لم يُقَس</span> كم مرة يحدث</td><td>منخفضة</td></tr>
+<tr><td>8</td><td>قائمة المهارات والأدوات المؤجّلة الطويلة في سياق كل جلسة: تعطيل ما لا يخصّ SchoolOS (أذكياء، تصميم علامات، رياضيات)</td><td>غير مقاس؛ نحو أربعين وصف مهارة طويل في كل جلسة <span class="t">لم يُقَس</span></td><td>منخفضة لكن بعضها قد يُستعمل</td></tr>
+</table>
+
+<h2>٤. مخاطر التوفير التي يجب الحذر منها</h2>
+<ul>
+<li><b>القواعد الحاكمة لا تُقلَّص بالحجم وحده:</b> مخالفات اللغة والهوية والمعاينة المسجّلة تأتي من قاعدة غابت أو قُرئت قديمة. توفير يُسقط قاعدة يكلّف أكثر مما وفّر. <span class="t">استنتاج</span> من سجل المخالفات.</li>
+<li><b>الذاكرة الأقصر قد تُنسي القرارات:</b> قرارات مثل D-381م (الجدول المعتمد) وD-421م (لا بطاقات من النقاش) يجب أن تبقى في النواة مهما قصّرنا.</li>
+<li><b>التقدير ÷2.2 ليس محلّلاً:</b> العربية مع الرموز اللاتينية تختلف؛ القياس الحقيقي قبل أي قرار (محور ز لدى 0103).</li>
+</ul>
+
+<h2>٥. أسئلة قرار للمالك (واحداً واحداً)</h2>
+<div class="q"><b>١.</b> هل تفضّل أن يصير فهرس الذاكرة ثابتاً يُنقَّح مرة يومياً (تأخّر ظهور المخالفة الجديدة في الفهرس إلى الغد، لكن لا إعادة حقن لحظية)؟</div>
+<div class="q"><b>٢.</b> هل يُسمح بتقسيم بطاقات الأدوار إلى نواة وتفاصيل (مراجعة 0301 لكل بطاقة) رغم أن بعضها حاكم؟</div>
+<div class="q"><b>٣.</b> هل تأذن بإيقاف المهارات غير المرتبطة بالمدرسة من جلسات المشروع؟</div>
+
+<h2>ما لم يُقَس</h2>
+<ul class="sub">
+<li>الرموز الفعلية بمحلّل حقيقي، ولا توزيع الاستهلاك بين البدء والعمل، ولا طول قائمة المهارات المؤجّلة المحقونة في كل جلسة.</li>
+<li>عدد الجلسات الحيّة فعلاً الآن وعدد مرات إعادة الحقن في الساعة لكل منها.</li>
+<li>أيّ ملفات القواعد تُحمَّل عند أي مسار.</li>
+</ul>
+<footer>القياسات: أحجام ملفات في <code>~/.claude</code> وشجرة العمل وسجل الجلسة <code>c65fb909….jsonl</code> بتاريخ 2026-10-13. لا بطاقات من هذا العصف إلا بأمر المالك الصريح (D-421م).</footer>
+</main>
+</body>
+</html>
