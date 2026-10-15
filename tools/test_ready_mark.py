@@ -75,6 +75,25 @@ class ReadyMark(unittest.TestCase):
         with self.assertRaises(ledger.LedgerError):
             self.mark(head=other)
 
+    def test_the_repo_is_found_from_the_environment_without_repo_flag(self):
+        old = os.environ.get("SCHOOLOS_REPO")
+        os.environ["SCHOOLOS_REPO"] = self.repo
+        try:
+            repo, full = rm.find_head(None, self.head)
+        finally:
+            if old is None:
+                os.environ.pop("SCHOOLOS_REPO", None)
+            else:
+                os.environ["SCHOOLOS_REPO"] = old
+        self.assertEqual(repo, self.repo)
+        self.assertTrue(full)
+
+    def test_the_error_lists_the_repos_that_were_searched(self):
+        with self.assertRaises(ledger.LedgerError) as cm:
+            self.mark(head="deadbeef")
+        self.assertIn("--repo", str(cm.exception))
+        self.assertIn(self.repo, str(cm.exception))
+
     def test_an_unknown_head_is_refused(self):
         with self.assertRaises(ledger.LedgerError):
             self.mark(head="deadbeef")

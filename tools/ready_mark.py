@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -28,6 +29,25 @@ HEAD_NOTE = re.compile(re.escape(MARK) + r"([0-9a-f]{7,40})")
 def git_ok(repo: str, *args: str) -> str | None:
     p = subprocess.run(["git", "-C", repo, *args], capture_output=True, encoding="utf-8", errors="replace", check=False)
     return p.stdout.strip() if p.returncode == 0 else None
+
+
+def candidate_repos(explicit: str | None) -> list[str]:
+    """أين يُبحث عن الرأس: ما مرَّرتَه، ثمّ SCHOOLOS_REPO، ثمّ المنصّة، ثمّ مستودعُ الأداة نفسِه (بطاقاتُ maestro). بلا تكرار."""
+    seen: list[str] = []
+    for r in (explicit, os.environ.get("SCHOOLOS_REPO"), DEFAULT_REPO, str(Path(__file__).resolve().parent.parent)):
+        if r and r not in seen:
+            seen.append(r)
+    return seen
+
+
+def find_head(explicit: str | None, head8: str) -> tuple[str, str | None]:
+    """(المستودعُ الذي وُجد فيه الرأس، الرأسُ الكامل) أو (أوّلُ مرشَّح، None)."""
+    cands = candidate_repos(explicit)
+    for r in cands:
+        full = git_ok(r, "rev-parse", "--verify", f"{head8}^{{commit}}")
+        if full:
+            return r, full
+    return cands[0], None
 
 
 def declared_head(item: dict) -> str | None:
@@ -50,9 +70,9 @@ def mark(card: str, head: str, by: str, repo: str, link: str = "", role: str = "
     head8 = head[:8]
     if item["state"] not in FROM_STATES:
         raise ledger.LedgerError(f"«{item['state']}» لا تنتقل إلى ready_for_review بهذه الأداة (الحالات المقبولة: {sorted(FROM_STATES)})")
-    full = git_ok(repo, "rev-parse", "--verify", f"{head8}^{{commit}}")
+    repo, full = find_head(repo, head8)
     if not full:
-        raise ledger.LedgerError(f"الرأس {head8} غيرُ موجودٍ في {repo} — أودِع أولاً")
+        raise ledger.LedgerError(f"الرأس {head8} غيرُ موجودٍ في أيٍّ من: {'، '.join(candidate_repos(repo))} — أودِع أولاً أو مرِّر --repo <المستودع>")
     if not git_ok(repo, "log", "-1", "--format=%H", f"--grep={card}", full, f"^{base}"):
         raise ledger.LedgerError(f"لا إيداعَ يحمل رمزَ {card} بين {base} والرأس {head8} — رأسٌ لبطاقةٍ أخرى؟")
     if item["state"] == "ready_for_review" and declared_head(item) == head8:
@@ -72,7 +92,7 @@ def main(argv=None) -> int:
     ap.add_argument("--by", required=True)
     ap.add_argument("--link", default="")
     ap.add_argument("--role", default="")
-    ap.add_argument("--repo", default=DEFAULT_REPO)
+    ap.add_argument("--repo", default=None, help="المستودعُ الذي فيه الرأس؛ بغيابه يُبحث في SCHOOLOS_REPO ثمّ المنصّة ثمّ مستودع الأداة")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
