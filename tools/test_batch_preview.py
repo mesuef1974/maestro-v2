@@ -112,6 +112,18 @@ class Batch(unittest.TestCase):
             else:
                 os.environ["LEDGER_PATH"] = old
 
+    def test_a_declared_head_older_than_the_latest_commit_is_flagged(self):
+        self.branch("a")
+        commit(self.repo, "a", "W-1", "b.html", "x\n", self.now - 3000)
+        old = run(self.repo, "rev-parse", "--short=8", "HEAD")
+        commit(self.repo, "a", "W-1", "b.html", "y\n", self.now - 100)
+        it = card("W-1", notes=[f"جاهزٌ للمعاينة بالرأس {old}"])
+        row = bp.plan({"W-1": it}, self.repo, "main", 48, now=self.now)["included"][0]
+        self.assertEqual(row["declared"], old)
+        self.assertIn("≠ آخر إيداع", row["note"])
+        ok = card("W-1", notes=[f"جاهزٌ للمعاينة بالرأس {run(self.repo, 'rev-parse', '--short=8', 'HEAD')}"])
+        self.assertEqual(bp.plan({"W-1": ok}, self.repo, "main", 48, now=self.now)["included"][0]["note"], "")
+
     def test_the_planning_is_read_only(self):
         self.branch("a")
         commit(self.repo, "a", "W-1", "b.html", "x\n", self.now - 100)

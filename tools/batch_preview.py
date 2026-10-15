@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ledger  # noqa: E402
+import ready_mark  # noqa: E402
 
 CARD_RE = re.compile(r"W-\d{8}-\d{3}")
 LINK_RE = re.compile(r"https?://localhost:8500/\S*")
@@ -86,11 +87,15 @@ def plan(items: dict[str, dict], repo: str, base: str, max_age_h: int, now: floa
     rows = []
     for it in sorted(ready, key=lambda i: i["id"]):
         h = head_of(repo, base, it["id"])
+        declared = ready_mark.declared_head(it)
         role, acct = role_and_account(it, registry)
         row = {"id": it["id"], "held_by": it.get("held_by") or "—", "problem": it.get("problem", "")[:80],
-               "link": card_link(it), "role": role, "account": acct, "head": "", "ref": "", "ct": 0}
+               "link": card_link(it), "role": role, "account": acct, "head": "", "ref": "", "ct": 0,
+               "declared": declared or "", "note": ""}
         if h:
             row.update(head=h[0], ref=h[1], ct=h[2])
+            if declared and not h[0].startswith(declared):
+                row["note"] = f"الرأس المعلَن {declared} ≠ آخر إيداعٍ للبطاقة {h[0][:8]} — الأخيرُ هو المعروض؛ يُعاد «جاهز» بالرأس الجديد"
         rows.append(row)
     # الأقدمُ عملاً أوّلاً: له الأولويّةُ إن تعارض اثنان (كما plan_integration)
     rows.sort(key=lambda r: (r["ct"] or 1 << 62, r["id"]))
@@ -126,7 +131,8 @@ def render_text(rep: dict) -> str:
     if not rep["included"]:
         out.append("الدفعة فارغة" + (": كلُّ ما قُرئ مستبعدٌ بسببه أدناه" if rep["excluded"] else ": لا بطاقةَ واجهيّةً جاهزةً في الدفتر"))
     for r in rep["included"]:
-        out.append(f"✔ {r['id']} [{r['held_by']}] رأس {r['head'][:8]} ({r['ref']}) · {r['role']} {r['account']} · {r['link']}")
+        out.append(f"✔ {r['id']} [{r['held_by']}] رأس {r['head'][:8]} ({r['ref']}) · {r['role']} {r['account']} · {r['link']}"
+                   + (f" ⚠ {r['note']}" if r.get("note") else ""))
     for r in rep["excluded"]:
         out.append(f"✗ {r['id']} [{r['held_by']}] — {r['why']}")
     return "\n".join(out)
@@ -134,7 +140,7 @@ def render_text(rep: dict) -> str:
 
 def render_html(rep: dict) -> str:
     def row(r, why=""):
-        cells = [r["id"], r["held_by"], r["head"][:8] or "—", r["ref"], r["role"], r["account"], r["link"], why or "يدخل الدفعة"]
+        cells = [r["id"], r["held_by"], r["head"][:8] or "—", r["ref"], r["role"], r["account"], r["link"], why or ("يدخل الدفعة" + (" — " + r["note"] if r.get("note") else ""))]
         return "<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in cells) + "</tr>"
     head = "<tr><th>البطاقة</th><th>الحاملة</th><th>الرأس</th><th>الفرع</th><th>الدور</th><th>الرقم التجريبي</th><th>الرابط</th><th>الحالة</th></tr>"
     body = "".join(row(r) for r in rep["included"]) + "".join(row(r, r["why"]) for r in rep["excluded"])
