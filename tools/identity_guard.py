@@ -53,7 +53,8 @@ def mode() -> str:
 
 
 def git(cwd: str, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", timeout=GIT_TIMEOUT)
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", timeout=GIT_TIMEOUT,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def existing_dir(path: str) -> str | None:

@@ -90,7 +90,8 @@ def main() -> int:
     try:  # تحذيرٌ فقط (لا حجب): شجرةٌ بلا ترقية مهارة الهويّة البصريّة (#897) تعمل بنسخةٍ قديمةٍ منها
         import subprocess
 
-        gate = subprocess.run(["git", "merge-base", "--is-ancestor", SKILL_UPGRADE, "HEAD"], cwd=cwd, capture_output=True, timeout=10)
+        gate = subprocess.run(["git", "merge-base", "--is-ancestor", SKILL_UPGRADE, "HEAD"], cwd=cwd, capture_output=True, timeout=10,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if gate.returncode == 1:
             print("[تحذير: مهارة الهويّة قديمة] شجرتك لا تحتوي ترقية web-design-mastery (#897: قائمة المراجعة 95 والتحقّق البصريّ بالدور 55 وخانتا عقد جاهز). "
                   "قبل أيّ عمل واجهة (قالب/CSS/JS) ادمج origin/main في شجرتك (أداة sync_with_base_branch أو git fetch ثمّ merge) ثمّ اقرأ .claude/skills/web-design-mastery/references/95-checklist.md؛ ولا تُعلن «جاهزٌ للمعاينة» لعمل واجهة دون خانتَي «الأجهزة المقيسة» و«نتيجة المسبار».")

@@ -111,7 +111,8 @@ def pushed_without_pr(items: dict[str, dict], prs_text: list[str], now: datetime
 def fetch() -> list[dict] | None:
     fields = "number,title,body,isDraft,state,mergeStateStatus,statusCheckRollup,createdAt"
     p = subprocess.run(["gh", "pr", "list", "--state", "all", "--limit", "80", "--json", fields], cwd=REPO,
-                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return json.loads(p.stdout) if p.returncode == 0 and p.stdout.strip() else None
 
 

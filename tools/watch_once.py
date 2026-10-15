@@ -100,7 +100,7 @@ def top_processes(limit: int = 3) -> list[tuple[str, int]]:
     """أكبرُ مستهلكي الذاكرة مجمَّعين باسم الصورة (ميغابايت) — من tasklist بلا PowerShell، فهو خفيفٌ حين تضيق الذاكرة."""
     if sys.platform != "win32":
         return []
-    proc = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, encoding="utf-8", errors="replace", check=False)
+    proc = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, encoding="utf-8", errors="replace", check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return aggregate_tasklist(proc.stdout, limit) if proc.returncode == 0 else []
 
 
@@ -200,7 +200,7 @@ def alert(code: str, severity: str, message: str, action: str = "") -> dict:
 
 
 def gh(*args: str) -> list | dict | None:
-    proc = subprocess.run(["gh", *args], capture_output=True, encoding="utf-8", errors="replace", check=False, cwd="D:/shschool_mvp")
+    proc = subprocess.run(["gh", *args], capture_output=True, encoding="utf-8", errors="replace", check=False, cwd="D:/shschool_mvp", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     try:
         return json.loads(proc.stdout) if proc.returncode == 0 and proc.stdout.strip() else None
     except json.JSONDecodeError:
@@ -293,7 +293,7 @@ def backup_alerts(cfg: dict | None) -> list[dict]:
         return []
     repo = Path(cfg["repo"])
     proc = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%ct", cfg["branch"]],
-                          capture_output=True, encoding="utf-8", check=False)
+                          capture_output=True, encoding="utf-8", check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     age_h = (datetime.now(timezone.utc).timestamp() - int(proc.stdout.strip())) / 3600 if proc.returncode == 0 and proc.stdout.strip() else None
     failed = (repo / "backups" / "BACKUP_FAILED.txt").is_file()
     sev = backup_age_severity(age_h, failed, cfg["max_age_h"])
@@ -376,7 +376,7 @@ def p0_captured_alerts(minutes: float = P0_STALL_MINUTES, now: datetime | None =
 def pr_states_for_card(card: str, repo: str = "D:/shschool_mvp") -> list[dict] | None:
     """طلباتُ الدمج التي تذكر البطاقةَ (عنواناً أو وصفاً) بحالتها الفعليّة من GitHub؛ None إن تعذّرت القراءة."""
     p = subprocess.run(["gh", "pr", "list", "--state", "all", "--search", card, "--json", "number,state,title"],
-                       cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                       cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if p.returncode != 0:
         return None
     try:
