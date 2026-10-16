@@ -3,8 +3,11 @@
 
 اللوحةُ عرضٌ مُولَّد؛ لا يُحرَّر يدويّاً. حمايةُ PDPPL في الكود: لا نصَّ خامّاً طويلاً ولا أرقامَ هويّةٍ ولا بريداً في أيّ حقل.
 
-    python ledger.py add --source owner --type ui --problem "..." --impact "..." --accept "..." --start 2026-09-29T08:00 --priority P1 [--files a b] [--urgent]
+    python ledger.py add --source owner --origin owner-order --owner-order "«نصُّ أمره الحرفيّ»" --type ui --problem "..." --impact "..." --accept "..." --start 2026-09-29T08:00 --priority P1 [--files a b] [--urgent]
+    python ledger.py add --source intake --origin defect --parent W-20261012-001 [--evidence مسار:سطر] ...
     (زمنُ البدء والأولويّة إلزاميّان — قرارُ المالك 2026-09-28)
+    (الأصلُ إلزاميّ — D-422م: نقاشٌ أو عصفٌ أو حكمٌ استشاريّ أو شكوى يرويها المالك لا تصير بطاقةً إلا بنصّ أمره
+     الحرفيّ بإنشائها، موجوداً في owner_confirmations.md خلال 7 أيام؛ يُسجَّل قبلها بـrecord_owner_confirmation.py)
     python ledger.py move W-20260926-001 in_progress
     python ledger.py list [--state ready_for_review]
     python ledger.py show W-20260926-001
@@ -123,9 +126,90 @@ def new_id(events: list[dict], today: str | None = None) -> str:
     return f"W-{day}-{n:03d}"
 
 
+# حارسُ الأصل (D-422م، أمر المالك 2026-10-12 «نعم وبقوة» بعد D-421م): كلُّ بطاقةٍ جديدةٍ في الدفتر الحقيقيّ تُعلن أصلَها.
+# ما أصلُه نقاشٌ أو عصفٌ أو حكمٌ استشاريّ أو شكوى يرويها المالك أو أمرُه — لا يُنشأ إلا بنصّ أمره الحرفيّ بإنشائه،
+# موجوداً في owner_confirmations.md خلال 7 أيام. والعيبُ المؤكَّد يُنشأ بلا أمرٍ لكن بأصلٍ يُتتبَّع (بطاقةٌ أمٌّ أو مسار:سطر).
+ORIGINS = ("owner-order", "discussion", "defect", "automated")
+OWNER_ORIGINS = {"owner-order", "discussion"}
+OWNER_SOURCES = {"owner", "advisor"}
+AUTOMATED_SOURCES = {"kpi_guard", "alert", "repo_keeper"}
+DISCUSSION_MARKERS = re.compile(r"عصف|نقاش|مناقش|ناقش|استشار|brainstorm", re.IGNORECASE)
+OWNER_ORDER_MIN = 8
+OWNER_ORDER_MAX_AGE = timedelta(days=7)
+CONFIRMATIONS = ROOT / "owner_confirmations.md"
+_CONF_TS = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}):(\d{2}))?")
+EVIDENCE_RE = re.compile(r"^[\w./\\-]+:\d+$")
+
+
+def _norm_quote(value: str) -> str:
+    return re.sub(r"\s+", " ", value.replace("«", "").replace("»", "").replace("ـ", "")).strip()
+
+
+def find_owner_order(quote: str, confirmations_path=None, now: datetime | None = None) -> str:
+    """زمنُ أحدث سطرٍ في owner_confirmations.md فيه نصُّ أمر المالك حرفيّاً، خلال 7 أيام؛ وإلا يُرفض."""
+    q = _norm_quote(quote)
+    if len(q) < OWNER_ORDER_MIN:
+        raise LedgerError(f"--owner-order قصيرٌ ({len(q)} أحرف): انقل من قول المالك ما يدلّ على الإنشاء نفسه، {OWNER_ORDER_MIN} أحرف فأكثر")
+    f = Path(confirmations_path or CONFIRMATIONS)
+    lines = f.read_text(encoding="utf-8").splitlines() if f.is_file() else []
+    now = now or datetime.now(DOHA)
+    stale = None
+    for line in reversed(lines):
+        m = _CONF_TS.match(line)
+        if not m or q not in _norm_quote(line):
+            continue
+        ts = datetime.fromisoformat(f"{m.group(1)}T{int(m.group(2) or 0):02d}:{m.group(3) or '00'}").replace(tzinfo=DOHA)
+        if now - ts <= OWNER_ORDER_MAX_AGE:
+            return ts.isoformat(timespec="minutes")
+        stale = stale or ts
+    if stale:
+        raise LedgerError(f"نصُّ أمر المالك موجودٌ لكنّه أقدم من 7 أيام ({stale:%Y-%m-%d}) — اطلب قوله من جديد")
+    raise LedgerError("نصُّ أمر المالك غيرُ موجودٍ حرفيّاً في owner_confirmations.md — سجّل قولَه المباشرَ أوّلاً بـrecord_owner_confirmation.py؛ "
+                      "ورسالةُ جلسةٍ أو حكمُها ليست أمرَه (D-421م، D-422م)")
+
+
+def check_origin(source: str, origin: str | None, owner_order: str, parent: str, evidence: str, texts: list[str],
+                 events: list[dict], confirmations_path=None, now: datetime | None = None) -> dict:
+    """يعيد حقولَ الأصل لتُحفظ في البطاقة، أو يرفض (D-422م)."""
+    if origin not in ORIGINS:
+        raise LedgerError(f"--origin إلزاميّ (D-422م)، واحدٌ من {', '.join(ORIGINS)}: أمرُ المالك، نقاشٌ أو عصفٌ أو حكمٌ استشاريّ، "
+                          "عيبٌ مؤكَّد في الشيفرة، أداةٌ آليّة")
+    if source in OWNER_SOURCES and origin not in OWNER_ORIGINS:
+        raise LedgerError(f"المصدر «{source}» أصلُه قولُ المالك أو رأيٌ يُعرض عليه: --origin owner-order أو discussion مع --owner-order")
+    if origin == "automated" and source not in AUTOMATED_SOURCES:
+        raise LedgerError(f"--origin automated لمصادر الأدوات الآليّة وحدها ({', '.join(sorted(AUTOMATED_SOURCES))})")
+    if origin not in OWNER_ORIGINS and any(DISCUSSION_MARKERS.search(t or "") for t in texts):
+        raise LedgerError("نصُّ البطاقة يذكر عصفاً أو نقاشاً أو استشارة — لا تصير بطاقةً إلا بأمر المالك الصريح: "
+                          "--origin discussion --owner-order «نصُّه» (D-421م: هذه مخالفةٌ سُجّلت مرّتين)")
+    out: dict = {"origin": origin}
+    if origin in OWNER_ORIGINS:
+        if not owner_order:
+            raise LedgerError("هذا الأصلُ يلزمه --owner-order «نصُّ أمر المالك الحرفيّ بإنشاء البطاقة»")
+        out["owner_order"] = check_text("owner_order", owner_order)
+        out["owner_order_at"] = find_owner_order(owner_order, confirmations_path, now)
+    elif origin == "defect":
+        if not (parent or evidence):
+            raise LedgerError("العيبُ المؤكَّد يلزمه --parent <البطاقةُ التي اكتُشف أثناءها> أو --evidence <مسار:سطر> — وإلا فأصلُه ليس عيباً")
+        if parent:
+            if parent not in {e["id"] for e in events if e["kind"] == "created"}:
+                raise LedgerError(f"--parent «{parent}» ليست بطاقةً في الدفتر")
+            out["parent"] = parent
+        if evidence:
+            if not EVIDENCE_RE.match(evidence):
+                raise LedgerError("--evidence بصيغة مسار:سطر (مثل behavior/views.py:309)")
+            out["evidence"] = evidence
+    return out
+
+
+def _is_real_ledger(path) -> bool:
+    return ledger_path(path).resolve() == (ROOT / "ledger" / "events.jsonl").resolve()
+
+
 def add_item(source: str, problem_type: str, problem: str, impact: str, accept: str,
              files: list[str] | None = None, urgent: bool = False, path=None, scores: dict | None = None,
-             start: str = "", priority: str = "", held_by: str = "") -> str:
+             start: str = "", priority: str = "", held_by: str = "", origin: str | None = None,
+             owner_order: str = "", parent: str = "", evidence: str = "", confirmations_path=None,
+             enforce_origin: bool | None = None) -> str:
     if source not in SOURCES:
         raise LedgerError(f"مصدرٌ غيرُ معروف: {source} (المسموح: {', '.join(SOURCES)})")
     if priority not in PRIORITIES:
@@ -141,6 +225,10 @@ def add_item(source: str, problem_type: str, problem: str, impact: str, accept: 
     if held_by and held_by != "-":
         data["held_by"] = check_session(held_by)
     events = load_events(path)
+    # الحارسُ على الدفتر الحقيقيّ دائماً مهما كان المستدعي؛ ودفاترُ الاختبار المؤقّتة تطلبه صراحةً
+    if enforce_origin if enforce_origin is not None else _is_real_ledger(path):
+        data.update(check_origin(source, origin, owner_order, parent, evidence, [problem, impact, accept], events,
+                                 confirmations_path))
     item_id = new_id(events)
     append_event("created", item_id, data, path)
     return item_id
@@ -1046,6 +1134,10 @@ def main() -> None:
     a.add_argument("--problem", required=True); a.add_argument("--impact", required=True); a.add_argument("--accept", required=True)
     a.add_argument("--files", nargs="*", default=[]); a.add_argument("--urgent", action="store_true")
     a.add_argument("--start", required=True, help="زمنُ البدء الفعليّ ISO بتوقيت الدوحة"); a.add_argument("--priority", required=True, choices=PRIORITIES); a.add_argument("--held-by")
+    a.add_argument("--origin", default=None, choices=ORIGINS, help="أصلُ البطاقة (D-422م): أمرُ المالك، نقاش/عصف/حكمٌ استشاريّ، عيبٌ مؤكَّد، أداةٌ آليّة")
+    a.add_argument("--owner-order", default="", help="لـowner-order وdiscussion: نصُّ أمر المالك الحرفيّ بإنشائها كما في owner_confirmations.md")
+    a.add_argument("--parent", default="", help="لـdefect: البطاقةُ التي اكتُشف العيبُ أثناءها")
+    a.add_argument("--evidence", default="", help="لـdefect: موضعُ العيب مسار:سطر")
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)؛ ولـpushed: يُقارَن بالبعيد")
     m.add_argument("--branch", help="لـpushed: الفرعُ المتحقَّق من وجوده على البعيد"); m.add_argument("--waive-remote-check", help="استثناءٌ مسجَّل لفحص البعيد (السبب)")
     m.add_argument("--held-by", help="الجلسةُ الحاجزة للبطاقة؛ «-» للتصفير")
@@ -1083,7 +1175,8 @@ def main() -> None:
     try:
         if args.cmd == "add":
             print(add_item(args.source, args.type, args.problem, args.impact, args.accept, args.files, args.urgent,
-                           start=args.start, priority=args.priority, held_by=args.held_by or ""))
+                           start=args.start, priority=args.priority, held_by=args.held_by or "", origin=args.origin,
+                           owner_order=args.owner_order, parent=args.parent, evidence=args.evidence))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
                  waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight); print("ok")
