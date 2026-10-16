@@ -48,6 +48,35 @@ class Apply(unittest.TestCase):
         self.assertIn("✘", out[0])
         self.assertIn("W-2 ← published", out[1])
 
+    def test_published_note_carries_pr_link_as_evidence(self):
+        _, calls = self.run_apply([row("merged")])
+        self.assertIn("/pull/10", calls[0][2]["note"])
+        self.assertIn("25cef9a", calls[0][2]["note"])
+
+    def test_missing_health_prints_unmeasured_and_moves_nothing(self):
+        import io
+        from contextlib import redirect_stderr
+        from unittest import mock
+
+        err = io.StringIO()
+        with (
+            mock.patch.object(pu.ps, "fetch_health", side_effect=pu.ps.SyncError("تعذّر قراءة /health/")),
+            mock.patch.object(pu.ledger, "move") as mv,
+            redirect_stderr(err),
+        ):
+            rc = pu.main(["--apply"])
+        self.assertEqual(rc, 2)
+        self.assertIn("غير مقيس", err.getvalue())
+        mv.assert_not_called()
+
+    def test_one_message_per_owner(self):
+        rows = [row("merged", "W-1"), row("merged", "W-2"), row("merged", "W-3")]
+        states = {"W-1": {"held_by": "0702"}, "W-2": {"held_by": "0702"}, "W-3": {}}
+        out = pu.ps.messages_by_owner(rows, states, "25cef9a")
+        self.assertEqual(sorted(out), ["0701", "0702"])
+        self.assertIn("W-1", out["0702"])
+        self.assertIn("W-2", out["0702"])
+
     def test_nothing_due_nothing_moved(self):
         out, calls = self.run_apply([])
         self.assertEqual((out, calls), ([], []))
