@@ -25,3 +25,13 @@ def test_unknown_when_head_missing_or_diff_fails():
     events = [ev("A", None), ev("A", "h2"), ev("B", "h1"), ev("B", "h2")]
     out = rc.classify_all(events, "x", differ=lambda repo, o, n: None)
     assert [c for _, c in out] == ["غير معروف", "غير معروف"]
+
+
+class ExcludeMainTest(__import__("unittest").TestCase):
+    def test_empty_own_diff_is_main_merge_only(self):
+        ev = [
+            {"id": "C", "kind": "state", "data": {"state": "approved", "head": "aaaa"}},
+            {"id": "C", "kind": "state", "data": {"state": "approved", "head": "bbbb"}},
+        ]
+        res = rc.classify_all(ev, ".", lambda r, o, n: [])
+        self.assertEqual(res, [("C", "دمج main فقط")])

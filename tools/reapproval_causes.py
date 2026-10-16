@@ -21,7 +21,7 @@ sys.path.insert(0, str(HERE))
 import ledger  # noqa: E402
 
 UI_PREFIXES = ("templates/", "static/")
-CAUSES = ("واجهة", "هجرة", "كود", "اختبارات فقط", "وثائق فقط", "غير معروف")
+CAUSES = ("واجهة", "هجرة", "كود", "اختبارات فقط", "وثائق فقط", "دمج main فقط", "غير معروف")
 
 
 def classify_paths(paths: list[str]) -> str:
@@ -57,6 +57,21 @@ def diff_paths(repo: str, old: str, new: str) -> list[str] | None:
     return [ln.strip() for ln in p.stdout.splitlines() if ln.strip()] if p.returncode == 0 else None
 
 
+def _git(repo: str, *args: str) -> str | None:
+    p = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+def diff_paths_own(repo: str, old: str, new: str, base: str = "origin/main") -> list[str] | None:
+    """مسارات الفرق دون ما أتى من main: نطرح فرقَ قاعدتَي الرأسين المشتركتين مع main (أرخص تقريب)."""
+    paths = diff_paths(repo, old, new)
+    mb_old, mb_new = _git(repo, "merge-base", old, base), _git(repo, "merge-base", new, base)
+    if paths is None or not mb_old or not mb_new or mb_old == mb_new:
+        return paths
+    from_main = set(diff_paths(repo, mb_old, mb_new) or [])
+    return [x for x in paths if x not in from_main]
+
+
 def classify_all(events: list[dict], repo: str, differ=diff_paths) -> list[tuple[str, str]]:
     result = []
     for card, old, new in pairs(events):
@@ -64,7 +79,7 @@ def classify_all(events: list[dict], repo: str, differ=diff_paths) -> list[tuple
             result.append((card, "غير معروف"))
             continue
         paths = differ(repo, old, new)
-        result.append((card, "غير معروف" if paths is None else classify_paths(paths)))
+        result.append((card, "غير معروف" if paths is None else ("دمج main فقط" if not paths else classify_paths(paths))))
     return result
 
 
@@ -72,9 +87,10 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default="D:/shschool_mvp")
+    ap.add_argument("--exclude-main", action="store_true", help="استبعاد ما أتى من main بين الرأسين")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
-    res = classify_all(ledger.load_events(), a.repo)
+    res = classify_all(ledger.load_events(), a.repo, diff_paths_own if a.exclude_main else diff_paths)
     counts = collections.Counter(c for _, c in res)
     total = len(res)
     if a.json:
