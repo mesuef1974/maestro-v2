@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -88,23 +89,56 @@ def pr_evidence(num: str) -> tuple[list[tuple[str, str]], str | None, str | None
     return ev, card.group(0) if card else None, pr_head
 
 
-def confirmations_evidence(key: str, pr_head: str | None = None) -> list[tuple[str, str]]:
-    f = ROOT / "owner_confirmations.md"
+#: مصدرُ الإفادة (W-20261016-030): «مصدره: مباشر» أو «مصدره: نقلاً عن 0101» بعد «(إفادةُ جلسة)»؛ والسطرُ بلا وسمٍ قديمٌ = «مباشر (قديم)».
+SOURCE_IN_LINE = re.compile(r"مصدره:\s*(?:(مباشر)|نقلاً عن (?:جلسة )?(0[1-8]\d\d))")
+SESSION_IN_LINE = re.compile(r"^\|[^|]*\|\s*(0[1-8]\d\d)")
+#: وضعُ المنقول بلا «مباشر» من السامعة: إنذارٌ يطبع ولا يرفض؛ والإلزامُ بـ`APPROVAL_PROVENANCE=enforce` أو بقلب الثابت.
+PROVENANCE_ENFORCE = False
+
+
+def provenance_enforced() -> bool:
+    return PROVENANCE_ENFORCE or os.environ.get("APPROVAL_PROVENANCE", "").lower() == "enforce"
+
+
+def line_source(ln: str) -> tuple[str, str | None, str | None]:
+    """(النوع، الجلسةُ الكاتبة، السامعة): النوعُ direct أو legacy (بلا وسم) أو relayed."""
+    s = SESSION_IN_LINE.match(ln.strip())
+    writer = s.group(1) if s else None
+    m = SOURCE_IN_LINE.search(ln)
+    if not m:
+        return "legacy", writer, None
+    if m.group(1):
+        return "direct", writer, None
+    return "relayed", writer, m.group(2)
+
+
+def confirmations_evidence(key: str, pr_head: str | None = None, enforce: bool | None = None, path: Path | None = None) -> list[tuple[str, str]]:
+    f = path or ROOT / "owner_confirmations.md"
     if not f.exists():
         return []
+    enforce = provenance_enforced() if enforce is None else enforce
     out = []
     lines = f.read_text(encoding="utf-8").splitlines()
     # ملحقُ تصحيح: «ملغى[<بطاقة>@<رأس>]» يُبقي السطرَ الأصليّ ولا يُحسب دليلاً (لا حذفَ لسجلّ تأكيدات المالك)
     voided = re.findall(r"ملغى\[(\S+?)@(\w+)\]", chr(10).join(lines))
-    for ln in lines:
-        if "ملغى[" in ln:
-            continue
-        if any(re.search(re.escape(c) + r"\s*@" + re.escape(h), ln) for c, h in voided):
-            continue
+    live = [
+        ln
+        for ln in lines
+        if "ملغى[" not in ln and not any(re.search(re.escape(c) + r"\s*@" + re.escape(h), ln) for c, h in voided)
+    ]
+    # الجلساتُ التي سجّلت تأكيداً «مباشراً» (أو قديماً) لهذا الهدف نفسه
+    direct = {w for ln in live if key in ln for k, w, _ in [line_source(ln)] if k in ("direct", "legacy") and w}
+    for ln in live:
         if key in ln:
             h = HEAD_IN_LINE.search(ln)
             tail = " ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else ""
-            out.append((f"owner_confirmations.md: {ln.strip()[:120]}{tail}", head_status(h.group(1) if h else None, pr_head)))
+            st = head_status(h.group(1) if h else None, pr_head)
+            kind, _, hearer = line_source(ln)
+            if kind == "relayed" and hearer not in direct:
+                tail += f" ⚠ منقولٌ عن {hearer} بلا تأكيد «مباشر» منها لهذا الهدف" + ("" if enforce else " (إنذار)")
+                if enforce:
+                    st = "unverified"
+            out.append((f"owner_confirmations.md: {ln.strip()[:120]}{tail}", st))
     return out
 
 
