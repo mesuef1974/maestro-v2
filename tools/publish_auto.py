@@ -22,12 +22,20 @@ import ledger
 import publish_sync as ps
 
 
+PR_URL = "https://github.com/sh-school/shschool_mvp/pull/{}"
+
+
+def unmeasured_text(exc: Exception) -> str:
+    """غياب /health/ أو عدمُ سلامته أو فشلُ gh = غير مقيس صراحةً، لا نقلَ ولا نجاحَ صامت."""
+    return f"غير مقيس: {exc} — لا نقل"
+
+
 def apply_rows(rows: list[dict], prod: str, move=None, note=None) -> list[str]:
     """ينقل كلَّ بطاقةٍ مستحقّةٍ؛ يعيد أسطرَ ما فُعل. بطاقةٌ فشل نقلُها تُسجَّل ولا توقف الباقي."""
     move = move or ledger.move
     done = []
     for r in rows:
-        why = f"آلياً (publish_auto) — #{r['pr']} مدموج {r['merge']} ومنشور {prod[:7]}"
+        why = f"آلياً (publish_auto) — #{r['pr']} مدموج {r['merge']} ومنشور {prod[:7]} — {PR_URL.format(r['pr'])}"
         try:
             start = ps.CHAIN.index(r["state"]) + 1 if r["state"] in ps.CHAIN else 0
             for step in ps.CHAIN[start:]:
@@ -51,7 +59,7 @@ def main(argv=None) -> int:
         states = ledger.reduce_state(ledger.load_events())
         rows = ps.due(states, ps.merged_prs(a.limit), prod)
     except ps.SyncError as exc:
-        print(f"✘ {exc} — لا نقل", file=sys.stderr)
+        print(unmeasured_text(exc), file=sys.stderr)
         return 2
     for r in rows:
         r["prod"] = prod[:7]
@@ -64,8 +72,9 @@ def main(argv=None) -> int:
     for line in apply_rows(rows, prod):
         print("  " + line)
     if rows:
-        print("\nنصُّ الإبلاغ المجمَّع (أرسله مرةً واحدة لأصحاب البطاقات و0701):")
-        print("  " + ps.report_text(rows, prod[:7]))
+        print("\nإبلاغٌ واحدٌ لكلّ صاحب بطاقةٍ (أرسله مرةً واحدة؛ بلا صاحبٍ إلى 0701):")
+        for owner, text in ps.messages_by_owner(rows, states, prod[:7]).items():
+            print(f"  [{owner}] {text}")
     return 0
 
 
