@@ -54,6 +54,26 @@ def head_status(approved: str | None, pr_head: str | None, today: date | None = 
     return "ok"
 
 
+#: (W-20261016-018) السطرُ المؤرَّخ من هذا اليوم يجب أن يحمل رمزَ البطاقة نفسَها؛ الأقدمُ يبقى كما كان.
+LINE_CARD_FROM = "2026-10-17"
+_LINE_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_CARD_IN_LINE = re.compile(r"W-\d{8}-\d{3}")
+
+
+def line_card_problem(line: str, card: str | None, cutoff: str | None = None) -> str | None:
+    """سبب رفض سطر اعتمادٍ جديدٍ لا يربط رمزَ البطاقة (أو يربط رمزاً مخالفاً)؛ وإلا None."""
+    cutoff = cutoff or LINE_CARD_FROM
+    d = _LINE_DATE.search(line)
+    if not d or d.group(0) < cutoff:
+        return None
+    codes = set(_CARD_IN_LINE.findall(line))
+    if not codes:
+        return "سطرُ الاعتماد لا يحمل رمزَ البطاقة (القالبُ: اعتُمد من المالك على 8500 — <التاريخ> — <رمز البطاقة> — الرأس <sha8>)"
+    if card and card not in codes:
+        return f"رمزُ البطاقة في السطر {sorted(codes)} لا يطابق {card}"
+    return None
+
+
 def card_evidence(card: str, pr_head: str | None = None) -> list[tuple[str, str]]:
     code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
     try:
@@ -82,10 +102,15 @@ def pr_evidence(num: str) -> tuple[list[tuple[str, str]], str | None, str | None
     d = json.loads(out)
     pr_head = (d.get("headRefOid") or "")[:8] or None
     ev = []
+    card = re.search(r"W-\d{8}-\d{3}", d.get("title", "") + (d.get("body") or ""))
     for m in APPROVAL_LINE.findall(d.get("body") or "")[:1]:
         h = HEAD_IN_LINE.search(m)
-        ev.append((f"الطلب #{num} ({d['state']}): {m.strip()[:110]}", head_status(h.group(1) if h else None, pr_head)))
-    card = re.search(r"W-\d{8}-\d{3}", d.get("title", "") + (d.get("body") or ""))
+        status = head_status(h.group(1) if h else None, pr_head)
+        problem = line_card_problem(m, card.group(0) if card else None)
+        if problem:
+            status = "stale"
+            m = f"{m.strip()[:80]} ✘ {problem}"
+        ev.append((f"الطلب #{num} ({d['state']}): {m.strip()[:110]}", status))
     return ev, card.group(0) if card else None, pr_head
 
 

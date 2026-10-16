@@ -975,6 +975,16 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     item = reduce_state(load_events(path)).get(item_id)
     if not item or not item.get("approved_head"):
         raise LedgerError("لا اعتمادَ مربوطاً برأسٍ لهذه البطاقة")
+    if kind == "auto":  # (W-20261016-018) يجرّب النوعين المأذونين وحدَهما بفحص الشجرة؛ لا توسيعَ لصنفٍ ثالث
+        for cand, check in (("main-merge", check_main_merge), ("tests-only", check_tests_only)):
+            try:
+                check(item["approved_head"], new_head, repo)
+            except LedgerError:
+                continue
+            kind = cand
+            break
+        else:
+            raise LedgerError("لا إعفاءَ آليّاً: الفرقُ ليس دمجَ main خالصاً ولا إصلاحَ اختباراتٍ فقط (الباقي يحتاج اعتماداً جديداً بالرأس)")
     if kind == "main-merge":
         check_main_merge(item["approved_head"], new_head, repo)
         reason = f"دمجُ main فقط (تحقّق آليّ) — {reason}"
@@ -1001,7 +1011,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only أو red-fix أو patch-id")
+        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only أو red-fix أو patch-id أو auto")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -1100,7 +1110,7 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only", "red-fix", "patch-id"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only", "red-fix", "patch-id", "auto"])
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
