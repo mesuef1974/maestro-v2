@@ -48,7 +48,14 @@ class Ratio(unittest.TestCase):
         self.assertEqual((rep["urgent"], rep["merged"], rep["urgent_numbers"]), (1, 3, [1]))
 
     def test_it_never_blocks_or_rejects_and_never_writes(self):
-        path = Path(ledger.ledger_path())
+        import json
+        import os
+        import tempfile
+
+        path = Path(tempfile.mkdtemp()) / "events.jsonl"
+        path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in card("A", True)), encoding="utf-8")
+        os.environ["LEDGER_PATH"] = str(path)
+        self.addCleanup(os.environ.pop, "LEDGER_PATH", None)
         before = hashlib.sha256(path.read_bytes()).hexdigest()
         ur.card_ratio(ledger.load_events())
         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), before)

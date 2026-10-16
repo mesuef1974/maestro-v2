@@ -74,7 +74,14 @@ class Stale(unittest.TestCase):
         self.assertTrue(all(r["proof"] for r in ls.collect(evs, NOW)["stale"]))
 
     def test_the_tool_is_read_only_and_does_not_touch_the_ledger(self):
-        path = Path(ledger.ledger_path())
+        import os
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp()) / "events.jsonl"
+        tmp.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in made("A", 20, state="routed")), encoding="utf-8")
+        path = tmp
+        os.environ["LEDGER_PATH"] = str(tmp)
+        self.addCleanup(os.environ.pop, "LEDGER_PATH", None)
         before = hashlib.sha256(path.read_bytes()).hexdigest()
         rep = ls.collect(ledger.load_events(), datetime.now(ledger.DOHA))
         ls.render_text(rep, 7)
