@@ -529,8 +529,33 @@ def check_preflight_ready(item: dict, state: str, repo: str | None, waive: str |
     return None
 
 
+_FINGERPRINT = re.compile(r"^(?:head=)?([0-9a-f]{8})(?:[: ]\s*(?:sha256=)?)([0-9a-f]{16})$")
+
+
+def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, head_now: str | None = None) -> str | None:
+    """بصمةُ `make premerge` قبل «جاهزٌ للمعاينة» (W-20261016-021، المكوّن B): `--premerge-sha <head8>:<sha16>` (أو سطر البصمة كما يطبعه الفحص).
+    بلا بصمة أو برأسٍ مخالفٍ لرأس الفرع الحاليّ: إنذارٌ في الظلّ، ورفضٌ مع PREMERGE_GATE_ENFORCE=1. نوع docs مستثنىً بنوعه المعلن.
+    البصمة تُدوَّن في ملاحظة الحدث؛ وباقي الانتقالات لا تتأثّر."""
+    if state != "ready_for_review" or item.get("type") == "docs":
+        return None
+    problem = None
+    if not fingerprint:
+        problem = "لم تُمرَّر بصمةُ make premerge قبل «جاهزٌ للمعاينة» — مرِّر --premerge-sha <head8>:<sha16>"
+    else:
+        m = _FINGERPRINT.match(fingerprint.strip())
+        if not m:
+            problem = f"بصمةُ premerge بصيغةٍ غير مفهومة: {fingerprint[:40]}"
+        elif head_now and m.group(1) != head_now[:8]:
+            problem = f"بصمةُ premerge لرأسٍ مخالف ({m.group(1)}) لرأس الفرع الحاليّ ({head_now[:8]}) — أعِد make premerge"
+    if problem is None:
+        return f"بصمةُ premerge: {fingerprint.strip()}"
+    if os.environ.get("PREMERGE_GATE_ENFORCE") == "1":
+        raise LedgerError(problem)
+    return f"إنذار (الظلّ): {problem}"
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
-         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None, preflight_repo: str | None = None, waive_preflight: str | None = None) -> None:
+         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None, preflight_repo: str | None = None, waive_preflight: str | None = None, premerge_sha: str | None = None, head_now: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
     if held_by is not None and held_by != "-":
@@ -561,6 +586,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if pre_note:
         print(pre_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{pre_note}"
+    fp_note = check_premerge_fingerprint(items[item_id], state, premerge_sha, head_now)
+    if fp_note:
+        print(fp_note, file=sys.stderr)
+        note = f"{note + ' — ' if note else ''}{fp_note}"
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
@@ -1052,6 +1081,8 @@ def main() -> None:
     m.add_argument("--waive-spec", help="استثناءٌ مسجَّل لبوّابة المواصفة الكاملة (السبب)")
     m.add_argument("--waive-wip", help="استثناءٌ مسجَّل لحدِّ العمل الجاري: بطاقةٌ واحدةٌ جاريةٌ للجلسة (السبب)")
     m.add_argument("--preflight-repo", help="لـready_for_review: مجلّدُ شجرتك لتشغيل الفحص المسبق (pr_open_prep --preflight)")
+    m.add_argument("--premerge-sha", help="لـready_for_review: بصمةُ make premerge بصيغة <head8>:<sha16> (إنذارٌ في الظلّ ثم إلزام)")
+    m.add_argument("--head-now", help="رأسُ الفرع الحاليّ للمطابقة مع البصمة (sha8)")
     m.add_argument("--waive-preflight", help="استثناءٌ مسجَّل للفحص المسبق (السبب)")
     sp = sub.add_parser("spec", help="يضبط حقولَ المواصفة الكاملة")
     sp.add_argument("id"); sp.add_argument("--tier", choices=SPEC_TIERS); sp.add_argument("--ref"); sp.add_argument("--roles-states")
@@ -1086,7 +1117,7 @@ def main() -> None:
                            start=args.start, priority=args.priority, held_by=args.held_by or ""))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
-                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight); print("ok")
+                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight, premerge_sha=args.premerge_sha, head_now=args.head_now); print("ok")
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
                      args.files_allowed, args.files_forbidden, args.accept, args.step, args.by); print("ok")
