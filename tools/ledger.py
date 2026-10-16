@@ -228,6 +228,10 @@ SPEC_TIERS = ("basic", "full")
 SPEC_STEPS_MAX = 7
 SPEC_CUTOFF = "2026-10-04"  # بطاقاتٌ أُنشئت قبل هذا اليوم تبقى basic (لا يُعاد عليها بابٌ أُغلق)
 ASSUMPTION_STATUSES = ("محسوم", "افتراض")  # «افتراض» = افتراضٌ معلَن يراجعه المالكُ في المعاينة لا قبل البناء
+#: (W-20261016-012، أمر المالك 2026-10-16) من هذا اليوم لا توجيهَ لبطاقةٍ جديدةٍ بمواصفةٍ ناقصةٍ من أيّ طبقة؛
+#: القديمةُ تبقى بتحذيرٍ فقط حتى لا تتجمّد بطاقاتٌ حيّة. والصغيرةُ تُقبل بوسم «أساس» (spec_basic_ok بسببٍ مكتوب).
+SPEC_STRICT_FROM = "2026-10-16"
+BASIC_OK_REQUIRED = ("accept_measurable", "steps")  # الحدُّ الأدنى لبطاقةٍ بوسم الأساس
 REF_KINDS = ("طبق الأصل", "مشابه")
 RETURNED_MARK = "أُعيدت لنقص المواصفة"  # يقيسه intake_kpis
 #: قواعدُ الاستنتاج الصريحة للمستوى full (يكفي واحدٌ منها)؛ تُطبَّق على type + problem + accept + files
@@ -336,7 +340,8 @@ def parse_ref(text: str) -> dict:
 def set_spec(item_id: str, tier: str | None = None, ref: str | None = None, roles_states: str | None = None,
              allowed_diffs: str | None = None, assumptions: list[str] | None = None, source_of_truth: str | None = None,
              files_allowed: list[str] | None = None, files_forbidden: list[str] | None = None,
-             accept: list[str] | None = None, steps: list[str] | None = None, by: str | None = None, path=None) -> dict:
+             accept: list[str] | None = None, steps: list[str] | None = None, by: str | None = None, path=None,
+             basic_ok: str | None = None) -> dict:
     """يضبط حقولَ المواصفة (ما مُرِّر فقط) حدثَ update؛ ويستنتج المستوى إن لم يُفرَض."""
     item = reduce_state(load_events(path)).get(item_id)
     if not item:
@@ -368,6 +373,8 @@ def set_spec(item_id: str, tier: str | None = None, ref: str | None = None, role
         if len(steps) > SPEC_STEPS_MAX:
             raise LedgerError(f"خطواتُ العمل ≤ {SPEC_STEPS_MAX}")
         data["steps"] = [check_text("step", s) for s in steps]
+    if basic_ok:
+        data["spec_basic_ok"] = check_text("basic_ok", basic_ok)
     if "spec_tier" not in data and not item.get("spec_tier"):
         data["spec_tier"] = infer_spec_tier(item)[0]
     if data.get("spec_tier") == "basic":
@@ -387,6 +394,15 @@ def check_spec_gate(item: dict, target: str, history_states: set[str], waive: st
     miss = spec_missing(item)
     if not miss:
         return None
+    if effective_spec_tier(item) == "basic" and str(item.get("created", ""))[:10] >= SPEC_STRICT_FROM:
+        if item.get("spec_basic_ok"):  # وسم «أساس»: يكفيه الحدُّ الأدنى فقط
+            miss = [m for m in miss if m.split(" ", 1)[0] in BASIC_OK_REQUIRED]
+            if not miss:
+                return None
+        if waive:
+            return None
+        raise LedgerError("المواصفةُ ناقصة (بطاقةٌ جديدة) — لا توجيه: " + "؛ ".join(miss)
+                          + ' (تُكمَل بـspec، أو للصغيرة وسمُ الأساس --basic-ok "<سبب>" مع accept وstep، أو استثناءٌ مسجَّل --waive-spec "<سبب>")')
     if effective_spec_tier(item) == "full":
         if waive:
             return None
@@ -545,7 +561,8 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     check_recorder(state, by)
     history = {e["data"].get("state") for e in load_events(path) if e["id"] == item_id and e["kind"] == "state"}
     spec_warning = check_spec_gate(items[item_id], state, history, waive_spec)
-    if waive_spec and state in ("routed", "in_progress") and effective_spec_tier(items[item_id]) == "full" and spec_missing(items[item_id]):
+    if waive_spec and state in ("routed", "in_progress") and spec_missing(items[item_id]) and (
+            effective_spec_tier(items[item_id]) == "full" or str(items[item_id].get("created", ""))[:10] >= SPEC_STRICT_FROM):
         note = f"{note + ' — ' if note else ''}استثناءُ المواصفة: {waive_spec}"
     if spec_warning:
         print(spec_warning, file=sys.stderr)
@@ -1058,6 +1075,7 @@ def main() -> None:
     sp.add_argument("--allowed-diffs"); sp.add_argument("--assumption", action="append"); sp.add_argument("--source-of-truth")
     sp.add_argument("--files-allowed", nargs="*"); sp.add_argument("--files-forbidden", nargs="*")
     sp.add_argument("--accept", action="append"); sp.add_argument("--step", action="append"); sp.add_argument("--by", required=True)
+    sp.add_argument("--basic-ok", help="وسمُ «أساس» لبطاقةٍ صغيرة (السبب): يكفيها accept وstep")
     nt = sub.add_parser("note", help="ملاحظةٌ على بطاقةٍ دون نقل حالتها")
     nt.add_argument("id"); nt.add_argument("--text", required=True); nt.add_argument("--by", required=True)
     rt = sub.add_parser("return", help="تعيد بطاقةً لنقص المواصفة إلى captured")
@@ -1089,7 +1107,7 @@ def main() -> None:
                  waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight); print("ok")
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
-                     args.files_allowed, args.files_forbidden, args.accept, args.step, args.by); print("ok")
+                     args.files_allowed, args.files_forbidden, args.accept, args.step, args.by, basic_ok=args.basic_ok); print("ok")
         elif args.cmd == "note":
             add_note(args.id, args.text, args.by); print("ok")
         elif args.cmd == "return":

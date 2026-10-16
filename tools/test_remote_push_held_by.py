@@ -47,6 +47,11 @@ class RemoteCheck(unittest.TestCase):
 
 
 class HeldBy(unittest.TestCase):
+    def setUp(self):
+        # الاختبارُ للحامل لا للمواصفة: نُعطّل تشديدَ البطاقات الجديدة (W-20261016-012)
+        self.addCleanup(setattr, ledger, "SPEC_STRICT_FROM", ledger.SPEC_STRICT_FROM)
+        ledger.SPEC_STRICT_FROM = "2999-01-01"
+
     def test_add_set_and_clear(self):
         path = os.path.join(tempfile.mkdtemp(), "e.jsonl")
         cid = ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-10-04T08:00", priority="P2", path=path, held_by="0402")

@@ -102,6 +102,9 @@ class RiskTier(unittest.TestCase):
 class Ledger(unittest.TestCase):
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "e.jsonl"
+        # هذه الاختباراتُ لدورة الحياة لا للمواصفة: نُعطّل تشديدَ البطاقات الجديدة (W-20261016-012)
+        self.addCleanup(setattr, ledger, "SPEC_STRICT_FROM", ledger.SPEC_STRICT_FROM)
+        ledger.SPEC_STRICT_FROM = "2999-01-01"
 
     def add(self, **kw):
         base = dict(source="owner", problem_type="tool", problem="سكربتٌ مقصوص", impact="أداةٌ واحدة", accept="يعمل كاملاً", path=self.path,
