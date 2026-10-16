@@ -10,7 +10,7 @@
   (٣) `git merge-tree --write-tree` بين الأساس (`origin/main` افتراضاً) والرأس: تعارضٌ يُسمّي الملفّاتِ ولا يُفتح الطلب؛
   (١) سطرُ الاعتماد الجاهز للوصف: «اعتُمد من المالك على 8500 — <التاريخ> — الرأس <sha8>» (الصيغةُ في docs/governance/flow.md البند 7).
 
-رموز الخروج: 0 سليم، 3 اعتمادٌ غيرُ ثابتٍ على هذا الرأس، 4 الفرعُ غيرُ مدفوعٍ أو رأسُه يخالف المحلّيّ، 5 تعارضٌ مع الأساس، 2 خطأُ استعمال.
+رموز الخروج: 0 سليم، 6 فشلُ فحصٍ ما قبل «جاهز» (--preflight)، 3 اعتمادٌ غيرُ ثابتٍ على هذا الرأس، 4 الفرعُ غيرُ مدفوعٍ أو رأسُه يخالف المحلّيّ، 5 تعارضٌ مع الأساس، 2 خطأُ استعمال.
 قراءةٌ فقط: لا يدفع ولا يفتح طلباً ولا يكتب في الدفتر. والتاريخُ من آخر اعتمادٍ أو تنازلٍ في الدفتر (بتوقيت الدوحة)، وإلا اليوم.
 """
 
@@ -88,6 +88,90 @@ def merge_conflicts(repo: str, base: str, head: str) -> tuple[bool, list[str], s
     return False, [], (proc.stderr or proc.stdout or f"رمز الخروج {proc.returncode}").strip()
 
 
+def git_lines(repo: str, *args: str) -> list[str]:
+    _code, out = run(["git", *args], cwd=repo)
+    return [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+
+def check_base_pushed(repo: str, base: str = "origin/main") -> list[str]:
+    """(R2، W-20261014-012) فروعٌ محليّةٌ بُني عليها هذا الفرعُ ولم تُدفع: كلُّ فرعٍ محلّيٍّ آخر تقعُ رأسُه في تاريخ HEAD
+    وليس في `base` ولا على أيّ فرعٍ بعيد. يعيد رسائلَ الرفض (فارغةٌ = سليم)."""
+    head = git_lines(repo, "rev-parse", "HEAD")[0]
+    current = (git_lines(repo, "rev-parse", "--abbrev-ref", "HEAD") or [""])[0]
+    msgs = []
+    for line in git_lines(repo, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads"):
+        name, tip = line.split()
+        if name == current or tip == head:
+            continue
+        if run(["git", "merge-base", "--is-ancestor", tip, head], cwd=repo)[0] != 0:
+            continue
+        if run(["git", "merge-base", "--is-ancestor", tip, base], cwd=repo)[0] == 0:
+            continue
+        if git_lines(repo, "branch", "-r", "--contains", tip):
+            continue
+        msgs.append(f"الفرعُ بُني على الفرع المحلّيّ {name} ({tip[:8]}) ولم يُدفع: ادفعه أوّلاً "
+                    f"(git push origin {name}:refs/heads/claude/<مهمّته>) أو أعِد الأساس على {base}.")
+    return msgs
+
+
+def check_base_fresh(repo: str, base: str = "origin/main") -> list[str]:
+    """(R4) ملفّاتٌ في فرق الفرع الصافي عُدّلت في `base` منذ merge-base: تداخلٌ يُبطل الاعتماد لاحقاً. يعيد الملفّات."""
+    mb = git_lines(repo, "merge-base", base, "HEAD")
+    if not mb:
+        return []
+    mine = set(git_lines(repo, "diff", "--no-renames", "--name-only", f"{base}...HEAD"))
+    theirs = set(git_lines(repo, "diff", "--no-renames", "--name-only", mb[0], base))
+    return sorted(mine & theirs)
+
+
+def check_mypy_version(repo: str, installed=None) -> list[str]:
+    """مقارنةُ إصدار mypy وحزمِ الأنواع المثبَّتة محلّياً بـrequirements-mypy.txt (ما تحكم به البوّابة)؛ لا تشغّل mypy."""
+    req = Path(repo) / "requirements-mypy.txt"
+    if not req.is_file():
+        return [f"لا يوجد {req.name} في {repo}: تعذّر معرفةُ إصدار البوّابة."]
+    if installed is None:
+        from importlib import metadata
+
+        def installed(name: str) -> str | None:
+            try:
+                return metadata.version(name)
+            except metadata.PackageNotFoundError:
+                return None
+
+    msgs = []
+    for raw in req.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^\s*([A-Za-z0-9_.\-]+)\s*==\s*([^\s#;]+)", raw)
+        if not m:
+            continue
+        name, want = m.groups()
+        have = installed(name)
+        if have != want:
+            msgs.append(f"{name}: تحكم البوّابةُ {want} والمثبَّتُ عندك {have or 'غائب'}")
+    if msgs:
+        msgs.append("ثبّتها: pip install -r requirements-mypy.txt")
+    return msgs
+
+
+def preflight(repo: str, base: str) -> int:
+    """فحوصُ ما قبل «جاهزٌ للمعاينة»: قراءةٌ فقط، لا ترتبط باعتمادٍ ولا تكتب في الدفتر. 0 سليم، 6 فشل."""
+    failed = False
+    pushed = check_base_pushed(repo, base)
+    for msg in pushed:
+        print("✘", msg)
+    overlap = check_base_fresh(repo, base)
+    if overlap:
+        print(f"✘ أساسُ الفرع متأخرٌ عن {base} في {len(overlap)} ملفّاً عدّلتَه أنت وعُدّل في main — ادمج main الآن قبل «جاهز»:")
+        for f in overlap:
+            print("  -", f)
+    skew = check_mypy_version(repo)
+    for msg in skew:
+        print("✘", msg)
+    failed = bool(pushed or overlap or skew)
+    if not failed:
+        print(f"✔ ما قبل «جاهز»: الأساسُ مدفوعٌ وحديثٌ عن {base}، وإصدارُ mypy موافقٌ للبوّابة.")
+    return 6 if failed else 0
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -96,6 +180,7 @@ def main() -> int:
     ap.add_argument("--branch", help="اسمُ الفرع البعيد (الافتراضيّ فرعُ الشجرة الحاليّ)")
     ap.add_argument("--base", default="origin/main", help="الأساس للمقارنة بـmerge-tree")
     ap.add_argument("--no-fetch", action="store_true", help="لا تجلب الأساس قبل الفحص")
+    ap.add_argument("--preflight", action="store_true", help="فحوصُ ما قبل «جاهزٌ للمعاينة» (الأساس المدفوع والحديث وإصدار mypy) فقط")
     ap.add_argument("--line-only", action="store_true", help="اطبع سطرَ الاعتماد وحدَه عند النجاح")
     a = ap.parse_args()
     repo = a.repo
@@ -106,6 +191,11 @@ def main() -> int:
         return 2
     head = head.strip()
     h8 = head[:8]
+    if a.preflight:
+        if not a.no_fetch and "/" in a.base:
+            remote_name, ref = a.base.split("/", 1)
+            run(["git", "fetch", remote_name, ref], cwd=repo)
+        return preflight(repo, a.base)
     branch = a.branch or run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo)[1].strip()
 
     # تحذيرُ تسمية الفرع برمز البطاقة (R5، W-20261014-008): لا يحجب شيئاً

@@ -1,0 +1,178 @@
+"""اختباراتُ flow_watch (W-20261016-019) بدفترٍ تجريبيّ لا الحقيقيّ:  python -m unittest tools.test_flow_watch"""
+
+import contextlib
+import io
+import os
+import sys
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import flow_watch as fw  # noqa: E402
+
+NOW = datetime(2026, 10, 16, 12, 0, tzinfo=timezone(timedelta(hours=3)))
+TH = fw.Thresholds()
+
+
+def ts(minutes_ago):
+    return (NOW - timedelta(minutes=minutes_ago)).isoformat()
+
+
+def created(cid, **extra):
+    return {"kind": "created", "id": cid, "ts": ts(100000), "data": {"spec_tier": "full", **extra}}
+
+
+def state(cid, st, ago, by="0101", **extra):
+    return {"kind": "state", "id": cid, "ts": ts(ago), "data": {"state": st, "by": by, **extra}}
+
+
+def note(cid, text, ago):
+    return {"kind": "note", "id": cid, "ts": ts(ago), "data": {"text": text}}
+
+
+def pr(number, text, checks="SUCCESS", pr_state="OPEN", age=200, draft=False):
+    return {
+        "number": number, "title": text, "body": "", "isDraft": draft, "state": pr_state, "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [{"__typename": "CheckRun", "name": "c", "status": "COMPLETED", "conclusion": checks,
+                               "completedAt": ts(age), "workflowName": "w"}],
+        "createdAt": ts(age).replace("+03:00", "+03:00"),
+    }
+
+
+PREVIEW_OK = "الوضع:        follow\nالانتظار:      لا أحد\nالخادم:       running\n"
+PREVIEW_QUEUE = (
+    "الوضع:        follow\nالانتظار:      تُثبَّت آليّاً\n"
+    "    1. wtree-a — 30 دقيقة (منذ 200 دقيقة)\n    2. wtree-b — 30 دقيقة (منذ 10 دقيقة)\nالإيقاع: x\n"
+)
+
+
+def by_case(rows, case):
+    return [r for r in rows if r.case == case]
+
+
+class TestSevenCases(unittest.TestCase):
+    def test_1_approved_not_pushed_over_30_minutes(self):
+        ev = [created("A"), state("A", "approved", 45, held_by="0701"), created("B"), state("B", "approved", 10)]
+        rows = by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 1)
+        self.assertEqual([r.ref for r in rows], ["A"])
+        self.assertEqual((rows[0].severity, rows[0].owner), ("yellow", "0701"))
+
+    def test_1_severity_turns_red_at_double_the_threshold(self):
+        ev = [created("A"), state("A", "approved", 61)]
+        self.assertEqual(by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 1)[0].severity, "red")
+
+    def test_2_pushed_not_merged_with_pr_states(self):
+        ev = [created("A"), state("A", "pushed", 300), created("B"), state("B", "pushed", 300),
+              created("C"), state("C", "pushed", 300), created("D"), state("D", "pushed", 60)]
+        prs = [pr(1, "فرع B W-B"), pr(2, "فرع C W-C", pr_state="MERGED")]
+        prs[0]["title"], prs[1]["title"] = "طلب B", "طلب C"
+        prs[0]["body"], prs[1]["body"] = "B", "C"
+        rows = {r.ref: r.action for r in by_case(fw.collect(ev, prs, PREVIEW_OK, NOW, TH), 2)}
+        self.assertEqual(set(rows), {"A", "B", "C"})  # D أحدث من العتبة
+        self.assertIn("افتحي", rows["A"])
+        self.assertIn("ادمجي", rows["B"])
+        self.assertIn("حدّثي الدفتر", rows["C"])
+
+    def test_3_red_and_pending_pull_requests_over_60_minutes(self):
+        prs = [pr(10, "W-20261001-001 أحمر", checks="FAILURE", age=90), pr(11, "معلّق", checks="", age=90),
+               pr(12, "أحمر حديث", checks="FAILURE", age=20), pr(13, "أخضر", age=500), pr(14, "مسودة", checks="FAILURE", age=500, draft=True)]
+        prs[1]["statusCheckRollup"] = [{"__typename": "CheckRun", "name": "c", "status": "IN_PROGRESS", "conclusion": "",
+                                       "startedAt": ts(90), "workflowName": "w"}]
+        rows = {r.ref: r for r in by_case(fw.collect([], prs, PREVIEW_OK, NOW, TH), 3)}
+        self.assertEqual(set(rows), {"#10 (W-20261001-001)", "#11"})
+        self.assertEqual(rows["#10 (W-20261001-001)"].severity, "red")
+        self.assertEqual(rows["#11"].severity, "yellow")
+
+    def test_4_routed_stale_or_not_full(self):
+        ev = [created("A"), state("A", "routed", 1500, held_by="0403"),
+              created("B", spec_tier="basic"), state("B", "routed", 30, held_by="0403"),
+              created("C"), state("C", "routed", 60, held_by="0403")]
+        rows = {r.ref: r for r in by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 4)}
+        self.assertEqual(set(rows), {"A", "B"})
+        self.assertEqual(rows["B"].owner, "0301")
+        self.assertIn("0403", rows["A"].owner)
+
+    def test_5_preview_queue_and_expired_pin(self):
+        rows = by_case(fw.collect([], [], PREVIEW_QUEUE, NOW, TH), 5)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0].ref, rows[0].age_min, rows[0].owner), ("wtree-a", 200, "0501"))
+        expired = by_case(fw.collect([], [], "الوضع:        pin w1 — منتهٍ\n", NOW, TH), 5)
+        self.assertEqual(expired[0].severity, "red")
+        self.assertEqual(by_case(fw.collect([], [], PREVIEW_OK, NOW, TH), 5), [])
+
+    def test_6_ready_without_evidence_pack(self):
+        ev = [created("A"), state("A", "ready_for_review", 120),
+              created("B"), state("B", "ready_for_review", 120), note("B", "(0502) أدلة 1234 في evidence/B/ ✔ 6 لقطات", 30),
+              created("C"), state("C", "ready_for_review", 120), note("C", "(0502) أدلة قديمة", 500),
+              created("D"), state("D", "ready_for_review", 20)]
+        refs = sorted(r.ref for r in by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 6))
+        self.assertEqual(refs, ["A", "C"])  # B فيها حزمة بعد الدخول، وC حزمتُها قبل الدخول، وD أحدث من العتبة
+
+    def test_7_silent_session_after_handoff(self):
+        ev = [created("A"), state("A", "routed", 90, held_by="0403"),
+              created("B"), state("B", "routed", 90, held_by="0403"), note("B", "(0403) بدأت", 40),
+              created("C"), state("C", "routed", 90, held_by="0403"), state("C", "in_progress", 40, by="0403"),
+              created("D"), state("D", "ready_for_review", 90),
+              created("E"), state("E", "routed", 10, held_by="0403")]
+        refs = sorted(r.ref for r in by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 7))
+        self.assertEqual(refs, ["A", "D"])
+        self.assertEqual({r.ref: r.owner for r in by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 7)}["D"], "0501")
+
+
+class TestUnmeasuredAndOutput(unittest.TestCase):
+    def test_missing_tools_print_unmeasured_not_healthy(self):
+        ev = [created("A"), state("A", "pushed", 300)]
+        rows = fw.collect(ev, None, None, NOW, TH)
+        self.assertEqual({r.case for r in rows if r.severity == "unmeasured"}, {2, 3, 5})
+        self.assertIn(fw.UNMEASURED, fw.render_text(rows))
+
+    def test_rows_are_sorted_by_severity_then_age(self):
+        ev = [created("A"), state("A", "approved", 45), created("B"), state("B", "approved", 500)]
+        sev = [r.severity for r in fw.collect(ev, [], PREVIEW_OK, NOW, TH)]
+        self.assertEqual(sev, sorted(sev, key=fw.SEVERITY_ORDER.get))
+
+    def test_html_is_arabic_rtl_and_escapes(self):
+        rows = [fw.Row("red", 1, "<b>x</b>", 5, "0701", "اعمل", "W-1")]
+        out = fw.render_html(rows, NOW)
+        self.assertIn("dir='rtl'", out)
+        self.assertIn("&lt;b&gt;", out)
+
+
+class TestReadOnly(unittest.TestCase):
+    def test_a_run_leaves_the_ledger_byte_identical(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            import json
+            ev = [created("A"), state("A", "approved", 45)]
+            path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in ev) + "\n", encoding="utf-8")
+            before = path.read_bytes()
+            old = os.environ.get("LEDGER_PATH")
+            os.environ["LEDGER_PATH"] = str(path)
+            try:
+                with contextlib.redirect_stdout(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")):
+                    code = fw.main(["--no-live", "--now", NOW.isoformat()])
+            finally:
+                if old is None:
+                    os.environ.pop("LEDGER_PATH")
+                else:
+                    os.environ["LEDGER_PATH"] = old
+            self.assertEqual(code, 0)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["events.jsonl"])
+
+    def test_unreadable_ledger_exits_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            path.write_text("{ليس json\n", encoding="utf-8")
+            os.environ["LEDGER_PATH"] = str(path)
+            try:
+                with contextlib.redirect_stdout(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")):
+                    self.assertEqual(fw.main(["--no-live"]), 1)
+            finally:
+                os.environ.pop("LEDGER_PATH")
+
+
+if __name__ == "__main__":
+    unittest.main()

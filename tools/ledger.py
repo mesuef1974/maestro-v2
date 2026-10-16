@@ -3,11 +3,8 @@
 
 اللوحةُ عرضٌ مُولَّد؛ لا يُحرَّر يدويّاً. حمايةُ PDPPL في الكود: لا نصَّ خامّاً طويلاً ولا أرقامَ هويّةٍ ولا بريداً في أيّ حقل.
 
-    python ledger.py add --source owner --origin owner-order --owner-order "«نصُّ أمره الحرفيّ»" --type ui --problem "..." --impact "..." --accept "..." --start 2026-09-29T08:00 --priority P1 [--files a b] [--urgent]
-    python ledger.py add --source intake --origin defect --parent W-20261012-001 [--evidence مسار:سطر] ...
+    python ledger.py add --source owner --type ui --problem "..." --impact "..." --accept "..." --start 2026-09-29T08:00 --priority P1 [--files a b] [--urgent]
     (زمنُ البدء والأولويّة إلزاميّان — قرارُ المالك 2026-09-28)
-    (الأصلُ إلزاميّ — D-422م: نقاشٌ أو عصفٌ أو حكمٌ استشاريّ أو شكوى يرويها المالك لا تصير بطاقةً إلا بنصّ أمره
-     الحرفيّ بإنشائها، موجوداً في owner_confirmations.md خلال 7 أيام؛ يُسجَّل قبلها بـrecord_owner_confirmation.py)
     python ledger.py move W-20260926-001 in_progress
     python ledger.py list [--state ready_for_review]
     python ledger.py show W-20260926-001
@@ -126,90 +123,9 @@ def new_id(events: list[dict], today: str | None = None) -> str:
     return f"W-{day}-{n:03d}"
 
 
-# حارسُ الأصل (D-422م، أمر المالك 2026-10-12 «نعم وبقوة» بعد D-421م): كلُّ بطاقةٍ جديدةٍ في الدفتر الحقيقيّ تُعلن أصلَها.
-# ما أصلُه نقاشٌ أو عصفٌ أو حكمٌ استشاريّ أو شكوى يرويها المالك أو أمرُه — لا يُنشأ إلا بنصّ أمره الحرفيّ بإنشائه،
-# موجوداً في owner_confirmations.md خلال 7 أيام. والعيبُ المؤكَّد يُنشأ بلا أمرٍ لكن بأصلٍ يُتتبَّع (بطاقةٌ أمٌّ أو مسار:سطر).
-ORIGINS = ("owner-order", "discussion", "defect", "automated")
-OWNER_ORIGINS = {"owner-order", "discussion"}
-OWNER_SOURCES = {"owner", "advisor"}
-AUTOMATED_SOURCES = {"kpi_guard", "alert", "repo_keeper"}
-DISCUSSION_MARKERS = re.compile(r"عصف|نقاش|مناقش|ناقش|استشار|brainstorm", re.IGNORECASE)
-OWNER_ORDER_MIN = 8
-OWNER_ORDER_MAX_AGE = timedelta(days=7)
-CONFIRMATIONS = ROOT / "owner_confirmations.md"
-_CONF_TS = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}):(\d{2}))?")
-EVIDENCE_RE = re.compile(r"^[\w./\\-]+:\d+$")
-
-
-def _norm_quote(value: str) -> str:
-    return re.sub(r"\s+", " ", value.replace("«", "").replace("»", "").replace("ـ", "")).strip()
-
-
-def find_owner_order(quote: str, confirmations_path=None, now: datetime | None = None) -> str:
-    """زمنُ أحدث سطرٍ في owner_confirmations.md فيه نصُّ أمر المالك حرفيّاً، خلال 7 أيام؛ وإلا يُرفض."""
-    q = _norm_quote(quote)
-    if len(q) < OWNER_ORDER_MIN:
-        raise LedgerError(f"--owner-order قصيرٌ ({len(q)} أحرف): انقل من قول المالك ما يدلّ على الإنشاء نفسه، {OWNER_ORDER_MIN} أحرف فأكثر")
-    f = Path(confirmations_path or CONFIRMATIONS)
-    lines = f.read_text(encoding="utf-8").splitlines() if f.is_file() else []
-    now = now or datetime.now(DOHA)
-    stale = None
-    for line in reversed(lines):
-        m = _CONF_TS.match(line)
-        if not m or q not in _norm_quote(line):
-            continue
-        ts = datetime.fromisoformat(f"{m.group(1)}T{int(m.group(2) or 0):02d}:{m.group(3) or '00'}").replace(tzinfo=DOHA)
-        if now - ts <= OWNER_ORDER_MAX_AGE:
-            return ts.isoformat(timespec="minutes")
-        stale = stale or ts
-    if stale:
-        raise LedgerError(f"نصُّ أمر المالك موجودٌ لكنّه أقدم من 7 أيام ({stale:%Y-%m-%d}) — اطلب قوله من جديد")
-    raise LedgerError("نصُّ أمر المالك غيرُ موجودٍ حرفيّاً في owner_confirmations.md — سجّل قولَه المباشرَ أوّلاً بـrecord_owner_confirmation.py؛ "
-                      "ورسالةُ جلسةٍ أو حكمُها ليست أمرَه (D-421م، D-422م)")
-
-
-def check_origin(source: str, origin: str | None, owner_order: str, parent: str, evidence: str, texts: list[str],
-                 events: list[dict], confirmations_path=None, now: datetime | None = None) -> dict:
-    """يعيد حقولَ الأصل لتُحفظ في البطاقة، أو يرفض (D-422م)."""
-    if origin not in ORIGINS:
-        raise LedgerError(f"--origin إلزاميّ (D-422م)، واحدٌ من {', '.join(ORIGINS)}: أمرُ المالك، نقاشٌ أو عصفٌ أو حكمٌ استشاريّ، "
-                          "عيبٌ مؤكَّد في الشيفرة، أداةٌ آليّة")
-    if source in OWNER_SOURCES and origin not in OWNER_ORIGINS:
-        raise LedgerError(f"المصدر «{source}» أصلُه قولُ المالك أو رأيٌ يُعرض عليه: --origin owner-order أو discussion مع --owner-order")
-    if origin == "automated" and source not in AUTOMATED_SOURCES:
-        raise LedgerError(f"--origin automated لمصادر الأدوات الآليّة وحدها ({', '.join(sorted(AUTOMATED_SOURCES))})")
-    if origin not in OWNER_ORIGINS and any(DISCUSSION_MARKERS.search(t or "") for t in texts):
-        raise LedgerError("نصُّ البطاقة يذكر عصفاً أو نقاشاً أو استشارة — لا تصير بطاقةً إلا بأمر المالك الصريح: "
-                          "--origin discussion --owner-order «نصُّه» (D-421م: هذه مخالفةٌ سُجّلت مرّتين)")
-    out: dict = {"origin": origin}
-    if origin in OWNER_ORIGINS:
-        if not owner_order:
-            raise LedgerError("هذا الأصلُ يلزمه --owner-order «نصُّ أمر المالك الحرفيّ بإنشاء البطاقة»")
-        out["owner_order"] = check_text("owner_order", owner_order)
-        out["owner_order_at"] = find_owner_order(owner_order, confirmations_path, now)
-    elif origin == "defect":
-        if not (parent or evidence):
-            raise LedgerError("العيبُ المؤكَّد يلزمه --parent <البطاقةُ التي اكتُشف أثناءها> أو --evidence <مسار:سطر> — وإلا فأصلُه ليس عيباً")
-        if parent:
-            if parent not in {e["id"] for e in events if e["kind"] == "created"}:
-                raise LedgerError(f"--parent «{parent}» ليست بطاقةً في الدفتر")
-            out["parent"] = parent
-        if evidence:
-            if not EVIDENCE_RE.match(evidence):
-                raise LedgerError("--evidence بصيغة مسار:سطر (مثل behavior/views.py:309)")
-            out["evidence"] = evidence
-    return out
-
-
-def _is_real_ledger(path) -> bool:
-    return ledger_path(path).resolve() == (ROOT / "ledger" / "events.jsonl").resolve()
-
-
 def add_item(source: str, problem_type: str, problem: str, impact: str, accept: str,
              files: list[str] | None = None, urgent: bool = False, path=None, scores: dict | None = None,
-             start: str = "", priority: str = "", held_by: str = "", origin: str | None = None,
-             owner_order: str = "", parent: str = "", evidence: str = "", confirmations_path=None,
-             enforce_origin: bool | None = None) -> str:
+             start: str = "", priority: str = "", held_by: str = "") -> str:
     if source not in SOURCES:
         raise LedgerError(f"مصدرٌ غيرُ معروف: {source} (المسموح: {', '.join(SOURCES)})")
     if priority not in PRIORITIES:
@@ -225,10 +141,6 @@ def add_item(source: str, problem_type: str, problem: str, impact: str, accept: 
     if held_by and held_by != "-":
         data["held_by"] = check_session(held_by)
     events = load_events(path)
-    # الحارسُ على الدفتر الحقيقيّ دائماً مهما كان المستدعي؛ ودفاترُ الاختبار المؤقّتة تطلبه صراحةً
-    if enforce_origin if enforce_origin is not None else _is_real_ledger(path):
-        data.update(check_origin(source, origin, owner_order, parent, evidence, [problem, impact, accept], events,
-                                 confirmations_path))
     item_id = new_id(events)
     append_event("created", item_id, data, path)
     return item_id
@@ -539,6 +451,47 @@ def check_wip(items: dict, item_id: str, by: str | None, waive: str | None) -> s
     raise LedgerError(f"للجلسة {by} بطاقةٌ جاريةٌ أخرى: {others[0]['id']} — أنهِها أو انقلها إلى ready_for_review قبل بدء {item_id} (أو --waive-wip \"السبب\"، أو أولويّة P0)")
 
 
+#: حدُّ العمل غير المنشور لكل دور (W-20261014-011): إنذارٌ فقط؛ يُضبط بـROLE_WIP_LIMIT وقلبُه إلى رفضٍ بـROLE_WIP_ENFORCE=1 بقرارٍ موثَّق.
+ROLE_WIP_LIMIT = 3
+#: approved يخرج من العدّ: صار عند 0501 للدفع (تسليم، توضيح 0101 في 2026-10-14).
+ROLE_WIP_STATES = {"in_progress", "ready_for_review", "pushed", "merged"}
+#: الجلسات الشقيقة بادئةً واحدةً (مرنة 04SS)؛ وما عداها دورٌ منفردٌ هو الجلسة نفسها.
+ROLE_PREFIXES = ("04",)
+
+
+def role_of(session: str) -> str:
+    return next((p for p in ROLE_PREFIXES if session.startswith(p)), session)
+
+
+def role_unpublished(items: dict, role: str, exclude: str | None = None) -> list[dict]:
+    """بطاقاتُ الدور غيرُ المنشورة بحسب حاجزها (held_by)؛ نقلُ الحجز لجلسةٍ أخرى يُخرجها من العدّ."""
+    out = [i for i in items.values()
+           if i["id"] != exclude and i.get("state") in ROLE_WIP_STATES and i.get("held_by") and role_of(i["held_by"]) == role]
+    return sorted(out, key=lambda i: i.get("state_ts", ""))
+
+
+def role_wip_limit() -> int:
+    try:
+        return int(os.environ.get("ROLE_WIP_LIMIT", ROLE_WIP_LIMIT))
+    except ValueError:
+        return ROLE_WIP_LIMIT
+
+
+def check_role_wip(items: dict, item_id: str, by: str | None) -> str | None:
+    """نصُّ الإنذار إن كان للدور فوق الحدّ بطاقاتٌ غيرُ منشورة؛ P0 معفى؛ لا يرفض إلا بـROLE_WIP_ENFORCE=1."""
+    if not by or items[item_id].get("priority") == "P0":
+        return None
+    others = role_unpublished(items, role_of(by), exclude=item_id)
+    if len(others) < role_wip_limit():
+        return None
+    ids = "، ".join(f"{i['id']} [{i['state']}]" for i in others)
+    msg = (f"إنذار العمل الجاري للدور {role_of(by)}: عندكم {len(others)} بطاقاتٍ غيرِ منشورة (الحدّ {role_wip_limit()}) "
+           f"قبل بدء {item_id} — {ids}. انشروا أو سلّموا (انقلوا الحجز) قبل التوسّع.")
+    if os.environ.get("ROLE_WIP_ENFORCE") == "1":
+        raise LedgerError(msg)
+    return msg
+
+
 def check_holder_on_route(item: dict, state: str, held_by: str | None) -> None:
     """D-293م: لا توجيهَ (routed) بلا حامل — معاملٌ صريحٌ أو حاملٌ سابق؛ و«-» عند routed تُرفض لأنها تُصفّر الحامل."""
     if state != "routed":
@@ -550,8 +503,34 @@ def check_holder_on_route(item: dict, state: str, held_by: str | None) -> None:
     raise LedgerError("routed يلزمه --held-by <رقم الجلسة> (لا حاملَ سابقاً للبطاقة): البطاقةُ الموجَّهةُ بلا حامل تبقى بلا مسؤول (D-293م)")
 
 
+def _run_preflight(card_id: str, repo: str) -> tuple[int, str]:
+    import subprocess
+    r = subprocess.run([sys.executable, str(Path(__file__).with_name("pr_open_prep.py")), card_id, "--repo", repo, "--preflight"],
+                       capture_output=True, text=True, encoding="utf-8", timeout=180)
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
+def check_preflight_ready(item: dict, state: str, repo: str | None, waive: str | None, runner=None) -> str | None:
+    """الفحصُ المسبق قبل «جاهزٌ للمعاينة» (W-20261014-022): يمنع إعادة الاعتماد من أساسٍ غير مدفوعٍ أو متأخّر أو mypy مختلف.
+    مع --preflight-repo يُشغَّل pr_open_prep --preflight ويُرفض الانتقال عند الفشل؛ بدونه إنذارٌ (PREFLIGHT_ENFORCE=1 يجعله رفضاً).
+    P0 معفى؛ والاستثناءُ المسجَّل --waive-preflight "السبب" يُدوَّن في ملاحظة."""
+    if state != "ready_for_review" or item.get("priority") == "P0":
+        return None
+    if waive:
+        return f"استثناءُ الفحص المسبق: {waive}"
+    if not repo:
+        msg = "لم يُشغَّل الفحصُ المسبق قبل «جاهزٌ للمعاينة» — مرِّر --preflight-repo <شجرتك> (أو --waive-preflight \"السبب\")"
+        if os.environ.get("PREFLIGHT_ENFORCE") == "1":
+            raise LedgerError(msg)
+        return msg
+    code, out = (runner or _run_preflight)(item["id"], repo)
+    if code != 0:
+        raise LedgerError(f"فشل الفحصُ المسبق (رمز {code}) — أصلِح ثمّ أعِد:{chr(10)}{out}")
+    return None
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
-         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None) -> None:
+         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None, preflight_repo: str | None = None, waive_preflight: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
     if held_by is not None and held_by != "-":
@@ -574,6 +553,14 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         wip_note = check_wip(items, item_id, by, waive_wip)
         if wip_note:
             note = f"{note + ' — ' if note else ''}{wip_note}"
+        role_note = check_role_wip(items, item_id, by)
+        if role_note:
+            print(role_note, file=sys.stderr)
+            note = f"{note + ' — ' if note else ''}{role_note}"
+    pre_note = check_preflight_ready(items[item_id], state, preflight_repo, waive_preflight)
+    if pre_note:
+        print(pre_note, file=sys.stderr)
+        note = f"{note + ' — ' if note else ''}{pre_note}"
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
@@ -833,6 +820,37 @@ def check_main_merge(approved: str, new: str, repo: str | None = None) -> list[s
     return changed
 
 
+def _patch_id(rev: str, repo: str | None = None) -> str:
+    """بصمةُ عملِ الفرع وحدَه: `git patch-id --stable` لـ`origin/main...rev` (فرقٌ عن أساسه المشترك مع main)."""
+    cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    diff = _git(["diff", "--no-renames", f"origin/main...{rev}"], repo)
+    if not diff:
+        return ""
+    out = subprocess.run(["git", "patch-id", "--stable"], input=diff + chr(10), capture_output=True, encoding="utf-8",
+                         errors="replace", cwd=cwd, check=False).stdout.split()
+    return out[0] if out else ""
+
+
+#: مساراتُ صلاحيّاتٍ وأمنٍ وهجراتٍ لا يُعفى فيها أيُّ فرقٍ (كما check_red_fix).
+SENSITIVE_PATH_PARTS = ("permission", "auth", "security", "settings", "middleware", "capabilit", "/migrations/")
+
+
+def check_patch_id(approved: str, new: str, repo: str | None = None) -> list[str]:
+    """W-20261014-006: رأسان لهما بصمةُ patch-id مطابقةٌ تماماً لعمل الفرع عن main (أعيد أساسُه أو دُمج فيه main بلا تغيير
+    لعمله). يرفض أيَّ فرقٍ في العمل نفسِه، وأيَّ ملفٍّ حاكمٍ أو هجرةٍ أو صلاحيّاتٍ/أمنٍ في الفرق. يعيد ملفّات الفرع."""
+    pa, pn = _patch_id(approved, repo), _patch_id(new, repo)
+    if not pa or not pn:
+        raise LedgerError("فرقٌ فارغٌ عن origin/main (fetch أوّلاً؟) — لا بصمةَ تقارَن")
+    if pa != pn:
+        raise LedgerError("بصمةُ patch-id تختلف: عملُ الفرع تغيّر عن المعتمَد — يحتاج اعتماداً جديداً")
+    changed = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{new}"], repo).splitlines() if f]
+    bad = governing_files(changed) + [f for f in changed if "/migrations/" in f or f.startswith("migrations/")
+                                       or any(k in f.lower() for k in SENSITIVE_PATH_PARTS)]
+    if bad:
+        raise LedgerError(f"ملفّاتٌ حاكمةٌ أو هجراتٌ أو صلاحيّاتٌ/أمنٌ في العمل تُعرض على المالك: {sorted(set(bad))[:5]}")
+    return changed
+
+
 WAIVER_BY = {"0501"}
 
 #: ملفّاتٌ حاكمةٌ لا يُستثنى تعديلُها بـwaive-head «وثائق» (W-20261003-040، مواصفة 0103): تُحمَّل في كلّ جلسةٍ أو بالمسار فتوجّه السلوك.
@@ -931,6 +949,9 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     if kind == "main-merge":
         check_main_merge(item["approved_head"], new_head, repo)
         reason = f"دمجُ main فقط (تحقّق آليّ) — {reason}"
+    elif kind == "patch-id":
+        check_patch_id(item["approved_head"], new_head, repo)
+        reason = f"تطابقُ patch-id تامٌّ لعمل الفرع بعد دمج main/إعادة الأساس (تحقّق آليّ، W-20261014-006) — {reason}"
     elif kind == "tests-only":
         check_tests_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ اختباراتٍ فقط بلا حراسةٍ أمنيّة (تحقّق آليّ) — {reason}"
@@ -951,7 +972,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only أو red-fix")
+        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only أو red-fix أو patch-id")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -1025,15 +1046,13 @@ def main() -> None:
     a.add_argument("--problem", required=True); a.add_argument("--impact", required=True); a.add_argument("--accept", required=True)
     a.add_argument("--files", nargs="*", default=[]); a.add_argument("--urgent", action="store_true")
     a.add_argument("--start", required=True, help="زمنُ البدء الفعليّ ISO بتوقيت الدوحة"); a.add_argument("--priority", required=True, choices=PRIORITIES); a.add_argument("--held-by")
-    a.add_argument("--origin", default=None, choices=ORIGINS, help="أصلُ البطاقة (D-422م): أمرُ المالك، نقاش/عصف/حكمٌ استشاريّ، عيبٌ مؤكَّد، أداةٌ آليّة")
-    a.add_argument("--owner-order", default="", help="لـowner-order وdiscussion: نصُّ أمر المالك الحرفيّ بإنشائها كما في owner_confirmations.md")
-    a.add_argument("--parent", default="", help="لـdefect: البطاقةُ التي اكتُشف العيبُ أثناءها")
-    a.add_argument("--evidence", default="", help="لـdefect: موضعُ العيب مسار:سطر")
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)؛ ولـpushed: يُقارَن بالبعيد")
     m.add_argument("--branch", help="لـpushed: الفرعُ المتحقَّق من وجوده على البعيد"); m.add_argument("--waive-remote-check", help="استثناءٌ مسجَّل لفحص البعيد (السبب)")
     m.add_argument("--held-by", help="الجلسةُ الحاجزة للبطاقة؛ «-» للتصفير")
     m.add_argument("--waive-spec", help="استثناءٌ مسجَّل لبوّابة المواصفة الكاملة (السبب)")
     m.add_argument("--waive-wip", help="استثناءٌ مسجَّل لحدِّ العمل الجاري: بطاقةٌ واحدةٌ جاريةٌ للجلسة (السبب)")
+    m.add_argument("--preflight-repo", help="لـready_for_review: مجلّدُ شجرتك لتشغيل الفحص المسبق (pr_open_prep --preflight)")
+    m.add_argument("--waive-preflight", help="استثناءٌ مسجَّل للفحص المسبق (السبب)")
     sp = sub.add_parser("spec", help="يضبط حقولَ المواصفة الكاملة")
     sp.add_argument("id"); sp.add_argument("--tier", choices=SPEC_TIERS); sp.add_argument("--ref"); sp.add_argument("--roles-states")
     sp.add_argument("--allowed-diffs"); sp.add_argument("--assumption", action="append"); sp.add_argument("--source-of-truth")
@@ -1050,7 +1069,7 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only", "red-fix"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only", "red-fix", "patch-id"])
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
@@ -1064,11 +1083,10 @@ def main() -> None:
     try:
         if args.cmd == "add":
             print(add_item(args.source, args.type, args.problem, args.impact, args.accept, args.files, args.urgent,
-                           start=args.start, priority=args.priority, held_by=args.held_by or "", origin=args.origin,
-                           owner_order=args.owner_order, parent=args.parent, evidence=args.evidence))
+                           start=args.start, priority=args.priority, held_by=args.held_by or ""))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
-                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip); print("ok")
+                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight); print("ok")
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
                      args.files_allowed, args.files_forbidden, args.accept, args.step, args.by); print("ok")
@@ -1104,7 +1122,7 @@ def main() -> None:
             if args.cmd == "show":
                 it = items.get(args.id)
                 if args.brief:
-                    print("\n".join(brief_lines(it, args.id)))
+                    print(chr(10).join(brief_lines(it, args.id)))
                     return
                 print(json.dumps(it, ensure_ascii=False, indent=2))
                 if it:
