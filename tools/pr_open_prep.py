@@ -31,7 +31,8 @@ DOHA = ZoneInfo("Asia/Qatar")
 #: ما يدلّ في ملاحظة الدفتر على اعتمادٍ أو تنازلٍ بالرأس (يطابق ما يقرؤه approval_check).
 APPROVAL_NOTE = re.compile(r"اعتمد|اعتماد")
 WAIVER_NOTE = re.compile(r"^(\(\d{4}\)\s*)?استثناءُ رأس")
-LINE_TEMPLATE = "اعتُمد من المالك على 8500 — {date} — الرأس {head8}"
+#: (W-20261016-018) السطرُ يربط رمزَ البطاقة والرأسَ معاً؛ يولّده الأمرُ نفسُه ولا يُكتب يدوياً.
+LINE_TEMPLATE = "اعتُمد من المالك على 8500 — {date} — {card} — الرأس {head8}"
 
 
 def run(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
@@ -240,7 +241,7 @@ def main() -> int:
 
     card = ledger_card(a.card)
     date, source = approval_date(card)
-    line = LINE_TEMPLATE.format(date=date, head8=h8)
+    line = LINE_TEMPLATE.format(date=date, card=a.card, head8=h8)
     if a.line_only:
         print(line)
         return 0
