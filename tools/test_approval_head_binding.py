@@ -63,6 +63,7 @@ def test_ui_card_without_evidence_fails_with_the_documented_message(monkeypatch,
     import visual_gate
 
     monkeypatch.setattr(ac, "ui_touched", lambda files, head: True)
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, '{"state": "captured"}'))  # لا يعتمد على بيانات الدفتر الحيّ
     monkeypatch.setattr(visual_gate, "EVIDENCE_DIR", tmp_path)
     msg = ac.visual_problem("W-20261009-007", "abcd1234")
     assert msg and "لا أدلة بصرية للرأس" in msg
@@ -115,3 +116,11 @@ def test_unknown_head_falls_back_to_ledger_files(monkeypatch):
     assert ac.ui_touched(["templates/a.html"], "abcd1234") is True
     assert ac.ui_touched(["operations/x.py"], "abcd1234") is False
     assert ac.ui_touched(["templates/a.html"], None) is True
+
+
+def test_a_card_missing_from_the_ledger_is_treated_as_no_card(monkeypatch):
+    """`ledger.py show` لبطاقةٍ غيرِ موجودة يطبع null: لا AttributeError في أيٍّ من الدوال الثلاث (W-20261017-020)."""
+    monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (0, "null\n"))
+    assert ac.card_evidence("W-20990101-999") == []
+    assert ac.visual_problem("W-20990101-999", "abcd1234") is None
+    assert ac.waiver_carry("W-20990101-999", "abcd1234", "W-20990101-999") == []
