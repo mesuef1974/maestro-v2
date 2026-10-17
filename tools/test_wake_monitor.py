@@ -67,3 +67,41 @@ def test_cursor_makes_second_run_idempotent():
     ev = [created("W-20261016-001"), state("W-20261016-001", "routed", NEW, held_by="0201")]
     first = wm.plan(ev, CUR, DIR, set(), verify=ok)
     assert wm.plan(ev, first.cursor, DIR, set(), verify=ok).wakes == {}
+
+
+def _routed(holder, n=1):
+    ev = []
+    for k in range(n):
+        i = f"W-20261016-{k + 1:03d}"
+        ev += [created(i), state(i, "routed", NEW, held_by=holder)]
+    return ev
+
+
+def test_test_channel_wakes_only_the_four_sessions():
+    ch = wm.TEST_CHANNEL
+    assert ch == {"0701", "0702", "0103", "0102"}
+    dirs = {**DIR, "0701": "local_a", "0403": "local_b"}
+    ok_plan = wm.plan(_routed("0701"), CUR, dirs, set(), verify=ok, channel=ch)
+    assert list(ok_plan.wakes) == ["0701"]
+    out = wm.plan(_routed("0403"), CUR, dirs, set(), verify=ok, channel=ch)
+    assert out.wakes == {} and "خارج قناة التجربة" in out.skipped[0][1]
+
+
+def test_counter_guard_blocks_above_130():
+    dirs = {"0701": "local_a", "0702": "local_b"}
+    ev = _routed("0701") + [
+        created("W-20261016-009"),
+        state("W-20261016-009", "routed", NEW, held_by="0702"),
+    ]
+    assert wm.plan(ev, CUR, dirs, set(), verify=ok, sent=128).wakes  # 128 + 2 = 130 مسموح
+    p = wm.plan(ev, CUR, dirs, set(), verify=ok, sent=129)  # 129 + 2 = 131
+    assert p.wakes == {} and "msg_counter" in p.halted
+    assert wm.plan(_routed("0701"), CUR, dirs, set(), verify=ok, sent=130).halted
+
+
+def test_sender_count_reads_file_and_missing_file_closes_the_guard(tmp_path):
+    f = tmp_path / "c.json"
+    f.write_text('{"sessions": {"0701": {"count": 47}}}', encoding="utf-8")
+    assert wm.sender_count("0701", f) == 47
+    assert wm.sender_count("0999", f) == 0
+    assert wm.sender_count("0701", tmp_path / "none.json") == wm.COUNTER_GUARD

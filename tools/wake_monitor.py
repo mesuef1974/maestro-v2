@@ -32,6 +32,9 @@ CURSOR = ROOT / "wake_cursor.json"
 LOG = ROOT / "wake_log.jsonl"
 MAX_BATCH = 20
 MAX_LIVE = 14
+TEST_CHANNEL = frozenset({"0701", "0702", "0103", "0102"})  # أسبوعُ التجربة (W-20261017-007) قبل تعميم الإرسال
+COUNTER_GUARD = 130  # فوقها (من 150) لا إرسال ويُبلَّغ 0101
+COUNTER = ROOT / "msg_counter.json"
 LIVE_WINDOW_MS = 120 * 60 * 1000  # «حيّة» = نشاطٌ خلال ساعتين
 SESSION_NUM = re.compile(r"^\d{4}")
 PAYLOAD = "{id} {state} — اقرأ: python tools/ledger.py show {id}"
@@ -85,8 +88,17 @@ def ground_truth_ok(item_id: str, state: str) -> bool:
     return r.returncode == 0 and (f"الحالة: {state}" in r.stdout or f'"state": "{state}"' in r.stdout)
 
 
-def plan(events, cursor, directory, live, verify=ground_truth_ok) -> WakePlan:
-    """directory: رقم←معرّف؛ live: أرقامُ الجلسات الحيّة. دالّةٌ نقيّةٌ إلّا ما يفعله verify."""
+def sender_count(sender: str, path: Path = COUNTER) -> int:
+    """عدّادُ رسائل المرسِل من msg_counter.json؛ ملفٌّ غائبٌ أو تالفٌ يُعدّ حارساً مغلقاً (لا نفترض الصفر)."""
+    try:
+        return int(json.loads(path.read_text(encoding="utf-8"))["sessions"].get(sender, {}).get("count", 0))
+    except (OSError, ValueError, KeyError, TypeError):
+        return COUNTER_GUARD
+
+
+def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, sent=0) -> WakePlan:
+    """directory: رقم←معرّف؛ live: أرقامُ الجلسات الحيّة؛ channel: الحاملون المسموح إيقاظُهم (None = الكلّ)؛
+    sent: ما أرسله المرسِلُ حتى الآن. دالّةٌ نقيّةٌ إلّا ما يفعله verify."""
     p = WakePlan()
     p.cursor = events[-1]["ts"] if events else cursor
     items = ledger.reduce_state(events)
@@ -100,6 +112,9 @@ def plan(events, cursor, directory, live, verify=ground_truth_ok) -> WakePlan:
         if not holder or not SESSION_NUM.match(holder) or it.get("state") != state:
             p.skipped.append((item_id, "لا حاملَ فعليّاً أو الحالةُ تغيّرت بعدُ"))
             continue
+        if channel is not None and holder not in channel:
+            p.skipped.append((item_id, f"{holder} خارج قناة التجربة"))
+            continue
         if holder not in directory:
             p.skipped.append((item_id, f"لا معرّفَ للجلسة {holder}"))
             continue
@@ -107,7 +122,10 @@ def plan(events, cursor, directory, live, verify=ground_truth_ok) -> WakePlan:
             p.skipped.append((item_id, "فشل ground_truth: لا إرسال"))
             continue
         p.wakes.setdefault(holder, []).append((item_id, state))
-    if len(set(p.wakes) | set(live)) > MAX_LIVE:
+    if p.wakes and sent + len(p.wakes) > COUNTER_GUARD:
+        p.halted = f"حارس msg_counter: {sent} + {len(p.wakes)} رسالةً يتجاوز {COUNTER_GUARD} من 150: لا إرسال، أبلغ 0101"
+        p.wakes = {}
+    elif len(set(p.wakes) | set(live)) > MAX_LIVE:
         p.halted = f"الجلساتُ الحيّةُ مع الموقَظين تتجاوز {MAX_LIVE}: لا إيقاظ"
         p.wakes = {}
     return p
@@ -127,16 +145,23 @@ def message_for(session: str, rows: list[tuple[str, str]]) -> str:
 def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--commit", action="store_true")
+    ap.add_argument("--commit", action="store_true", help="يقدّم المؤشّر ويسجّل wake_log ويزيد عدّاد المرسِل بعدد الرسائل")
+    ap.add_argument("--sender", default="0701", help="الجلسة التي ترسل فعلاً (عدّادها هو المحروس)")
+    ap.add_argument("--all", action="store_true", help="يعمّم على كلّ الحاملين بدل قناة التجربة")
+    ap.add_argument("--json", action="store_true", help="خطّةٌ آليّة: قائمة {to,session_id,message}")
     a = ap.parse_args(argv)
     import session_directory as sd
 
     events = read_events(EVENTS)
     cursor = json.loads(CURSOR.read_text(encoding="utf-8"))["ts"] if CURSOR.is_file() else (events[-1]["ts"] if events else "")
     directory = {n: e["id"] for n, e in sd.entries().items()}
-    p = plan(events, cursor, directory, live_sessions())
-    for num, rows in sorted(p.wakes.items()):
-        print(f"إلى {num} ({directory[num]}):\n{message_for(num, rows)}")
+    p = plan(events, cursor, directory, live_sessions(), channel=None if a.all else TEST_CHANNEL, sent=sender_count(a.sender))
+    if a.json:
+        print(json.dumps([{"to": n, "session_id": directory[n], "message": message_for(n, r)} for n, r in sorted(p.wakes.items())],
+                         ensure_ascii=False))
+    else:
+        for num, rows in sorted(p.wakes.items()):
+            print(f"إلى {num} ({directory[num]}):\n{message_for(num, rows)}")
     for item_id, why in p.skipped:
         print(f"تخطٍّ {item_id}: {why}")
     if p.halted:
@@ -148,6 +173,8 @@ def main(argv=None) -> int:
             fh.write(json.dumps(
                 {"ts": ledger.now_doha(), "wakes": {k: [i for i, _ in v] for k, v in p.wakes.items()},
                  "skipped": p.skipped, "halted": p.halted}, ensure_ascii=False) + "\n")
+        if p.wakes:
+            subprocess.run([sys.executable, str(HERE / "msg_counter.py"), "add", a.sender, str(len(p.wakes))], check=False)  # noqa: S603
         if not p.halted:
             CURSOR.write_text(json.dumps({"ts": p.cursor}), encoding="utf-8")
     return 0
