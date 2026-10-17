@@ -359,7 +359,8 @@ class TestReadOnly(unittest.TestCase):
     def test_unreadable_ledger_exits_one(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "events.jsonl"
-            path.write_text("{ليس json\n", encoding="utf-8")
+            # بايتاتٌ لا تُفكّ بـUTF-8: دفترٌ غيرُ مقروء. (السطرُ التالف وحده يُهمَل ويُحصى: الاختبار التالي)
+            path.write_bytes(b"\xff\xfe\x00")
             os.environ["LEDGER_PATH"] = str(path)
             try:
                 with contextlib.redirect_stdout(
@@ -368,6 +369,29 @@ class TestReadOnly(unittest.TestCase):
                     self.assertEqual(fw.main(["--no-live"]), 1)
             finally:
                 os.environ.pop("LEDGER_PATH")
+
+    def test_one_corrupt_line_prints_unmeasured_and_exits_two(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            import json
+
+            good = json.dumps(created("A"), ensure_ascii=False)
+            path.write_text(good + "\n{ليس json\n", encoding="utf-8")
+            old = os.environ.get("LEDGER_PATH")
+            os.environ["LEDGER_PATH"] = str(path)
+            raw = io.BytesIO()
+            buf = io.TextIOWrapper(raw, encoding="utf-8")
+            try:
+                with contextlib.redirect_stdout(buf):
+                    code = fw.main(["--no-live", "--now", NOW.isoformat()])
+            finally:
+                if old is None:
+                    os.environ.pop("LEDGER_PATH")
+                else:
+                    os.environ["LEDGER_PATH"] = old
+            self.assertEqual(code, 2)
+            buf.flush()
+            self.assertIn("غير مقيس: 1 سطراً تالفاً", raw.getvalue().decode("utf-8"))
 
 
 if __name__ == "__main__":
