@@ -208,6 +208,61 @@ def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) ->
     return None if ok else msg
 
 
+def _waiver_checker(txt: str):
+    """اسمُ فاحصِ ledger للإعفاء حسب نصّ ملاحظته؛ None إن لم يكن من الأنواع المحمولة."""
+    if "دمجُ main فقط (تحقّق آليّ)" in txt:
+        return "check_main_merge"
+    if "سلسلةُ إصلاح tests/ ودمج main فقط (تحقّق آليّ" in txt:
+        return "check_tests_main_chain"
+    return None
+
+
+def waiver_carry(card: str | None, pr_head: str | None, target: str, depth: int = 6) -> list[tuple[str, str]]:
+    """D-154م وقرار المالك 2026-10-17 (W-20261017-012): يحمل اعتمادَ المالك المباشر على رأسٍ معتمَدٍ سابقٍ إلى رأسٍ لاحقٍ
+    بتنازلٍ من 0501 في دفتر البطاقة (`waive-head --kind main-merge` أو `tests-main-chain`) على الرأس نفسه، مع إعادة تحقّقٍ
+    آليّةٍ من الفرق بفاحص ledger المطابق؛ وتُتتبَّع حلقاتُ التنازلات المتتالية (حتى depth) إلى رأسٍ له اعتمادٌ مباشر.
+    لا يثبت شيئاً وحده؛ وأيُّ فشلٍ يُرجع قائمةً فارغة فيبقى الحكمُ كما كان."""
+    if not card or not pr_head:
+        return []
+    code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
+    try:
+        d, _ = json.JSONDecoder().raw_decode(out.lstrip())
+    except ValueError:
+        return []
+    waivers = []
+    for n in d.get("notes", []):
+        txt = re.sub(r"^\(\d{4}\)\s*", "", str(n.get("note", n.get("text", ""))))
+        if not txt.startswith("استثناءُ رأسٍ تافه بتوقيع 0501:"):
+            continue
+        m = re.search(r"([0-9a-f]{8})→([0-9a-f]{8})", txt)
+        checker = _waiver_checker(txt)
+        if m and checker:
+            waivers.append((m.group(1), m.group(2), checker))
+    import ledger  # noqa: PLC0415 — الوحدةُ في tools/ ومُضافةٌ إلى sys.path أعلاه
+
+    head, hops = pr_head[:8], []
+    for _ in range(depth):
+        step = next((w for w in waivers if w[1] == head), None)
+        if step is None:
+            return []
+        base, _new, checker = step
+        try:
+            getattr(ledger, checker)(base, head, REPO_DIR)
+        except Exception:
+            return []
+        hops.append(f"{base}→{head}")
+        direct = [(t, st) for t, st in confirmations_evidence(target, base) if st == "ok"]
+        if direct:
+            return [(f"{t} ← محمولٌ بتنازلات ({' ، '.join(reversed(hops))}) تحقّقٌ آليّ (D-154م/12)", "ok") for t, _st in direct]
+        head = base
+    return []
+
+
+def main_merge_carry(card: str | None, pr_head: str | None, target: str) -> list[tuple[str, str]]:
+    """اسمٌ قديمٌ محفوظٌ للتوافق: الحملُ العامّ في waiver_carry."""
+    return waiver_carry(card, pr_head, target)
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -229,6 +284,7 @@ def main() -> int:
         if card:
             ev += card_evidence(card, pr_head)
     ev += confirmations_evidence(a.target, pr_head)
+    ev += waiver_carry(card if a.kind == "pr" else a.target, pr_head, a.target)
     good = [e for e in ev if e[1] in ("ok", "legacy")]
     stale = [e for e in ev if e[1] == "stale"]
     if good:
