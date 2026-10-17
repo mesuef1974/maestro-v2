@@ -80,6 +80,8 @@ def card_evidence(card: str, pr_head: str | None = None) -> list[tuple[str, str]
         d, _ = json.JSONDecoder().raw_decode(out.lstrip())  # show يطبع نصّاً بعد الـJSON
     except ValueError:
         return []
+    if not isinstance(d, dict):  # بطاقةٌ غيرُ موجودة: show يطبع null
+        return []
     ev: list[tuple[str, str]] = []
     st = head_status(d.get("approved_head"), pr_head)
     if d.get("state") in APPROVED_STATES:
@@ -211,6 +213,8 @@ def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) ->
         d, _ = json.JSONDecoder().raw_decode(out.lstrip())
     except ValueError:
         return None
+    if not isinstance(d, dict):  # بطاقةٌ غيرُ موجودة: show يطبع null
+        return None
     if respect_cutoff and (not VISUAL_GATE_FROM or str(d.get("created", ""))[:10] < VISUAL_GATE_FROM):
         return None
     head = head or d.get("approved_head")
@@ -244,6 +248,8 @@ def waiver_carry(card: str | None, pr_head: str | None, target: str, depth: int 
     try:
         d, _ = json.JSONDecoder().raw_decode(out.lstrip())
     except ValueError:
+        return []
+    if not isinstance(d, dict):  # بطاقةٌ غيرُ موجودة: show يطبع null
         return []
     waivers = []
     for n in d.get("notes", []):
