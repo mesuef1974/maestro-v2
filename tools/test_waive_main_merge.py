@@ -27,6 +27,8 @@ def setup(tmp_path):
     approved = commit(repo, "work.py", "x=1", "session work")
     git(repo, "checkout", "-q", "main")
     commit(repo, "main_only.txt", "m", "main change")
+    # الأبُ الثاني يجب أن يكون سلفاً لـorigin/main (تشديد check_main_merge): نُحاكي البعيدَ بمرجعٍ محلّيّ
+    git(repo, "update-ref", "refs/remotes/origin/main", "main")
     return repo, approved
 
 
