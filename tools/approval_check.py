@@ -95,23 +95,39 @@ def card_evidence(card: str, pr_head: str | None = None) -> list[tuple[str, str]
     return ev
 
 
+def pr_card(d: dict) -> tuple[str | None, str | None]:
+    """بطاقةُ الطلب (W-018): بالترتيب اسمُ الفرع ثمّ العنوان ثمّ الوصف؛ أوّلُ مصدرٍ فيه معرّفٌ يُعتمد.
+
+    في المصدر الواحد معرّفان مختلفان => (None، رسالةُ التعارض) فلا يُخمَّن. غيابُه في الثلاثة => (None، None) «لا بطاقة».
+    """
+    for name, text in (("الفرع", d.get("headRefName")), ("العنوان", d.get("title")), ("الوصف", d.get("body"))):
+        ids = sorted(set(_CARD_IN_LINE.findall(text or "")))
+        if len(ids) > 1:
+            return None, f"تعارضُ بطاقاتٍ في {name}: {', '.join(ids)} — لا أخمّن؛ صحّحي الطلب"
+        if ids:
+            return ids[0], None
+    return None, None
+
+
 def pr_evidence(num: str) -> tuple[list[tuple[str, str]], str | None, str | None]:
-    code, out = run(["gh", "pr", "view", num, "--json", "title,body,state,headRefOid"], cwd=REPO_DIR)
+    code, out = run(["gh", "pr", "view", num, "--json", "title,body,state,headRefOid,headRefName"], cwd=REPO_DIR)
     if code != 0:
         return [], None, None
     d = json.loads(out)
     pr_head = (d.get("headRefOid") or "")[:8] or None
     ev = []
-    card = re.search(r"W-\d{8}-\d{3}", d.get("title", "") + (d.get("body") or ""))
+    card_id, conflict = pr_card(d)
+    if conflict:
+        return [(f"الطلب #{num}: ✘ {conflict}", "conflict")], None, pr_head
     for m in APPROVAL_LINE.findall(d.get("body") or "")[:1]:
         h = HEAD_IN_LINE.search(m)
         status = head_status(h.group(1) if h else None, pr_head)
-        problem = line_card_problem(m, card.group(0) if card else None)
+        problem = line_card_problem(m, card_id)
         if problem:
             status = "stale"
             m = f"{m.strip()[:80]} ✘ {problem}"
         ev.append((f"الطلب #{num} ({d['state']}): {m.strip()[:110]}", status))
-    return ev, card.group(0) if card else None, pr_head
+    return ev, card_id, pr_head
 
 
 #: مصدرُ الإفادة (W-20261016-030): «مصدره: مباشر» أو «مصدره: نقلاً عن 0101» بعد «(إفادةُ جلسة)»؛ والسطرُ بلا وسمٍ قديمٌ = «مباشر (قديم)».
@@ -283,8 +299,14 @@ def main() -> int:
         ev += pev
         if card:
             ev += card_evidence(card, pr_head)
+            ev += confirmations_evidence(card, pr_head)  # أسطرُ المالك المسجَّلة باسم البطاقة
     ev += confirmations_evidence(a.target, pr_head)
     ev += waiver_carry(card if a.kind == "pr" else a.target, pr_head, a.target)
+    conflicts = [e for e in ev if e[1] == "conflict"]
+    if conflicts:
+        for t, _ in conflicts:
+            print(t)
+        return 3
     good = [e for e in ev if e[1] in ("ok", "legacy")]
     stale = [e for e in ev if e[1] == "stale"]
     if good:
