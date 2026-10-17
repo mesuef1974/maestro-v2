@@ -93,8 +93,12 @@ def test_added_skip_is_rejected_but_assert_rewrite_passes(tmp_path):
     skipped = commit(repo, "tests/test_plain_thing.py", "import pytest\n@pytest.mark.skip\ndef test_a():\n    assert 1 == 1\n")
     with pytest.raises(ledger.LedgerError):
         ledger.check_tests_only(base, skipped, str(repo))
-    rewritten = commit(repo, "tests/test_plain_thing.py", "import pytest\ndef test_a():\n    assert 1 == 2 - 1\n")
-    assert ledger.check_tests_only(skipped, rewritten, str(repo)) == ["tests/test_plain_thing.py"]
+    # إزالةُ skip مع بقاء التأكيد كما هو تمرّ؛ أمّا تغييرُ مضمون التأكيد فلا يُعفى (قرار المالك 2026-10-09)
+    restored = commit(repo, "tests/test_plain_thing.py", "def test_a():\n    assert 1 == 1\n")
+    assert ledger.check_tests_only(skipped, restored, str(repo)) == ["tests/test_plain_thing.py"]
+    rewritten = commit(repo, "tests/test_plain_thing.py", "def test_a():\n    assert 1 == 2 - 1\n")
+    with pytest.raises(ledger.LedgerError):
+        ledger.check_tests_only(restored, rewritten, str(repo))
 
 
 def test_types_only_passes_annotations_and_baseline_not_rising(tmp_path):
