@@ -897,6 +897,46 @@ def check_patch_id(approved: str, new: str, repo: str | None = None) -> list[str
     return changed
 
 
+CHAIN_MAX = 5  # أقصى طولٍ لسلسلة tests-main-chain؛ ما فوقه يحتاج اعتماداً جديداً (W-20261017-012)
+
+
+def check_tests_main_chain(approved: str, new: str, repo: str | None = None) -> list[str]:
+    """«سلسلة إصلاح tests/ مع دمج main» (قرار المالك 2026-10-17، W-20261017-012): إيداعاتٌ متتاليةٌ فوق الرأس المعتمَد،
+    كلٌّ منها يجتاز فاحصَه وحدَه: دمجٌ بأبوين ← check_main_merge، وإيداعٌ عاديٌّ ← check_tests_only، بأيّ ترتيب.
+    السلسلةُ متّصلةُ الأنساب (الأبُ الأوّل) من المعتمَد إلى الجديد، وطولُها ≤ CHAIN_MAX؛ وأيُّ إيداعٍ مخالفٍ (واجهةٌ أو هجراتٌ
+    أو أمنٌ أو ملفٌّ حاكم أو اختبارُ حراسة) يُسقط السلسلةَ كلَّها. لا يُضعف الفاحصَين القائمين: يعيد استعمالهما. يعيد الملفّاتِ المغيَّرة."""
+    cwd = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+    base = _git(["rev-parse", "--verify", f"{approved}^{{commit}}"], repo).strip()
+    tip = _git(["rev-parse", "--verify", f"{new}^{{commit}}"], repo).strip()
+    if base == tip:
+        raise LedgerError("لا فرقَ عن الرأس المعتمَد — لا حاجةَ لاستثناء")
+    chain = _git(["rev-list", "--first-parent", "--reverse", f"{base}..{tip}"], repo).split()
+    if not chain:
+        raise LedgerError("الإيداعُ الجديد لا يتلو الرأسَ المعتمَد — لا يُعفى")
+    if len(chain) > CHAIN_MAX:
+        raise LedgerError(f"السلسلةُ {len(chain)} إيداعاً (الحدّ {CHAIN_MAX}) — تحتاج اعتماداً جديداً بالرأس")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", base, chain[0]], cwd=cwd, capture_output=True).returncode != 0:
+        raise LedgerError("السلسلةُ ليست متّصلةً بالرأس المعتمَد")
+    changed: list[str] = []
+    prev = base
+    for commit in chain:
+        parents = _git(["rev-list", "--parents", "-n", "1", commit], repo).split()[1:]
+        if not parents or parents[0] != prev:
+            raise LedgerError(f"السلسلةُ منقطعةٌ عند {commit[:8]}: أبوه الأوّل ليس {prev[:8]}")
+        try:
+            if len(parents) == 2:
+                part = check_main_merge(prev, commit, repo)
+            elif len(parents) == 1:
+                part = check_tests_only(prev, commit, repo)
+            else:
+                raise LedgerError(f"إيداعٌ بـ{len(parents)} آباء")
+        except LedgerError as exc:
+            raise LedgerError(f"الإيداعُ {commit[:8]} يُسقط السلسلة: {exc}") from exc
+        changed.extend(part)
+        prev = commit
+    return list(dict.fromkeys(changed))
+
+
 WAIVER_BY = {"0501"}
 
 #: ملفّاتٌ حاكمةٌ لا يُستثنى تعديلُها بـwaive-head «وثائق» (W-20261003-040، مواصفة 0103): تُحمَّل في كلّ جلسةٍ أو بالمسار فتوجّه السلوك.
@@ -1005,6 +1045,9 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     if kind == "main-merge":
         check_main_merge(item["approved_head"], new_head, repo)
         reason = f"دمجُ main فقط (تحقّق آليّ) — {reason}"
+    elif kind == "tests-main-chain":
+        check_tests_main_chain(item["approved_head"], new_head, repo)
+        reason = f"سلسلةُ إصلاح tests/ ودمج main فقط (تحقّق آليّ لكلّ إيداع، W-20261017-012) — {reason}"
     elif kind == "patch-id":
         check_patch_id(item["approved_head"], new_head, repo)
         reason = f"تطابقُ patch-id تامٌّ لعمل الفرع بعد دمج main/إعادة الأساس (تحقّق آليّ، W-20261014-006) — {reason}"
@@ -1028,7 +1071,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge أو tests-only أو types-only أو red-fix أو patch-id أو auto")
+        raise LedgerError("--kind: docs أو main-merge أو tests-only أو tests-main-chain أو types-only أو red-fix أو patch-id أو auto")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -1128,7 +1171,7 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "types-only", "red-fix", "patch-id", "auto"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "tests-main-chain", "types-only", "red-fix", "patch-id", "auto"])
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
