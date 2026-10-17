@@ -1,0 +1,75 @@
+{
+  "label": "بعد",
+  "ts": 1792244323,
+  "host": {
+    "commit_pct": 80.7,
+    "ram_pct": 58.9,
+    "total_gb": 15.7,
+    "avail_gb": 6.46,
+    "disk_free_gb": 115.1,
+    "claude_procs": 31,
+    "shell_procs": 17
+  },
+  "wsl_memory_gb": null,
+  "containers": [
+    {
+      "name": "schoolos-main-preview-a-worker-1",
+      "state": "running",
+      "cpu_pct": 79.43,
+      "mem_mb": 189.6,
+      "kind": "محمية"
+    },
+    {
+      "name": "schoolos-main-preview-a-web-1",
+      "state": "running",
+      "cpu_pct": 0.03,
+      "mem_mb": 135.5,
+      "kind": "محمية"
+    },
+    {
+      "name": "schoolos-wizardly-bardeen-cf4836-web-1",
+      "state": "exited",
+      "cpu_pct": null,
+      "mem_mb": null,
+      "kind": "متوقّفة"
+    },
+    {
+      "name": "schoolos-main-preview-front",
+      "state": "running",
+      "cpu_pct": 0.0,
+      "mem_mb": 16.0,
+      "kind": "محمية"
+    },
+    {
+      "name": "shschool-dev-web",
+      "state": "running",
+      "cpu_pct": 7.27,
+      "mem_mb": 239.2,
+      "kind": "حيّة"
+    },
+    {
+      "name": "shschool-dev-worker",
+      "state": "running",
+      "cpu_pct": 1.47,
+      "mem_mb": 224.4,
+      "kind": "حيّة"
+    },
+    {
+      "name": "shschool-dev-db",
+      "state": "running",
+      "cpu_pct": 0.0,
+      "mem_mb": 84.2,
+      "kind": "محمية"
+    },
+    {
+      "name": "shschool-dev-redis",
+      "state": "running",
+      "cpu_pct": 0.63,
+      "mem_mb": 6.9,
+      "kind": "محمية"
+    }
+  ],
+  "unmeasured": [
+    "wsl_memory"
+  ]
+}
