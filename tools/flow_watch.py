@@ -11,7 +11,9 @@
   7 جلسةٌ صامتة بعد إحالة
 
 قراءةٌ فقط: لا يكتب في الدفتر ولا يرسل رسائل ولا يمسّ git ولا يغيّر حالةَ المعاينة؛ والملفُّ الوحيدُ الذي قد يكتبه هو `--html` الذي
-يطلبه المستدعي. أداةٌ غائبة (gh أو preview) تُطبع «غير مقيس» ولا تُعدّ سليمةً. رمزُ الخروج 0 دائماً ما لم تفشل قراءةُ الدفتر (1).
+يطلبه المستدعي. أداةٌ غائبة (gh أو preview) تُطبع «غير مقيس» ولا تُعدّ سليمةً.
+رمزُ الخروج: 0 دفترٌ سليم؛ 1 تعذّرت قراءةُ الدفتر (ملفٌّ غيرُ مقروء أو ليس UTF-8)؛ 2 قُرئ الدفترُ لكن أُهملت أسطرٌ تالفة
+(W-20261017-009: يُطبع «غير مقيس: N سطراً تالفاً» فلا سلامةَ كاذبة على دفترٍ ناقص). وكان العقدُ القديم «0 ما لم تفشل القراءة».
 
 افتراضان معلَنان (من البطاقات الجارية لا من الذاكرة):
   • «حزمةُ الأدلّة» = ملاحظةٌ في البطاقة بعد دخولها ready_for_review تبدأ بـ«(0502)» وفيها «أدلّ» أو «لقط» أو «pack.md» أو «evidence/».
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import re
 import subprocess
 import sys
@@ -632,6 +635,23 @@ def read_preview_status(script: Path | None) -> str | None:
     return out.stdout if out.returncode == 0 and out.stdout.strip() else None
 
 
+def load_events_counting(path=None) -> tuple[list[dict], int]:
+    """أحداثُ الدفتر مع عدد الأسطر التالفة المهمَلة؛ ملفٌّ غيرُ مقروء (OSError/UnicodeDecodeError) يرفع كما قبل."""
+    p = ledger.ledger_path(path)
+    if not p.is_file():
+        return [], 0
+    out: list[dict] = []
+    skipped = 0
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            skipped += 1
+    return out, skipped
+
+
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(
@@ -669,7 +689,7 @@ def main(argv: list[str] | None = None) -> int:
         else datetime.now(timezone(timedelta(hours=3)))
     )
     try:
-        events = ledger.load_events()
+        events, skipped = load_events_counting()
     except (OSError, ValueError) as exc:
         print(f"تعذّرت قراءةُ الدفتر: {exc}")
         return 1
@@ -691,9 +711,13 @@ def main(argv: list[str] | None = None) -> int:
         cap=0 if args.all else 3,
     )
     print(render_text(rows))
+    if skipped:
+        print(
+            f"{UNMEASURED}: {skipped} سطراً تالفاً في الدفتر أُهمل — الجدولُ أعلاه قد يكون ناقصاً؛ راجع events.jsonl"
+        )
     if args.html:
         Path(args.html).write_text(render_html(rows, now), encoding="utf-8")
-    return 0
+    return 2 if skipped else 0
 
 
 if __name__ == "__main__":
