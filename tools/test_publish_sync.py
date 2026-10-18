@@ -97,5 +97,49 @@ class Digest(unittest.TestCase):
         self.assertTrue(all(c[2] == "0601" for c in calls))
 
 
+class CliWiring(unittest.TestCase):
+    """أعلام --digest و--write-notes يجب أن تنفّذ فعلاً (كانت تُقبل وتُهمل)."""
+
+    ROWS = Digest.ROWS
+    STATES = Digest.STATES
+
+    def run_main(self, argv):
+        import contextlib
+        import io
+        from unittest import mock
+
+        out = io.StringIO()
+        with mock.patch.object(ps, "due", return_value=[dict(r) for r in self.ROWS]), \
+                mock.patch.object(ps.ledger, "reduce_state", return_value=self.STATES), \
+                mock.patch.object(ps.ledger, "load_events", return_value=[]), \
+                mock.patch.object(ps, "merged_prs", return_value={}), \
+                contextlib.redirect_stdout(out):
+            code = ps.main(argv)
+        return code, out.getvalue()
+
+    def test_write_notes_writes_batch_note_per_card(self):
+        from unittest import mock
+
+        with mock.patch.object(ps.ledger, "add_note") as add:
+            code, out = self.run_main(["--commit", "331f3aeb", "--write-notes", "--by", "0601"])
+        self.assertEqual(code, 0)
+        self.assertEqual([c.args[0] for c in add.call_args_list], ["W-1", "W-2"])
+        self.assertIn("W-1، W-2", out)
+
+    def test_write_notes_requires_by(self):
+        code, _ = self.run_main(["--commit", "331f3aeb", "--write-notes"])
+        self.assertEqual(code, 2)
+
+    def test_digest_prints_without_writing(self):
+        from unittest import mock
+
+        with mock.patch.object(ps.ledger, "add_note") as add:
+            code, out = self.run_main(["--commit", "331f3aeb", "--digest"])
+        self.assertEqual(code, 0)
+        add.assert_not_called()
+        self.assertIn("#10", out)
+        self.assertIn("إلى 0417", out)
+
+
 if __name__ == "__main__":
     unittest.main()

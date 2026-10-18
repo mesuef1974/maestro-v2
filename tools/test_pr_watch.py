@@ -100,5 +100,133 @@ class WatchOnceIntegration(unittest.TestCase):
         self.assertEqual(out[0]["code"], "pr_watch_dead")
 
 
+def node(num, state, pos=1):
+    return {"position": pos, "state": state, "pullRequest": {"number": num}}
+
+
+class MergeQueue(unittest.TestCase):
+    def test_entry_joining_is_announced_with_position(self):
+        out = pw.queue_events(None, [node(7, "QUEUED", 2)])
+        self.assertEqual(out, ["طابور الدمج: #7 دخل في الموقع 2 (الحالة QUEUED)"])
+
+    def test_state_change_and_exit_are_announced(self):
+        prev = {7: "QUEUED", 8: "QUEUED"}
+        out = pw.queue_events(prev, [node(7, "MERGEABLE", 1)])
+        self.assertIn("طابور الدمج: #7 تغيّرت حالتُه من QUEUED إلى MERGEABLE", out)
+        self.assertIn("طابور الدمج: #8 غادر الطابور (دُمج أو أُخرج)", out)
+
+    def test_unchanged_queue_is_silent(self):
+        self.assertEqual(pw.queue_events({7: "QUEUED"}, [node(7, "QUEUED")]), [])
+
+
+class MainRed(unittest.TestCase):
+    HEAD = "abcdef1234567890"
+
+    def run_(self, name, conclusion, sha=HEAD, status="completed", rid=1):
+        return {"databaseId": rid, "name": name, "conclusion": conclusion, "headSha": sha, "status": status}
+
+    def test_failure_on_main_head_is_red(self):
+        out = pw.main_red_events([self.run_("quality-gate", "failure")], self.HEAD)
+        self.assertEqual(len(out), 1)
+        self.assertIn("quality-gate", out[0])
+
+    def test_latest_run_wins_over_older_failure(self):
+        runs = [self.run_("quality-gate", "success", rid=2), self.run_("quality-gate", "failure", rid=1)]
+        self.assertEqual(pw.main_red_events(runs, self.HEAD), [])
+
+    def test_other_head_and_running_runs_are_ignored(self):
+        runs = [self.run_("quality-gate", "failure", sha="0000000000"),
+                self.run_("security", "failure", status="in_progress")]
+        self.assertEqual(pw.main_red_events(runs, self.HEAD), [])
+
+    def test_cancelled_is_not_red(self):
+        self.assertEqual(pw.main_red_events([self.run_("quality-gate", "cancelled")], self.HEAD), [])
+
+
+class ProdLag(unittest.TestCase):
+    def test_health_error_is_announced(self):
+        out = pw.prod_lag_events(None, "تعذّر قراءة /health/", None, {}, NOW)
+        self.assertEqual(out, ["نشرُ الإنتاج: تعذّر قراءة /health/"])
+
+    def test_lag_under_threshold_is_silent_then_alerts(self):
+        state = {}
+        self.assertEqual(pw.prod_lag_events("25cef9a1", None, "ahead", state, NOW), [])
+        later = NOW + timedelta(minutes=pw.PROD_LAG_MIN)
+        out = pw.prod_lag_events("25cef9a1", None, "ahead", state, later)
+        self.assertEqual(len(out), 1)
+        self.assertIn("متأخّرٌ عن main", out[0])
+
+    def test_catching_up_clears_the_clock(self):
+        state = {"lag_since": NOW.isoformat(timespec="seconds")}
+        pw.prod_lag_events("25cef9a1", None, "identical", state, NOW)
+        self.assertNotIn("lag_since", state)
+
+    def test_diverged_always_alerts(self):
+        out = pw.prod_lag_events("25cef9a1", None, "diverged", {}, NOW)
+        self.assertTrue(any("diverged" in line for line in out))
+
+
+class HeartbeatHonesty(unittest.TestCase):
+    def test_failed_run_is_not_masked_by_fresh_timestamp(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "hb.json"
+            pw.beat(False, 0, path)
+            self.assertFalse(pw.heartbeat_ok(path))
+            pw.beat(True, 3, path)
+            self.assertTrue(pw.heartbeat_ok(path))
+
+    def test_missing_heartbeat_is_not_ok(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(pw.heartbeat_ok(Path(d) / "none.json"))
+
+
+class GhRetry(unittest.TestCase):
+    def test_transient_failure_is_retried_until_success(self):
+        from unittest import mock
+
+        bad = mock.Mock(returncode=1, stdout="", stderr="HTTP 504")
+        good = mock.Mock(returncode=0, stdout="[]", stderr="")
+        sleeps = []
+        with mock.patch.object(pw.subprocess, "run", side_effect=[bad, bad, good]) as run:
+            p = pw._run_gh(["pr", "list"], sleep=sleeps.append)
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleeps, list(pw.GH_RETRY_DELAYS))
+
+    def test_persistent_failure_is_reported_after_all_attempts(self):
+        from unittest import mock
+
+        bad = mock.Mock(returncode=1, stdout="", stderr="x")
+        with mock.patch.object(pw.subprocess, "run", return_value=bad) as run:
+            p = pw._run_gh(["pr", "list"], sleep=lambda s: None)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertEqual(run.call_count, len(pw.GH_RETRY_DELAYS) + 1)
+
+
+class StatePersistence(unittest.TestCase):
+    def test_round_trip_restores_types_and_throttle_clock(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "state.json"
+            prev = {7: {"n": 7, "merge": "CLEAN"}}
+            ops = {"queue": {7: "QUEUED"}, "lag_since": NOW.isoformat(timespec="seconds")}
+            alerted = {(7, "approval"): NOW}
+            ops_alerted = {("prod", "نشرُ الإنتاج: تعذّر"): NOW}
+            pw.save_state(prev, ops, alerted, ops_alerted, path)
+            p2, o2, a2, oa2 = pw.load_state(path)
+        self.assertEqual(p2, prev)
+        self.assertEqual(o2["queue"], {7: "QUEUED"})
+        self.assertEqual(a2, alerted)
+        self.assertEqual(oa2, ops_alerted)
+
+    def test_missing_state_starts_fresh(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(pw.load_state(Path(d) / "none.json"), (None, {}, {}, {}))
+
+    def test_corrupt_state_starts_fresh_without_crashing(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "state.json"
+            path.write_text("{not json", encoding="utf-8")
+            self.assertEqual(pw.load_state(path), (None, {}, {}, {}))
+
 if __name__ == "__main__":
     unittest.main()

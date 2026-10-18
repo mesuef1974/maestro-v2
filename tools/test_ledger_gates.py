@@ -59,7 +59,8 @@ class TestRecorders(unittest.TestCase):
     def test_only_allowed_sessions_record_states(self):
         from ledger import LedgerError, check_recorder
         check_recorder("approved", "0501")
-        check_recorder("merged", None)  # بلا --by: انتقالٌ لطيف
+        with self.assertRaises(LedgerError):  # H1: بلا --by يُرفض
+            check_recorder("merged", None)
         with self.assertRaises(LedgerError):
             check_recorder("approved", "0405")
         with self.assertRaises(LedgerError):
