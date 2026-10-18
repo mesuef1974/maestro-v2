@@ -33,7 +33,7 @@ class Gate(unittest.TestCase):
         self.assertIn("أساسٌ غير مدفوع", str(cm.exception))
 
     def test_pass_is_silent(self):
-        self.assertIsNone(ledger.check_preflight_ready(CARD, "ready_for_review", "D:/x", None, runner=lambda c, r: (0, "ok")))
+        self.assertIn("إنذار (الظلّ)", ledger.check_preflight_ready(CARD, "ready_for_review", "D:/x", None, runner=lambda c, r: (0, "ok")))  # الإيصال غائب في المسار الوهميّ (W-20261017-014)
 
     def test_waiver_is_recorded_without_running(self):
         def boom(c, r):
