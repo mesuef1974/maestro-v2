@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ledger  # noqa: E402
 
 DEFAULT_REPO = "D:/shschool_mvp"
+NO_PREFLIGHT = "تعليمُ رأسٍ فقط بلا فحصٍ مسبق (ready_mark)"
 FROM_STATES = {"in_progress", "routed", "verified", "notes", "ready_for_review"}
 MARK = "جاهزٌ للمعاينة بالرأس "
 HEAD_NOTE = re.compile(re.escape(MARK) + r"([0-9a-f]{7,40})")
@@ -60,7 +61,8 @@ def declared_head(item: dict) -> str | None:
 
 
 def mark(card: str, head: str, by: str, repo: str, link: str = "", role: str = "", base: str = "origin/main",
-         dry: bool = False, path=None) -> str:
+         dry: bool = False, path=None, preflight_repo: str | None = None, waive_preflight: str | None = None,
+         premerge_sha: str | None = None) -> str:
     items = ledger.reduce_state(ledger.load_events(path))
     if card not in items:
         raise ledger.LedgerError(f"بطاقةٌ غيرُ موجودة: {card}")
@@ -77,12 +79,17 @@ def mark(card: str, head: str, by: str, repo: str, link: str = "", role: str = "
         raise ledger.LedgerError(f"لا إيداعَ يحمل رمزَ {card} بين {base} والرأس {head8} — رأسٌ لبطاقةٍ أخرى؟")
     if item["state"] == "ready_for_review" and declared_head(item) == head8:
         return f"لا تغيير: {card} جاهزةٌ أصلاً بالرأس {head8}"
-    parts = [f"{MARK}{head8}"] + ([f"الرابط {link}"] if link else []) + ([f"الدور {role}"] if role else [])
-    note = "؛ ".join(parts)
+    extra = "؛ ".join(([f"الرابط {link}"] if link else []) + ([f"الدور {role}"] if role else []))
+    note = f"{MARK}{head8}"
     if dry:
-        return f"[dry] {card} ← ready_for_review: {note}"
-    ledger.move(card, "ready_for_review", path=path, note=note, by=by)
-    return f"ok: {card} ← ready_for_review ({note})"
+        return f"[dry] {card} ← ready_for_review: {'؛ '.join(filter(None, [note, extra]))}"
+    # `ledger.move` يلصق في الملاحظة إنذارَ الفحص المسبق (~110 حرفاً) وإنذارَ البصمة؛ فبلا تمريرٍ صريحٍ تجاوزت الملاحظةُ حدَّ 240 حرفاً
+    # (كسرُ #46). هذه الأداةُ تعلّم الرأسَ فحسب ولا تُشغّل الفحص: فتُعلن ذلك بنصٍّ قصيرٍ صريحٍ بدل إنذارٍ طويل، ومن يملك الفحصَ يمرّره.
+    ledger.move(card, "ready_for_review", path=path, note=note, by=by, head_now=head8, preflight_repo=preflight_repo,
+                waive_preflight=waive_preflight or (None if preflight_repo else NO_PREFLIGHT), premerge_sha=premerge_sha)
+    if extra:  # الرابطُ والدور في ملاحظةٍ لاحقةٍ: إنذاراتُ move تملأ حدَّ 240 حرفاً في ملاحظة الانتقال
+        ledger.append_event("note", card, {"text": ledger.check_text("note", extra)}, path)
+    return f"ok: {card} ← ready_for_review ({'؛ '.join(filter(None, [note, extra]))})"
 
 
 def main(argv=None) -> int:
@@ -95,6 +102,9 @@ def main(argv=None) -> int:
     ap.add_argument("--repo", default=None, help="المستودعُ الذي فيه الرأس؛ بغيابه يُبحث في SCHOOLOS_REPO ثمّ المنصّة ثمّ مستودع الأداة")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--preflight-repo", default=None, help="شجرةُ الفحص المسبق؛ الافتراضيُّ مستودعُ الرأس")
+    ap.add_argument("--waive-preflight", default=None, help="سببُ إعفاء الفحص المسبق")
+    ap.add_argument("--premerge-sha", default=None, help="بصمةُ make premerge: <head8>:<sha16>")
     a = ap.parse_args(argv)
     path = ledger.ledger_path()
     if not path.is_file():
@@ -102,7 +112,8 @@ def main(argv=None) -> int:
         print(f"✗ لا دفترَ في {path} — شغّل الأداةَ من مجلّد المايسترو أو اضبط LEDGER_PATH", file=sys.stderr)
         return 2
     try:
-        print(mark(a.card, a.head, a.by, a.repo, a.link, a.role, a.base, a.dry_run))
+        print(mark(a.card, a.head, a.by, a.repo, a.link, a.role, a.base, a.dry_run, preflight_repo=a.preflight_repo,
+                   waive_preflight=a.waive_preflight, premerge_sha=a.premerge_sha))
     except ledger.LedgerError as e:
         print(f"✗ {e}", file=sys.stderr)
         return 2
