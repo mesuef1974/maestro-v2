@@ -542,7 +542,47 @@ def check_preflight_ready(item: dict, state: str, repo: str | None, waive: str |
     code, out = (runner or _run_preflight)(item["id"], repo)
     if code != 0:
         raise LedgerError(f"فشل الفحصُ المسبق (رمز {code}) — أصلِح ثمّ أعِد:{chr(10)}{out}")
-    return None
+    return check_prepush_receipt(repo)
+
+
+#: أقصى تأخّرٍ مسموحٍ للرأس عن origin/main (بالإيداعات) قبل «جاهزٌ للمعاينة» (W-20261017-014، قابلٌ للتعديل بثابتٍ واحد).
+MAIN_LAG_MAX = 20
+RECEIPT_NAME = "prepush_receipt.json"
+
+
+def _git_out(repo: str, *args: str) -> str:
+    import subprocess
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def check_prepush_receipt(repo: str, git=None) -> str | None:
+    """قائمةُ ما قبل «جاهز» (W-20261017-014، قرار المالك 10-17): (1) إيصالُ `make prepush` الناجح لرأس الشجرة الحاليّ يكتبه prepush_check
+    في مجلّد git للشجرة؛ (2) الرأسُ لا يتأخّر عن origin/main بأكثر من MAIN_LAG_MAX إيداعاً. الظلُّ أوّلاً: إنذارٌ، ورفضٌ مع PREPUSH_RECEIPT_ENFORCE=1."""
+    import json as _json
+    g = git or (lambda *a: _git_out(repo, *a))
+    problems: list[str] = []
+    head = g("rev-parse", "--short=8", "HEAD")
+    gitdir = g("rev-parse", "--absolute-git-dir")
+    receipt = None
+    if gitdir:
+        f = Path(gitdir) / RECEIPT_NAME
+        if f.is_file():
+            try:
+                receipt = _json.loads(f.read_text(encoding="utf-8"))
+            except ValueError:
+                receipt = None
+    if not receipt or not receipt.get("ok") or receipt.get("head") != head:
+        problems.append(f"لا إيصالَ prepush ناجحاً لرأس الشجرة الحاليّ ({head or 'غير معروف'}) — شغّل make prepush على هذا الرأس")
+    lag = g("rev-list", "--count", "HEAD..origin/main")
+    if lag.isdigit() and int(lag) > MAIN_LAG_MAX:
+        problems.append(f"الرأسُ متأخّرٌ عن origin/main بـ{lag} إيداعاً (الحدُّ {MAIN_LAG_MAX}) — ادمج main أوّلاً")
+    if not problems:
+        return f"قائمة ما قبل جاهز: إيصال prepush للرأس {head} وحداثة main سليمان"
+    msg = "؛ ".join(problems)
+    if os.environ.get("PREPUSH_RECEIPT_ENFORCE") == "1":
+        raise LedgerError(msg)
+    return f"إنذار (الظلّ): {msg}"
 
 
 _FINGERPRINT = re.compile(r"^(?:head=)?([0-9a-f]{8})(?:[: ]\s*(?:sha256=)?)([0-9a-f]{16})$")
