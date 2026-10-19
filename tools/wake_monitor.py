@@ -142,6 +142,21 @@ def message_for(session: str, rows: list[tuple[str, str]]) -> str:
     return "\n".join(payload(i, s) for i, s in rows)
 
 
+def watch_lines(p: WakePlan, directory: dict[str, str], seen: set) -> list[str]:
+    """أسطرُ المراقبة (Monitor) لما لم يُعلَن بعدُ: سطرٌ واحدٌ لكلّ جلسةٍ بمعرّفها، تبويبٌ بين الحقول والصفوفُ تفصلها « ؛ ».
+    ما أُعلن بالنصّ نفسِه لا يُعاد؛ لا خرجَ إن لم يتغيّر شيء. توقّفُ الخطّة (halted) يُعلن مرّةً بنصّه."""
+    out = []
+    for num, rows in sorted(p.wakes.items()):
+        text = " ؛ ".join(payload(i, s) for i, s in rows)
+        if (num, text) not in seen:
+            seen.add((num, text))
+            out.append(f"إيقاظ\t{num}\t{directory.get(num, '—')}\t{text}")
+    if p.halted and ("halt", p.halted) not in seen:
+        seen.add(("halt", p.halted))
+        out.append(f"توقّف\t—\t—\t{p.halted}")
+    return out
+
+
 def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -149,8 +164,27 @@ def main(argv=None) -> int:
     ap.add_argument("--sender", default="0701", help="الجلسة التي ترسل فعلاً (عدّادها هو المحروس)")
     ap.add_argument("--all", action="store_true", help="يعمّم على كلّ الحاملين بدل قناة التجربة")
     ap.add_argument("--json", action="store_true", help="خطّةٌ آليّة: قائمة {to,session_id,message}")
+    ap.add_argument("--watch", action="store_true", help="مراقبةٌ (Monitor): سطرٌ لكلّ جلسةٍ عند التغيّر فقط، بلا كتابة ولا تقديمِ مؤشّر؛ الإرسالُ بيد المنفِّذ")
+    ap.add_argument("--interval", type=int, default=300, help="مع --watch: ثوانٍ بين الدورات")
+    ap.add_argument("--once", action="store_true", help="مع --watch: دورةٌ واحدة")
     a = ap.parse_args(argv)
     import session_directory as sd
+
+    if a.watch:
+        seen: set = set()
+        while True:
+            try:
+                events = read_events(EVENTS)
+                cursor = json.loads(CURSOR.read_text(encoding="utf-8"))["ts"] if CURSOR.is_file() else (events[-1]["ts"] if events else "")
+                directory = {n: e["id"] for n, e in sd.entries().items()}
+                p = plan(events, cursor, directory, live_sessions(), channel=None if a.all else TEST_CHANNEL, sent=sender_count(a.sender))
+                for line in watch_lines(p, directory, seen):
+                    print(line, flush=True)
+            except Exception as exc:  # noqa: BLE001 — المراقبةُ لا تسقط من عطلٍ عابر
+                print(f"# فشلت الدورة: {exc}", file=sys.stderr, flush=True)
+            if a.once:
+                return 0
+            time.sleep(a.interval)
 
     events = read_events(EVENTS)
     cursor = json.loads(CURSOR.read_text(encoding="utf-8"))["ts"] if CURSOR.is_file() else (events[-1]["ts"] if events else "")
