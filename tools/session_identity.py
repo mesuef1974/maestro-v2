@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,6 +21,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 NAMES = ROOT / "projects" / "schoolos" / "session_names.json"
 PLATFORM = "shschool_mvp"
+#: جلساتُ تطبيق Claude على القرص: الهويّةُ الحيّةُ (معرّفُ الجلسة ← عنوانُها) أصدقُ من خريطة الأشجار حين تشترك جلستان في شجرة (0423 عُرّفت 0405، 2026-10-19)
+NUM = re.compile(r"\s*\d{4}\b")
+SESSIONS = Path(os.environ.get("APPDATA", "")) / "Claude" / "claude-code-sessions"
 
 
 def tree_name(cwd: str) -> str | None:
@@ -34,6 +38,35 @@ def tree_name(cwd: str) -> str | None:
 def lookup(cwd: str, names: dict[str, str]) -> str | None:
     tree = tree_name(cwd)
     return names.get(tree) if tree else None
+
+
+def _norm(p: str) -> str:
+    return p.replace("\\", "/").rstrip("/").lower()
+
+
+def app_title(cwd: str, session_id: str = "", base: Path | None = None) -> tuple[str | None, list[str]]:
+    """(العنوانُ الحيّ، المرشَّحون عند الالتباس): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)، ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
+
+    شجرةٌ تشترك فيها جلستان حيّتان بلا معرّفٍ يميّز: (None، العناوين) فيسأل الهوك 0101 بدل أن يخمّن ويضلّل."""
+    base = SESSIONS if base is None else base
+    by_tree: dict[str, str] = {}
+    for f in base.glob("*/*/local_*.json"):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        title = str(d.get("title", ""))
+        if not NUM.match(title) or d.get("isArchived"):
+            continue
+        ids = {d.get("sessionId"), d.get("cliSessionId"), *(d.get("priorCliSessionIds") or [])}
+        if session_id and session_id in ids:
+            return title, []
+        tree = _norm(str(d.get("worktreePath") or d.get("cwd") or ""))
+        if tree and _norm(cwd).startswith(tree):
+            by_tree[title] = tree
+    if len(by_tree) == 1:
+        return next(iter(by_tree)), []
+    return None, sorted(by_tree)
 
 
 def message(title: str | None, tree: str | None) -> str:
@@ -60,9 +93,11 @@ def main() -> int:
     ap.add_argument("--cwd")
     args = ap.parse_args()
     cwd = args.cwd
+    session_id = ""
     if not cwd:
         try:
-            cwd = json.loads(sys.stdin.read() or "{}").get("cwd", "")
+            hook = json.loads(sys.stdin.read() or "{}")
+            cwd, session_id = hook.get("cwd", ""), str(hook.get("session_id", ""))
         except Exception:  # noqa: BLE001 — الـhook لا يسقط الجلسة أبداً
             cwd = ""
     if not cwd or PLATFORM not in cwd.replace("\\", "/"):
@@ -75,7 +110,15 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         names = {}
     sys.stdout.reconfigure(encoding="utf-8")
-    print(message(lookup(cwd, names), tree))
+    try:
+        live, candidates = app_title(cwd, session_id)
+    except Exception:  # noqa: BLE001
+        live, candidates = None, []
+    if live is None and len(candidates) > 1:
+        print("[هويّة الجلسة] تشترك في هذه الشجرة (" + tree + ") جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
+              + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
+    else:
+        print(message(live or lookup(cwd, names), tree))
     try:  # دليلُ عناوين الجلسات: الإرسالُ بالمعرّف لا بالاسم (الاسمُ لا يوقظ خاملةً) — لا يُسقط الـhook أبداً
         import session_directory
 
