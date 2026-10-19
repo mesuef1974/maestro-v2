@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>مراجعة أتمتة الفلو - التقرير الكامل - 2026-10-18</title>
+<style>
+body{font-family:Tajawal,Segoe UI,Tahoma,sans-serif;margin:1.5rem auto;max-width:1150px;padding:0 1rem;line-height:1.9;color:#222}
+h1{border-bottom:3px solid #7a1f2b;padding-bottom:.4rem}h2{color:#7a1f2b;margin-top:2rem}
+table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{border:1px solid #ddd;padding:.4rem .6rem;text-align:start;vertical-align:top}
+thead th{background:#f4eaec}.box{background:#faf5f6;border-inline-start:4px solid #7a1f2b;padding:.6rem 1rem;margin:1rem 0}
+.red{background:#fdecec;border-inline-start:4px solid #b00020;padding:.6rem 1rem;margin:1rem 0}
+.tag{font-size:.78rem;background:#eee;border-radius:4px;padding:0 .4rem}
+</style></head><body>
+<h1>مراجعة أتمتة الفلو من البطاقة إلى النشر - التقرير الكامل (2026-10-18)</h1>
+<div class="box">المُعِدّ: 0102 بطلب 0101. المصدر: أدوات <code>delivery_manager_work/tools</code> (قرأتُ سطر الوصف الأول لكل أداة وبعض الرؤوس)، <code>release_follow.sh</code>، مخرجات <code>pr_watch</code>/<code>flow_watch</code> الحية 10-17، المهام المجدولة، فروع الظل في git، <code>msg_counter.py</code> و<code>unblock_request.py</code>. <b>لم أقرأ كود كل أداة ولم أشغّلها كلها</b>؛ حيث ذُكر «لم أتحقق» فالحكم من الوصف.</div>
+
+<h2>١. المراحل الأربع عشرة</h2>
+<table><thead><tr><th>المرحلة</th><th>الدرجة</th><th>الأداة / الخطوة اليدوية</th><th>زمن الانتظار الغالب</th></tr></thead><tbody>
+<tr><td>التقاط البلاغ</td><td>نصف</td><td><code>ledger.py add</code> (يدوي من 0201/0101)، <code>intake_kpis.py</code></td><td>التقاط←توجيه: وسيط 0.2 س، متوسط 27 س (n=303) <span class="tag">مقروء</span></td></tr>
+<tr><td>المواصفة</td><td><b>يدوي</b></td><td>0301 تكتبها؛ لا أداة تفرض وجودها قبل الدفع</td><td><span class="tag">لم يُقَس</span></td></tr>
+<tr><td>التوجيه</td><td>نصف</td><td><code>routing.py</code>، <code>topic_match.py</code>، <code>open_gate.py</code>، spawn_task</td><td>توجيه←نشر: وسيط 20.7 س (n=212) <span class="tag">مقروء</span></td></tr>
+<tr><td>التنفيذ</td><td>يدوي</td><td>جلسة تنفيذ</td><td><span class="tag">لم يُقَس</span></td></tr>
+<tr><td>prepush</td><td>نصف</td><td><code>make prepush</code> / <code>prepush_check.py</code> حسب CLAUDE.md؛ لم أجد <code>scripts/prepush_check.py</code> في <code>D:/shschool_mvp/scripts</code> (قد يكون على فرع آخر، لم أتحقق)</td><td>المرنة قالت إنه لا يمسك كل شيء لنقص البيئة المحلية</td></tr>
+<tr><td>جاهز للمعاينة</td><td>نصف</td><td><code>ready_mark.py</code>، <code>preview_batch.py</code>/<code>batch_preview.py</code>، <code>risk_tier.py</code></td><td>-</td></tr>
+<tr><td>الأدلة البصرية</td><td>نصف</td><td><code>visual_gate.py</code>، <code>evidence_pack.py</code>، بيان 0502 بعد تثبيت 8500</td><td>بعد التثبيت فقط (0421)</td></tr>
+<tr><td>الاعتماد</td><td>نصف</td><td><code>approval_check.py</code>، <code>record_owner_confirmation.py</code>، <code>review_window.py</code>، <code>ledger.py move … approved</code></td><td>جاهز←معتمد: وسيط 0.03–0.2 س، p90 9.93 س (3 أيام)، 17.86 س (كل السجل) <span class="tag">مقروء</span></td></tr>
+<tr><td>الدفع</td><td><b>نصف (يدوي التشغيل)</b></td><td><code>push_approved.py</code> يعرض افتراضياً و<code>--apply</code> للدفع؛ لا مشغّل تلقائي</td><td>معتمد←مدفوع: وسيط 0.46 س، <b>p90 32.26 س</b> بعد رفع التجميد (n=19) <span class="tag">مقروء</span></td></tr>
+<tr><td>الطلب والدمج</td><td>نصف</td><td><code>pr_open_prep.py</code>، <code>release_follow.sh</code> (0601، 10-18)، <code>pr_watch.py</code>؛ <code>open_pr.py</code> و<code>refresh_open.py</code> ظلٌّ غير مدموج (فرعا <code>open-pr-shadow</code> و<code>refresh-open-shadow</code>)</td><td>مدفوع←مدموج: وسيط 0.95 س، p90 2.43 س (n=14) <span class="tag">مقروء</span></td></tr>
+<tr><td>النشر</td><td><b>مأتمت</b></td><td><code>deploy-railway.yml</code>، <code>railway-predeploy.sh</code>، <code>deploy_window.py</code>، ثم <code>release_follow</code></td><td>مدموج←منشور: وسيط 0، p90 0.21 س <span class="tag">مقروء</span></td></tr>
+<tr><td>التحقق</td><td>نصف</td><td><code>/health/</code> داخل <code>release_follow</code>، <code>post_merge_checklist.py</code>، <code>monitor.yml</code>؛ <code>watch_once.py</code> لم أقرأ خرجه</td><td>-</td></tr>
+<tr><td>الدفتر والخارطة</td><td>نصف</td><td><code>publish_sync.py</code> (يطبع)، <code>publish_auto.py</code> (<code>--apply</code>)، <code>merged_cards_sync.py</code>، <code>ledger_reconcile.py</code> (ظل)، <code>roadmap_queue.py</code>؛ الإغلاق في الخارطة يدوي عند 0701</td><td>4 بطاقات pushed بلا طلب يذكرها في <code>pr_watch</code> 10-17</td></tr>
+<tr><td>الإبلاغ</td><td>نصف</td><td><code>post_merge_checklist.py</code>، <code>digest.py</code>، <code>deposits_feed.py</code>، <code>pending_replies.py</code>؛ <b>الإرسال يدوي</b>؛ <code>wake_monitor</code> على فرع <code>w0701-wake-monitor</code> غير مدموج</td><td>51 «إحالة بلا ردّ (routed)» في <code>flow_watch</code></td></tr>
+</tbody></table>
+
+<h2>٢. المهام المجدولة</h2>
+<p>المعروضة خمس كلها <code>enabled=false</code> بما فيها <code>flow-watch-alert-15min</code> (آخر تشغيل 10-17 10:11 UTC)، وهي مهمة قراءة فقط تمنع الكتابة في الدفتر وgit والإرسال وتجيب في 10 أسطر. مجلدا <code>pr-watch-every-10min</code> و<code>rep10-weekly-rk-reading</code> على القرص ولا يظهران في القائمة. <b>الخط الجاري فعلاً</b> هو حلقة <code>pr_watch --loop</code> لا المهام المجدولة.</p>
+
+<h2>٣. أفضل 8 فجوات يدوية</h2>
+<p>الترتيب حكم مني على الأثر في ذيل الدفع←الدمج. الكلفة والخطورة تقدير <span class="tag">لم يُقَس</span>.</p>
+<table><thead><tr><th>#</th><th>الفجوة</th><th>الأثر</th><th>الكلفة</th><th>الخطورة على الفلو</th></tr></thead><tbody>
+<tr><td>1</td><td><code>push_approved.py --apply</code> لا يُشغَّل آلياً بعد الاعتماد</td><td>معتمد←مدفوع p90 32 س</td><td>صغيرة: تشغيله من 0501 فور <code>approval_check</code> ✔ أو مهمة مقيدة بالرأس</td><td>منخفضة–متوسطة: يدفع فرعاً والاعتماد بالرأس يحميه</td></tr>
+<tr><td>2</td><td>تحديث الأساس بعد كل دمج (<code>refresh_open</code>) ظلٌّ غير مدموج</td><td>فروع متأخرة 21–26 إيداعاً تُلغى وظائفها</td><td>يوم تفعيل بعد أسبوع الظل</td><td>متوسطة: يغيّر رأس طلب معتمد</td></tr>
+<tr><td>3</td><td>إعادة الاعتماد عند تغير الرأس (33% سابقاً) بلا إعفاء سلسلة</td><td>دورة اعتماد جديدة لكل قفزة</td><td>تعديل <code>approval_check</code></td><td><b>قرار المالك</b> (يمس قاعدة الاعتماد في flow.md)</td></tr>
+<tr><td>4</td><td>فتح الطلب بسطر الاعتماد يدوياً بين 0501 و0601 (<code>open_pr.py</code> ظل)</td><td>رفض <code>approval_check pr</code> وحلقة يدوية</td><td>يوم تفعيل بقرار المالك</td><td>منخفضة</td></tr>
+<tr><td>5</td><td>تحديث الدفتر بعد الدمج بلا تنفيذ تلقائي</td><td>أحمر كاذب في <code>flow_watch</code> وبطاقات pushed بلا طلب</td><td>صغيرة: تنفيذ بعد كل دمج في <code>release_follow</code></td><td>منخفضة (D-88م: التنفيذ لـ0601)</td></tr>
+<tr><td>6</td><td>لا بوابة «مواصفة 0301 قبل الدفع/قبل توجيه بلاغ المالك»</td><td>مخالفتا 10-17 و10-18</td><td>بوابة بالظل في <code>ledger.py</code> (قول 0103)</td><td>منخفضة بالظل، ترتفع عند الرفض</td></tr>
+<tr><td>7</td><td>بيئة محلية ناقصة تُفشل prepush الكامل</td><td>أحمر يصل CI ثم يعيد دورة</td><td>#1122 أداة فحص البيئة ثم حاوية دائمة لكل شجرة</td><td>منخفضة؛ تبديل الصورة المشتركة يحتاج إذن المالك</td></tr>
+<tr><td>8</td><td>الإنذار والإيقاظ: المهمة المجدولة معطلة، 100 أحمر بتكرار الحالتين 4 و7، و<code>wake_monitor</code> غير مدموج</td><td>ضجيج يخفي الأحمر الحقيقي، وإحالات بلا ردّ</td><td>متوسطة</td><td>منخفضة: قراءة وإيقاظ فقط</td></tr>
+</tbody></table>
+
+<h2>٤. مشكلة حد الرسائل</h2>
+<div class="red"><b>مصدر الرقم 10 (من 0101، لم أتحقق منه بنفسي):</b> حدّ منصة التطبيق في أداة <code>send_message</code> نفسها: لا أكثر من 10 رسائل متتالية إلى جلسة دون ردّها، وبعدها تُرفض أو تُجمَّع. هو غير مكتوب في ملفات المايسترو، ولا ينتمي إلى D-414م (حصة 150 الطوعية، وهي حدّ مختلف). لم أجده في أي ملف قرأتُه.</div>
+<table><thead><tr><th>ما وُجد</th><th>التفصيل</th><th>المصدر</th></tr></thead><tbody>
+<tr><td>حصة 150 رسالة لكل جلسة</td><td>قرار D-414م (10-12): المالك صفّر العدادات ورُفعت الحصة من 120 إلى 150. العدّاد <b>طوعي</b> (<code>msg_counter.py</code>، <code>LIMIT=150</code>) ولا يمنع شيئاً بنفسه؛ والحد الفعلي في Claude Desktop يُصفَّر حين يكتب المالك في الجلسة.</td><td><code>decisions.md</code> سطر 424، <code>msg_counter.py</code></td></tr>
+<tr><td>قراءات العدّاد</td><td>عند آخر قراءة (بدء العد 10-17 18:37): 0501=66، 0601=13، 0701=2، 0421=4، 0102=2. أعلاها 0501 عند 66 من 150، فلا جلسة قريبة من 150 <span class="tag">مقروء</span>.</td><td><code>msg_counter.json</code></td></tr>
+<tr><td>طابور الجلسات الموقوفة عن الإرسال</td><td><code>unblock_request.py</code> (قرار المالك 10-18) يسجل الجلسات المحجوبة عن الإرسال في <code>unblock_queue.json</code>. <b>الملف فارغ الآن <code>{}</code></b>، أي لا جلسة مسجلة موقوفة وقت الفحص <span class="tag">مقروء</span>.</td><td><code>unblock_queue.json</code></td></tr>
+<tr><td>ازدحام الرسائل المتزامنة</td><td>قاعدة «لا رسائل كثيرة معاً» (تخنق الجلسات) وحالات <code>undelivered</code> وإعادة الإرسال: اتُّفق في هذه الجلسة على فحص السجل بعد نحو دقيقتين ثم إعادة إرسال واحدة (رفض المالك 10 دقائق لأنها كثيرة).</td><td>ذاكرة المشروع، سجل هذه الجلسة</td></tr>
+</tbody></table>
+<h3>الأثر على الفلو (تقدير مني)</h3>
+<ul>
+<li>الرسالة التي لا تصل (<code>undelivered</code>) أو الجلسة الموقوفة عن الإرسال تعطّل حلقات الإحالة بين 0501←0601←0701، وهذا يظهر كـ«51 إحالة بلا ردّ». ربطُ هذه الإحالات بسبب الحد لم يُقَس <span class="tag">لم يُقَس</span>.</li>
+<li>أثر حدّ العشر: أي جلسة تحيل أو توقظ جلسة لا تردّ (مثل «51 إحالة بلا ردّ») قد تبلغ العاشرة فتُرفض رسائلها أو تُجمَّع، فتتعطل الحلقة بصمت. هذا استنتاج من وصف 0101 <span class="tag">لم يُقَس</span>. التخفيف: لا رسالة حادية عشرة قبل ردّ، ودمج المتابعات في رسالة واحدة، وعدّاد للرسائل المتتالية بلا ردّ لكل جلسة.</li>
+<li>التوصية: قياس عدد مرات <code>undelivered</code> وإعادة الإرسال في أسبوع، وتحديد رقم الحد المقصود (10؟) قبل أي إجراء. لا أقترح تغيير الحصة قبل ذلك.</li>
+</ul>
+
+<h2>٥. تحفظات</h2>
+<ul>
+<li>لم أشغّل <code>push_approved</code> أو <code>publish_*</code> أو <code>release_follow</code>؛ حكمي أنها بلا تشغيل تلقائي من الوصف والرأس، ولم أبحث عن مشغّل خارجي (مجدول ويندوز مثلاً).</li>
+<li><code>watch_once.py</code> و<code>monitor.yml</code> لم أقرأ خرجهما فصحة الإنتاج غير مقيّمة.</li>
+<li>أزمنة ما بعد رفع التجميد عيناتها صغيرة (4–19).</li>
+<li>لا تعديل على أي أداة ولا بطاقات.</li>
+</ul>
+<p>المرجع المختصر: <code>handover_notes/flow_automation_audit_0102_2026-10-18.md</code>. التقييم المعمق (SWOT): <code>docs/flow_codified_swot_2026-10-17.html</code>.</p>
+</body></html>

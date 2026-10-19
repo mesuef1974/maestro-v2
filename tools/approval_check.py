@@ -220,6 +220,88 @@ def ui_touched(ledger_files: list[str], head: str | None) -> bool:
     return any(_is_ui_path(f) for f in ledger_files or [])
 
 
+#: إيصالُ قراءة الهويّة لرأس الإيداع (D-376م): يطبعه حارسُ prepush ويُحفظ بجانب manifest.json في
+#: `evidence/<بطاقة>/<رأس8>/identity_ack.txt` بسطر «identity_ack: <رأس8> نجح». فارغٌ = مُعطَّل حتى تجهز الخطوتان
+#: (تسجيلُ الرأس في identity_ack.py، وطباعةُ السطر في prepush)، وإلا سقطت كلُّ بطاقةٍ واجهيّةٍ قبل أن يمكن إنتاجُ السطر.
+IDENTITY_ACK_FROM = ""
+IDENTITY_ACK_FILE = "identity_ack.txt"
+
+
+def identity_ack_problem(card: str, head: str | None, created: str = "", enforce: bool | None = None) -> str | None:
+    """رسالةُ الفشل إن كانت بطاقةُ واجهةٍ بلا سطر «identity_ack: <رأس8> نجح» لرأسها؛ وإلّا `None`.
+
+    «واجهيّة» بدالة `ui_touched` نفسها التي تحكم الأدلّةَ البصريّة. `enforce=None` يعني تطبيقَ `IDENTITY_ACK_FROM`.
+    """
+    if enforce is None:
+        enforce = bool(IDENTITY_ACK_FROM) and str(created)[:10] >= IDENTITY_ACK_FROM
+    if not enforce:
+        return None
+    if not head:
+        return "لا إيصالَ هويّةٍ للرأس: بطاقةُ واجهةٍ بلا رأسٍ للمقارنة (مرّري --head)"
+    h8 = head[:8]
+    import visual_gate
+
+    f = visual_gate.EVIDENCE_DIR / card / h8 / IDENTITY_ACK_FILE
+    want = f"identity_ack: {h8} نجح"
+    if f.is_file() and want in f.read_text(encoding="utf-8").splitlines():
+        return None
+    return f"لا إيصالَ هويّةٍ للرأس {h8}: شغّلي identity_ack.py ثمّ prepush على هذا الرأس (السطر المطلوب «{want}» في {f.name})"
+
+
+def card_identity_problem(card: str, head: str | None) -> str | None:
+    code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
+    try:
+        d, _ = json.JSONDecoder().raw_decode(out.lstrip())
+    except ValueError:
+        return None
+    head = head or d.get("approved_head")
+    if not ui_touched(d.get("files") or [], head):
+        return None
+    return identity_ack_problem(card, head, str(d.get("created", "")))
+
+
+VISUAL_WAIVER_MARK = "تنازلٌ بصريّ بقرار المالك"
+#: ما يمسّه رأسٌ جديدٌ فيمنع امتدادَ التنازل إليه (قرار المالك D-356م): الواجهةُ لا الخلفيّة.
+WAIVER_UI_PREFIXES = ("templates/", "static/")
+_HEX8 = re.compile(r"\b[0-9a-f]{8}\b")
+#: `ledger.py note --by NNNN` يسبق النصَّ بـ«(NNNN) » فلا تُعدّ البادئةُ جزءاً من العبارة.
+_AUTHOR_PREFIX = re.compile(r"^\(\d{4}\)\s*")
+
+
+def _waived_heads(card: dict) -> list[str]:
+    """رؤوسُ (ثماني خانات) ملاحظاتِ التنازل في دفتر هذه البطاقة وحدَها: تبدأ الملاحظةُ بالعبارة."""
+    heads: list[str] = []
+    for n in card.get("notes", []):
+        txt = _AUTHOR_PREFIX.sub("", str(n.get("note", n.get("text", ""))), count=1)
+        if txt.startswith(VISUAL_WAIVER_MARK):
+            heads += _HEX8.findall(txt)
+    return heads
+
+
+def _diff_paths(old: str, new: str) -> list[str] | None:
+    """مساراتُ ما بين رأسَين من git؛ `None` عند أيّ فشل (غيابُ الرأس في المستودع أو خطأ git) فيُرفض الامتداد بأمان."""
+    code, out = run(["git", "diff", "--name-only", old, new], cwd=REPO_DIR)
+    return [ln.strip() for ln in out.splitlines() if ln.strip()] if code == 0 else None
+
+
+def visual_waived(card: dict, head: str) -> bool:
+    """تنازلٌ عن ملفّ الأدلّة البصريّة (قرار المالك D-352م) مقيَّدٌ بالبطاقة والرأس.
+
+    ملاحظةٌ في دفتر البطاقة نفسها تبدأ بالعبارة وفيها ثماني خانات الرأس. ويمتد (D-356م) لرأسٍ جديدٍ في دفتر البطاقة
+    نفسها إن كان فرقُه عن الرأس المعفى لا يلمس `templates/` ولا `static/` وتحقّقت الأداةُ بـgit؛ وفشلُ git يعني لا امتداد.
+    """
+    h8 = head[:8]
+    waived = _waived_heads(card)
+    if h8 in waived:
+        return True
+    for h0 in dict.fromkeys(waived):
+        paths = _diff_paths(h0, head)
+        if paths is not None and not any(p.startswith(WAIVER_UI_PREFIXES) for p in paths):
+            return True
+    return False
+
+
+
 def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) -> str | None:
     """رسالةُ الفشل إن كانت البطاقةُ واجهةً بلا أدلّتها البصريّة السليمةِ للرأس؛ وإلّا `None`."""
     code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
@@ -236,6 +318,8 @@ def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) ->
         return None
     if not head:
         return "لا أدلة بصرية للرأس: بطاقةُ واجهةٍ بلا رأسٍ للمقارنة (مرّري --head)"
+    if visual_waived(d, head):
+        return None
     import visual_gate
 
     ok, msg = visual_gate.evidence_status(card, head)
@@ -351,7 +435,7 @@ def main() -> int:
     stale = [e for e in ev if e[1] == "stale"]
     if good:
         card_key = a.target if a.kind == "card" else (card if a.kind == "pr" and card else None)
-        problem = visual_problem(card_key, pr_head, respect_cutoff=True) if card_key else None
+        problem = (visual_problem(card_key, pr_head, respect_cutoff=True) or card_identity_problem(card_key, pr_head)) if card_key else None
         if problem:
             print("✘ " + problem)
             return 4
