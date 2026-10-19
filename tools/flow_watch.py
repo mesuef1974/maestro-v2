@@ -681,39 +681,7 @@ def dedupe(rows: list[Row], now: datetime, path: Path) -> tuple[list[Row], int]:
     return fresh, held
 
 
-def main(argv: list[str] | None = None) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    ap.add_argument("--html", help="اكتبي ملفَّ HTML عربيّاً بهذا المسار (اختياري)")
-    ap.add_argument(
-        "--no-live", action="store_true", help="بلا gh ولا preview (يُطبعان غير مقيسَين)"
-    )
-    ap.add_argument(
-        "--all", action="store_true", help="بلا طيٍّ ولا سقف (كلُّ الصفوف كما كانت)"
-    )
-    ap.add_argument("--now", help="لحظةٌ ISO للاختبار")
-    ap.add_argument("--preview-sh", type=Path)
-    ap.add_argument("--state-file", type=Path, default=FLOW_STATE, help="ملفُّ حالة الكبح (خارج الدفتر)")
-    ap.add_argument("--no-dedupe", action="store_true", help="لا كبحَ ولا حفظَ حالة")
-    d = Thresholds()
-    for name in (
-        "approved_min",
-        "pushed_min",
-        "pr_min",
-        "routed_hours",
-        "preview_min",
-        "ready_min",
-        "silent_min",
-        "merge_wait_min",
-        "old_hours",
-    ):
-        ap.add_argument(
-            f"--{name.replace('_', '-')}", type=int, default=getattr(d, name)
-        )
-    args = ap.parse_args(argv)
-    th = Thresholds(**{n: getattr(args, n) for n in Thresholds.__dataclass_fields__})
+def _cycle(args, th) -> int:
     now = (
         datetime.fromisoformat(args.now)
         if args.now
@@ -744,8 +712,10 @@ def main(argv: list[str] | None = None) -> int:
     held = 0
     if not args.no_live and not args.no_dedupe:
         rows, held = dedupe(rows, now, args.state_file)
+    if args.changes_only and not rows and not skipped:
+        return 0
     print(render_text(rows))
-    if held:
+    if held and not args.changes_only:
         print(f"— مكتومةٌ لتكرارها: {held} (تُعاد كل {REPEAT_MIN // 60} ساعات إن بقيت)")
     if skipped:
         print(
@@ -754,6 +724,55 @@ def main(argv: list[str] | None = None) -> int:
     if args.html:
         Path(args.html).write_text(render_html(rows, now), encoding="utf-8")
     return 2 if skipped else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--html", help="اكتبي ملفَّ HTML عربيّاً بهذا المسار (اختياري)")
+    ap.add_argument(
+        "--no-live", action="store_true", help="بلا gh ولا preview (يُطبعان غير مقيسَين)"
+    )
+    ap.add_argument(
+        "--all", action="store_true", help="بلا طيٍّ ولا سقف (كلُّ الصفوف كما كانت)"
+    )
+    ap.add_argument("--now", help="لحظةٌ ISO للاختبار")
+    ap.add_argument("--preview-sh", type=Path)
+    ap.add_argument("--state-file", type=Path, default=FLOW_STATE, help="ملفُّ حالة الكبح (خارج الدفتر)")
+    ap.add_argument("--no-dedupe", action="store_true", help="لا كبحَ ولا حفظَ حالة")
+    ap.add_argument("--changes-only", action="store_true", help="للمراقبة (Monitor): لا يطبع شيئاً إن لم يكن صفٌّ جديدٌ بعد الكبح")
+    ap.add_argument("--loop", action="store_true", help="يكرّر الدورة (يلزمه --changes-only) كل --interval ثانية")
+    ap.add_argument("--interval", type=int, default=300)
+    d = Thresholds()
+    for name in (
+        "approved_min",
+        "pushed_min",
+        "pr_min",
+        "routed_hours",
+        "preview_min",
+        "ready_min",
+        "silent_min",
+        "merge_wait_min",
+        "old_hours",
+    ):
+        ap.add_argument(
+            f"--{name.replace('_', '-')}", type=int, default=getattr(d, name)
+        )
+    args = ap.parse_args(argv)
+    th = Thresholds(**{n: getattr(args, n) for n in Thresholds.__dataclass_fields__})
+    if args.loop and not args.changes_only:
+        ap.error("--loop يلزمه --changes-only (المراقبةُ تُبلغ عند التغيّر فقط)")
+    if not args.loop:
+        return _cycle(args, th)
+    while True:
+        try:
+            _cycle(args, th)
+        except Exception as exc:  # noqa: BLE001 — المراقبةُ لا تسقط من عطلٍ عابر
+            print(f"{UNMEASURED}: فشلت الدورة: {exc}", file=sys.stderr, flush=True)
+        sys.stdout.flush()
+        time.sleep(args.interval)
 
 
 if __name__ == "__main__":

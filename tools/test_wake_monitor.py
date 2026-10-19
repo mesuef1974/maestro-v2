@@ -105,3 +105,37 @@ def test_sender_count_reads_file_and_missing_file_closes_the_guard(tmp_path):
     assert wm.sender_count("0701", f) == 47
     assert wm.sender_count("0999", f) == 0
     assert wm.sender_count("0701", tmp_path / "none.json") == wm.COUNTER_GUARD
+
+
+def test_watch_lines_one_line_per_session_with_id_and_no_repeat():
+    ev = [created("W-20261016-001"), created("W-20261016-002"), created("W-20261016-003", held="0301")]
+    ev += [state("W-20261016-001", "routed", NEW, held_by="0201"), state("W-20261016-002", "routed", NEW, held_by="0201"), state("W-20261016-003", "routed", NEW, held_by="0301")]
+    p = wm.plan(ev, CUR, DIR, set(), verify=ok)
+    seen: set = set()
+    lines = wm.watch_lines(p, DIR, seen)
+    assert len(lines) == 2, "جلسةٌ بعدة صفوف = رسالةٌ واحدة"
+    first = next(line for line in lines if "\t0201\t" in line)
+    assert first.split("\t")[2] == DIR["0201"] and "W-20261016-001" in first and "W-20261016-002" in first
+    assert wm.watch_lines(p, DIR, seen) == [], "لا خرجَ إن لم يتغيّر شيء"
+
+
+def test_watch_announces_halt_once_and_empty_plan_is_silent():
+    p = wm.WakePlan()
+    assert wm.watch_lines(p, DIR, set()) == []
+    p.halted = "دفعةٌ تتجاوز الحدّ"
+    seen: set = set()
+    assert len(wm.watch_lines(p, DIR, seen)) == 1
+    assert wm.watch_lines(p, DIR, seen) == []
+
+
+def test_watch_mode_does_not_write_cursor_or_log(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(wm, "EVENTS", tmp_path / "events.jsonl")
+    monkeypatch.setattr(wm, "CURSOR", tmp_path / "cursor.json")
+    monkeypatch.setattr(wm, "LOG", tmp_path / "log.jsonl")
+    import session_directory as sd
+
+    monkeypatch.setattr(sd, "entries", lambda: {})
+    monkeypatch.setattr(wm, "live_sessions", lambda: set())
+    wm.main(["--watch", "--once"])
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+    assert capsys.readouterr().out == ""

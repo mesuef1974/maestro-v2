@@ -394,5 +394,69 @@ class TestReadOnly(unittest.TestCase):
             self.assertIn("غير مقيس: 1 سطراً تالفاً", raw.getvalue().decode("utf-8"))
 
 
+class TestChangesOnly(unittest.TestCase):
+    """W-20261019-019: المراقبةُ (Monitor) تُبلغ عند التغيّر فقط، وتبقى قراءةً فقط."""
+
+    def run_main(self, events, extra, now=NOW):
+        import json
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8")
+            state_file = Path(tmp) / "state.json"
+            os.environ["LEDGER_PATH"] = str(path)
+            raw = io.BytesIO()
+            buf = io.TextIOWrapper(raw, encoding="utf-8")
+            try:
+                with contextlib.redirect_stdout(buf), mock.patch.object(fw, "fetch_prs", return_value=[]), mock.patch.object(
+                    fw, "read_preview_status", return_value=""
+                ), mock.patch.object(fw.ledger_reconcile, "fetch_prs", return_value=[]):
+                    code = fw.main(["--changes-only", "--state-file", str(state_file), "--now", now.isoformat(), *extra])
+            finally:
+                os.environ.pop("LEDGER_PATH", None)
+            buf.flush()
+            return code, raw.getvalue().decode("utf-8")
+
+    def test_healthy_ledger_prints_nothing(self):
+        code, out = self.run_main([created("A"), state("A", "published", 5)], [])
+        self.assertEqual((code, out), (0, ""))
+
+    def test_new_row_prints_once_then_silent(self):
+        ev = [created("A"), state("A", "approved", 45)]
+        _, first = self.run_main(ev, [])
+        self.assertIn("A", first)
+
+    def test_repeat_inside_window_is_silent(self):
+        import json
+        from unittest import mock
+
+        ev = [created("A"), state("A", "approved", 45)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in ev) + "\n", encoding="utf-8")
+            sf = Path(tmp) / "state.json"
+            os.environ["LEDGER_PATH"] = str(path)
+            outs = []
+            try:
+                for _ in range(2):
+                    raw = io.BytesIO()
+                    buf = io.TextIOWrapper(raw, encoding="utf-8")
+                    with contextlib.redirect_stdout(buf), mock.patch.object(fw, "fetch_prs", return_value=[]), mock.patch.object(
+                        fw, "read_preview_status", return_value=""
+                    ), mock.patch.object(fw.ledger_reconcile, "fetch_prs", return_value=[]):
+                        fw.main(["--changes-only", "--state-file", str(sf), "--now", NOW.isoformat()])
+                    buf.flush()
+                    outs.append(raw.getvalue().decode("utf-8"))
+            finally:
+                os.environ.pop("LEDGER_PATH", None)
+        self.assertIn("A", outs[0])
+        self.assertEqual(outs[1], "")
+
+    def test_loop_requires_changes_only(self):
+        with self.assertRaises(SystemExit):
+            fw.main(["--loop", "--no-live"])
+
+
 if __name__ == "__main__":
     unittest.main()
