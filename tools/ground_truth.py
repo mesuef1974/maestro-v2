@@ -8,6 +8,7 @@
     python ground_truth.py alert 116
     python ground_truth.py url /wings/ [--base http://localhost:8500]
     python ground_truth.py card W-20260930-005
+    python ground_truth.py spec W-20261019-011   # يفحص مراجعَ المواصفة (مساراتٌ وطلباتٌ) على المصدر؛ يخرج بـ1 إن غاب مرجع
 """
 
 from __future__ import annotations
@@ -22,6 +23,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPO_DIR = "D:/shschool_mvp"
 SLUG = "sh-school/shschool_mvp"
+SLUGS = (SLUG, "mesuef1974/maestro-v2")  # طلباتُ المنصّة وطلباتُ أدوات المايسترو
+_URL = re.compile(r"https?://\S+")
+# ASCII فقط: حرفٌ عربيٌّ لاصقٌ بالمسار («وscripts/x.py») ليس منه
+PATH_RE = re.compile(r"(?<![A-Za-z0-9_/.\-])((?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_\-]+\.(?:py|yml|yaml|html|css|js|json|md|sh|txt))(?::\d+)?")
+PR_RE = re.compile(r"(?<![\w&])#(\d{2,5})\b")
 
 
 def source_line() -> str:
@@ -161,18 +167,85 @@ def cmd_card(code_: str) -> None:
         print(f"  ملاحظة {n['ts'][:16]}: {n['text'][:140]}")
 
 
+def spec_references(item: dict) -> list[tuple[str, str]]:
+    """مراجعُ المواصفة القابلةُ للفحص: (نوع، قيمة) من ref.path وsource_of_truth فقط (ملفّات files_allowed قد تكون جديدةً فلا تُفحص)."""
+    text = " ".join([str((item.get("ref") or {}).get("path", "")), str(item.get("source_of_truth", ""))])
+    text = _URL.sub(" ", text)
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    for kind, rx in (("path", PATH_RE), ("pr", PR_RE)):
+        for m in rx.finditer(text):
+            key = (kind, m.group(1))
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return out
+
+
+def default_path_exists(path: str) -> bool:
+    """موجودٌ في main للمنصّة (git) أو في مجلّد المايسترو."""
+    if "/" not in path:  # اسمُ ملفٍّ بلا مجلّد: يكفي أن يوجد في أيّ مجلّد
+        code, out = run(["git", "ls-tree", "-r", "--name-only", "origin/main"], cwd=REPO_DIR)
+        if code == 0 and any(n == path or n.endswith("/" + path) for n in out.splitlines()):
+            return True
+        return any(ROOT.glob(f"**/{path}"))
+    code, _ = run(["git", "cat-file", "-e", f"origin/main:{path}"], cwd=REPO_DIR)
+    return code == 0 or (ROOT / path).exists()
+
+
+def default_pr_state(num: str) -> str | None:
+    """حالةُ الطلب في أحد المستودعين؛ None إن لم يوجد في أيٍّ منهما."""
+    for slug in SLUGS:
+        code, out = run(["gh", "pr", "view", num, "--repo", slug, "--json", "state", "--jq", ".state"])
+        if code == 0 and out.strip():
+            return f"{out.strip()} ({slug.split('/')[1]})"
+    return None
+
+
+def check_references(item: dict, path_exists=default_path_exists, pr_state=default_pr_state) -> list[tuple[str, str, bool, str]]:
+    """(نوع، قيمة، سليم؟، تفصيل) لكلّ مرجعٍ في المواصفة؛ الفاحصان قابلان للحقن للاختبار."""
+    rows = []
+    for kind, value in spec_references(item):
+        if kind == "path":
+            ok = bool(path_exists(value))
+            rows.append((kind, value, ok, "موجود" if ok else "غيرُ موجود في main ولا في المايسترو"))
+        else:
+            state = pr_state(value)
+            rows.append((kind, f"#{value}", state is not None, state or "لا طلبَ بهذا الرقم"))
+    return rows
+
+
+def cmd_spec(code_: str) -> None:
+    sys.path.insert(0, str(ROOT / "tools"))
+    import ledger  # noqa: PLC0415
+
+    item = ledger.reduce_state(ledger.load_events()).get(code_)
+    if not item:
+        print(f"بطاقةٌ غيرُ موجودة: {code_}")
+        sys.exit(1)
+    print(f"{code_}: " + ledger.spec_status(item))
+    rows = check_references(item)
+    if not rows:
+        print("  لا مراجعَ قابلةً للفحص في ref.path وsource_of_truth")
+    for kind, value, ok, detail in rows:
+        print(f"  {'✔' if ok else '✘'} {kind}: {value} — {detail}")
+    if any(not ok for _, _, ok, _ in rows):
+        print("  >> مرجعٌ غائبٌ: لا تبنِ على هذه المواصفة قبل تصحيحه")
+        sys.exit(1)
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="kind", required=True)
-    for k in ("pr", "branch", "alert", "card"):
+    for k in ("pr", "branch", "alert", "card", "spec"):
         sub.add_parser(k).add_argument("target")
     u = sub.add_parser("url")
     u.add_argument("target")
     u.add_argument("--base", default="http://localhost:8500")
     a = ap.parse_args()
     print(source_line())
-    {"pr": cmd_pr, "branch": cmd_branch, "alert": cmd_alert, "card": cmd_card}.get(a.kind, lambda t: None)(a.target) \
+    {"pr": cmd_pr, "branch": cmd_branch, "alert": cmd_alert, "card": cmd_card, "spec": cmd_spec}.get(a.kind, lambda t: None)(a.target) \
         if a.kind != "url" else cmd_url(a.target, a.base)
 
 
