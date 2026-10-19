@@ -78,6 +78,12 @@ class Red(unittest.TestCase):
         self.assertEqual([m[0] for m in msgs], ["0101"])
         self.assertIn("غيرُ معروف", msgs[0][2])
 
+    def test_a_pr_without_a_card_is_never_sent_to_anyone(self):
+        fresh = rn.fresh_failures(
+            [pr(checks=[check("x")], title="chore(deps): bump")], {}, NOW
+        )
+        self.assertEqual(rn.messages(fresh, ITEMS, DIR), [])
+
     def test_the_same_check_on_the_same_head_is_not_repeated(self):
         state = {}
         p = [pr(checks=[check("ruff")])]

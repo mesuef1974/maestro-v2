@@ -127,6 +127,8 @@ def messages(
     for group in by_pr.values():
         pr = group[0]["pr"]
         holder, cid = holder_of(pr, items)
+        if cid is None:
+            continue  # طلبٌ بلا بطاقة (مثل Dependabot): لا يُحال لأحد، يُذكر في موجز المالك فقط (قرار 0101)
         parts = []
         for f in group:
             d = _detail(pr, f["check"], err)
