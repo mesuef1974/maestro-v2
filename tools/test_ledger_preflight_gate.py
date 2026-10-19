@@ -16,8 +16,16 @@ class Gate(unittest.TestCase):
     def test_p0_exempt(self):
         self.assertIsNone(ledger.check_preflight_ready({"id": "W-1", "priority": "P0"}, "ready_for_review", None, None))
 
-    def test_missing_repo_warns_by_default(self):
-        self.assertIn("لم يُشغَّل الفحصُ المسبق", ledger.check_preflight_ready(CARD, "ready_for_review", None, None))
+    def test_missing_repo_refuses_by_default(self):  # قرار المالك 2026-10-19: الإلزامُ افتراضيّ
+        with self.assertRaises(LedgerError):
+            ledger.check_preflight_ready(CARD, "ready_for_review", None, None)
+
+    def test_missing_repo_only_warns_when_explicitly_relaxed(self):
+        os.environ["PREFLIGHT_ENFORCE"] = "0"
+        try:
+            self.assertIn("لم يُشغَّل الفحصُ المسبق", ledger.check_preflight_ready(CARD, "ready_for_review", None, None))
+        finally:
+            del os.environ["PREFLIGHT_ENFORCE"]
 
     def test_missing_repo_refuses_when_enforced(self):
         os.environ["PREFLIGHT_ENFORCE"] = "1"
