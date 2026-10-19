@@ -155,6 +155,11 @@ def line_source(ln: str) -> tuple[str, str | None, str | None]:
     return "relayed", writer, m.group(2)
 
 
+def _has_key(key: str, ln: str) -> bool:
+    """H3 (مراجعة 10-16): المطابقةُ بحدٍّ لفظيّ؛ «pr 7» لا تطابق «pr 77»."""
+    return re.search(r"(?<![0-9A-Za-z_-])" + re.escape(key) + r"(?![0-9A-Za-z_-])", ln) is not None  # حدٌّ لاتيني: الحروفُ العربيّةُ بعد الرقم لا تُحسب جزءاً منه
+
+
 def confirmations_evidence(key: str, pr_head: str | None = None, enforce: bool | None = None, path: Path | None = None) -> list[tuple[str, str]]:
     f = path or ROOT / "owner_confirmations.md"
     if not f.exists():
@@ -170,9 +175,9 @@ def confirmations_evidence(key: str, pr_head: str | None = None, enforce: bool |
         if "ملغى[" not in ln and not any(re.search(re.escape(c) + r"\s*@" + re.escape(h), ln) for c, h in voided)
     ]
     # الجلساتُ التي سجّلت تأكيداً «مباشراً» (أو قديماً) لهذا الهدف نفسه
-    direct = {w for ln in live if key in ln for k, w, _ in [line_source(ln)] if k in ("direct", "legacy") and w}
+    direct = {w for ln in live if _has_key(key, ln) for k, w, _ in [line_source(ln)] if k in ("direct", "legacy") and w}
     for ln in live:
-        if key in ln:
+        if _has_key(key, ln):
             h = HEAD_IN_LINE.search(ln)
             tail = " ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else ""
             st = head_status(h.group(1) if h else None, pr_head)
@@ -285,6 +290,21 @@ def main_merge_carry(card: str | None, pr_head: str | None, target: str) -> list
     return waiver_carry(card, pr_head, target)
 
 
+def _owner_direct(e: tuple[str, str]) -> bool:
+    """H2: أيُّ دليلٍ يُقبل اعتماداً؟ سطرُ owner_confirmations (مباشرٌ أو تفويضٌ دائمٌ مسجَّل) لا الدفترُ ولا وصفُ الطلب ولا المنقول."""
+    text = e[0]
+    if not text.startswith("owner_confirmations.md:"):
+        return False
+    return "منقولٌ عن" not in text
+
+
+def label_delegation(text: str) -> str:
+    """D-443م: سطرُ 0101 «دائم يغني» تفويضٌ دائمٌ بعد مراجعة الفرق، فيُعرض تفويضاً لا قولاً مباشراً من المالك على الرأس."""
+    if "0101 (" in text and "دائم يغني" in text:
+        return text + " ← تفويضٌ دائمٌ (D-443م) لا قولٌ مباشرٌ من المالك على هذا الرأس"
+    return text
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -313,7 +333,11 @@ def main() -> int:
         for t, _ in conflicts:
             print(t)
         return 3
-    good = [e for e in ev if e[1] in ("ok", "legacy")]
+    # H2 (مراجعة 10-16، قرار المالك «اعتمد»): الاعتمادُ لا يثبت إلا من قولِ المالك المباشر في owner_confirmations، أو تفويضٍ دائمٍ مسجَّل (يُبيَّن تفويضاً).
+    # الدفترُ ووصفُ الطلب وسطرُ منقولٍ عن جلسةٍ أخرى ليست اعتماداً وحدها. الأسطرُ القديمةُ بلا مصدرٍ (legacy) تبقى مقبولةً.
+    good = [e for e in ev if e[1] in ("ok", "legacy") and _owner_direct(e)]
+    ledger_only = [e for e in ev if e[1] in ("ok", "legacy") and not _owner_direct(e)]
+    good = [(label_delegation(t), s) for t, s in good]
     stale = [e for e in ev if e[1] == "stale"]
     if good:
         card_key = a.target if a.kind == "card" else (card if a.kind == "pr" and card else None)
@@ -338,6 +362,11 @@ def main() -> int:
     if ev:
         print("✘ اعتماداتٌ بلا رأسٍ انتهت مهلتُها (2026-10-09): سجّلي اعتماداً جديداً بـ--head.")
         return 3
+    if ledger_only:
+        print("✘ وُجد دليلٌ من الدفتر أو وصف الطلب، لكنه لا يكفي: الاعتمادُ يلزمه قولُ المالك المباشر في owner_confirmations.md (H2).")
+        for t, _ in ledger_only:
+            print(f"  - {t}")
+        return 2
     print("✘ لا اعتمادَ مسجَّلاً في المصدر. لا تسألي المالكَ مباشرةً: اسألي 0501 (إن كان معاينةً) أو 0101 أن تسجّل الاعتمادَ بـ`ledger.py move … approved --head <sha8> --note` ثمّ أعيدي الفحص.")
     return 2
 

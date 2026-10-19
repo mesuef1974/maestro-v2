@@ -74,7 +74,15 @@ def load_events(path=None) -> list[dict]:
     p = ledger_path(path)
     if not p.is_file():
         return []
-    return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+    out: list[dict] = []
+    for no, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError as e:  # H5 (مراجعة 10-16): سطرٌ تالف كان يُسقط قراءةَ الدفتر كله
+            print(f"تحذير: سطرٌ تالف في {p.name} رقم {no} أُهمل ({e.msg}) — راجِعه يدوياً", file=sys.stderr)
+    return out
 
 
 def append_event(kind: str, item_id: str, data: dict | None = None, path=None) -> dict:
@@ -196,7 +204,10 @@ ALREADY_APPROVED = {"approved", "pushed", "merged", "published"}
 
 def check_recorder(state: str, by: str | None) -> None:
     allowed = RECORDERS.get(state)
-    if allowed and by and by not in allowed:
+    if allowed and not by:
+        # H1 (مراجعة 10-16): بلا --by كان الاعتمادُ يُسجَّل «غيرَ مُعلَن» ويمرّ — فيصير الاعتمادُ بلا مُعتمِد
+        raise LedgerError(f"«{state}» يلزمه --by يسمّي المسجِّل ({'، '.join(sorted(allowed))}) — لا تسجيلَ مجهولَ المصدر")
+    if allowed and by not in allowed:
         raise LedgerError(f"«{by}» لا يسجّل الحالة «{state}»: المأذونُ لهم {sorted(allowed)} (تداخلُ أدوار — سجّل الطلبَ عند صاحب الدور)")
 
 

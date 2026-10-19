@@ -652,6 +652,35 @@ def load_events_counting(path=None) -> tuple[list[dict], int]:
     return out, skipped
 
 
+REPEAT_MIN = 360  # التنبيهُ نفسُه لا يُعاد قبل ست ساعات؛ يعود فوراً إن اختفى ثمّ ظهر
+FLOW_STATE = HERE.parent / "flow_watch_state.json"  # خارج مجلد الدفتر: الملفُّ الوحيدُ الذي تكتبه المتابعة
+
+
+def _row_key(r: Row) -> str:
+    return f"{r.case}|{r.ref}|{r.subject}"
+
+
+def dedupe(rows: list[Row], now: datetime, path: Path) -> tuple[list[Row], int]:
+    """الصفوفُ الجديدةُ أو التي مرّت عليها REPEAT_MIN، مع حفظ وقت آخر إعلان؛ الصفُّ الذي اختفى يُنسى فيُعلن من جديد إن عاد."""
+    try:
+        alerted = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        alerted = {}
+    fresh, held = [], 0
+    for r in rows:
+        k = _row_key(r)
+        last = alerted.get(k)
+        if last and (now - datetime.fromisoformat(last)) < timedelta(minutes=REPEAT_MIN):
+            held += 1
+            continue
+        fresh.append(r)
+        alerted[k] = now.isoformat(timespec="seconds")
+    keys_now = {_row_key(r) for r in rows}
+    alerted = {k: v for k, v in alerted.items() if k in keys_now}
+    path.write_text(json.dumps(alerted, ensure_ascii=False), encoding="utf-8")
+    return fresh, held
+
+
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(
@@ -666,6 +695,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--now", help="لحظةٌ ISO للاختبار")
     ap.add_argument("--preview-sh", type=Path)
+    ap.add_argument("--state-file", type=Path, default=FLOW_STATE, help="ملفُّ حالة الكبح (خارج الدفتر)")
+    ap.add_argument("--no-dedupe", action="store_true", help="لا كبحَ ولا حفظَ حالة")
     d = Thresholds()
     for name in (
         "approved_min",
@@ -710,7 +741,12 @@ def main(argv: list[str] | None = None) -> int:
         reconcile=True,
         cap=0 if args.all else 3,
     )
+    held = 0
+    if not args.no_live and not args.no_dedupe:
+        rows, held = dedupe(rows, now, args.state_file)
     print(render_text(rows))
+    if held:
+        print(f"— مكتومةٌ لتكرارها: {held} (تُعاد كل {REPEAT_MIN // 60} ساعات إن بقيت)")
     if skipped:
         print(
             f"{UNMEASURED}: {skipped} سطراً تالفاً في الدفتر أُهمل — الجدولُ أعلاه قد يكون ناقصاً؛ راجع events.jsonl"
