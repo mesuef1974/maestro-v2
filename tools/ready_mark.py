@@ -22,6 +22,7 @@ import ledger  # noqa: E402
 
 DEFAULT_REPO = "D:/shschool_mvp"
 NO_PREFLIGHT = "تعليمُ رأسٍ فقط بلا فحصٍ مسبق (ready_mark)"
+PREFLIGHT_OK = "الفحصُ المسبق نجح آلياً (ready_mark)"
 FROM_STATES = {"in_progress", "routed", "verified", "notes", "ready_for_review"}
 MARK = "جاهزٌ للمعاينة بالرأس "
 HEAD_NOTE = re.compile(re.escape(MARK) + r"([0-9a-f]{7,40})")
@@ -60,6 +61,12 @@ def declared_head(item: dict) -> str | None:
     return None
 
 
+def auto_preflight_repo(repo: str, full: str) -> str | None:
+    """شجرةُ الفحص المسبق تلقائياً: المستودعُ الذي وُجد فيه الرأس إن كان HEAD فيه هو الرأسَ نفسَه (فيفحص الفحصُ فرعَ البطاقة فعلاً).
+    وإلا (رأسٌ في فرعٍ غير مُسحوب) لا شجرةَ تُفحص فيرجع None ويبقى الإعفاءُ المدوَّن القصير."""
+    return repo if git_ok(repo, "rev-parse", "HEAD") == full else None
+
+
 def mark(card: str, head: str, by: str, repo: str, link: str = "", role: str = "", base: str = "origin/main",
          dry: bool = False, path=None, preflight_repo: str | None = None, waive_preflight: str | None = None,
          premerge_sha: str | None = None) -> str:
@@ -79,6 +86,14 @@ def mark(card: str, head: str, by: str, repo: str, link: str = "", role: str = "
         raise ledger.LedgerError(f"لا إيداعَ يحمل رمزَ {card} بين {base} والرأس {head8} — رأسٌ لبطاقةٍ أخرى؟")
     if item["state"] == "ready_for_review" and declared_head(item) == head8:
         return f"لا تغيير: {card} جاهزةٌ أصلاً بالرأس {head8}"
+    if preflight_repo is None and not waive_preflight and not dry:
+        tree = auto_preflight_repo(repo, full)  # W-20261014-007: الفحصُ المسبق (R2) يعمل دائماً متى كانت الشجرةُ على الرأس نفسِه
+        if tree:
+            # يُشغَّل هنا قبل أيّ كتابةٍ فيُرفض الانتقالُ كاملاً عند الفشل؛ وإنذاراتُه الطويلة تُطبع ولا تُلصق في الملاحظة (حدّ 240، كسرُ #46)
+            warn = ledger.check_preflight_ready(item, "ready_for_review", tree, None)
+            if warn:
+                print(warn, file=sys.stderr)
+            waive_preflight = PREFLIGHT_OK
     extra = "؛ ".join(([f"الرابط {link}"] if link else []) + ([f"الدور {role}"] if role else []))
     note = f"{MARK}{head8}"
     if dry:

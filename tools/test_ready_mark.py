@@ -19,6 +19,10 @@ def git(repo, *a):
 
 class ReadyMark(unittest.TestCase):
     def setUp(self):
+        # الفحصُ المسبق صار يعمل آلياً متى كانت الشجرةُ على الرأس (W-20261014-007): هنا يُستبدل بنجاحٍ وهميّ كي لا يطلب مستودعاتٍ تجريبيّةً كاملة
+        real = ledger._run_preflight
+        ledger._run_preflight = lambda card, repo: (0, "ok")
+        self.addCleanup(setattr, ledger, "_run_preflight", real)
         self.tmp = tempfile.mkdtemp()
         self.repo = str(Path(self.tmp) / "r")
         Path(self.repo).mkdir()
