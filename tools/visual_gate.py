@@ -377,9 +377,37 @@ def build_manifest(card: str, head: str, base: str, pages: list[dict[str, Any]])
     }
 
 
-def run(card: str, head: str, base: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+def served_head(base: str, opener: Any = None) -> str:
+    """commit الذي يعلنه `/health/` للخادم (فارغٌ إن تعذّر)."""
+    import urllib.request
+
+    try:
+        with (opener or urllib.request.urlopen)(base.rstrip("/") + "/health/", timeout=8) as resp:
+            body = resp.read().decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 — خادمٌ مطفأ
+        return ""
+    m = re.search(r'"commit"\s*:\s*"([0-9a-f]{7,40})"', body)
+    return m.group(1) if m else ""
+
+
+def served_matches(base: str, head: str, opener: Any = None) -> tuple[bool, str]:
+    """هل الخادم يخدم الرأسَ المطلوب؟ (قرار 0101 2026-10-19: لا دليلَ يُوسَم برأسٍ غير المخدوم)."""
+    served = served_head(base, opener)
+    if not served:
+        return False, f"تعذّر قراءة commit من {base}/health/ — لا التقاطَ بلا تأكيد الرأس (--no-health-check للاستثناء)"
+    n = min(len(served), len(head))
+    if served[:n] != head[:n]:
+        return False, f"الخادم يخدم {served[:8]} لا الرأسَ المطلوب {head[:8]} — لا التقاط"
+    return True, served
+
+
+def run(card: str, head: str, base: str, entries: list[dict[str, Any]], check_served: bool = True) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
+    if check_served:
+        ok, msg = served_matches(base, head)
+        if not ok:
+            raise SystemExit("✘ " + msg)
     outdir = EVIDENCE_DIR / card / head
     outdir.mkdir(parents=True, exist_ok=True)
     pages: list[dict[str, Any]] = []
@@ -399,6 +427,10 @@ def run(card: str, head: str, base: str, entries: list[dict[str, Any]]) -> dict[
                 shell = shells[who]
             pages.append(capture_page(browser, base, entry, outdir, states[who], shell))
         browser.close()
+    if check_served:
+        ok, msg = served_matches(base, head)
+        if not ok:
+            raise SystemExit("✘ تبدّل المخدوم أثناء الالتقاط ولم يُكتب manifest: " + msg)
     manifest = build_manifest(card, head, base, pages)
     (outdir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
     return manifest
@@ -508,6 +540,7 @@ def main() -> int:
     r.add_argument("--head", help="sha8 (وإلّا رأسُ --repo)")
     r.add_argument("--repo", default=".", help="مستودعُ الشجرة لقراءة الرأس")
     r.add_argument("--base", default="http://localhost:8500")
+    r.add_argument("--no-health-check", action="store_true", help="استثناء: لا يُطابَق commit /health/ بالرأس (خوادمُ بلا /health/)")
     c = sub.add_parser("check", help="يتحقّق من الأدلّة المكتوبة")
     c.add_argument("--card", required=True)
     c.add_argument("--head", required=True)
@@ -534,7 +567,7 @@ def main() -> int:
         print("✘ لا صفحةَ معلنة: أعلني صفحةً واحدةً على الأقلّ (مسار + دور)")
         return 2
     head = (a.head or head8(a.repo))[:8]
-    manifest = run(a.card, head, a.base, entries)
+    manifest = run(a.card, head, a.base, entries, check_served=not a.no_health_check)
     for p in manifest["pages"]:
         if p.get("unavailable"):
             print(f"{p['path']} [{p['role']}] — غير متاحة بهذا الدور: {p['unavailable_reason']}" + (f" (الحساب المقترح: {p['suggest']})" if p.get("suggest") else ""))

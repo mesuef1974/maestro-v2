@@ -192,3 +192,29 @@ def test_subtract_shell_justifies_only_matching_admin_shell_violations():
     out = vg.subtract_shell(vs, shell)
     assert out[0]["justified"] and "قشرة إدارة Django" in out[0]["reason"] and not out[1]["justified"]
     assert not vg.subtract_shell([dict(vs[1])], None)[0]["justified"]
+
+
+class _Resp:
+    def __init__(self, body):
+        self._b = body.encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return self._b
+
+
+def test_served_matches_requires_health_commit_to_equal_head():
+    ok = lambda url, timeout: _Resp('{"status": "ok", "commit": "17d09f8"}')  # noqa: E731
+    assert vg.served_matches("http://x", "17d09f89", ok)[0]
+    bad, msg = vg.served_matches("http://x", "eb791ded", ok)
+    assert not bad and "17d09f8" in msg and "eb791ded" in msg
+
+    def down(url, timeout):
+        raise OSError("down")
+
+    assert not vg.served_matches("http://x", "17d09f89", down)[0]
