@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import session_identity as si
 
 NAMES = {"amazing-x-1": "0601 · الإصدار: الدمجُ والنشر", "fast-y-2": "0404 · إدارة: شحنٌ ودمجٌ آليّان (W-015)"}
@@ -38,3 +40,33 @@ def test_handoff_rule_text_covers_three_states(monkeypatch, capsys):
     assert "بعد دقيقتين من list_events" in msg and "مرةً واحدةً" in msg
     assert "undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة" in msg
     assert "(بلغت / في الطابور / لم تبلغ)" in msg and "ولا تسأل المالكَ عن إعادة الإرسال" in msg
+
+
+def _session(base, name, sid, title, tree, archived=False, cli=None):
+    d = base / "a" / "b"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"local_{name}.json").write_text(
+        json.dumps({"sessionId": sid, "cliSessionId": cli or sid, "title": title, "worktreePath": tree, "isArchived": archived}),
+        encoding="utf-8",
+    )
+
+
+TREE = r"D:\shschool_mvp\.claude\worktrees\peaceful-1"
+
+
+def test_live_title_resolves_by_session_id_even_when_two_sessions_share_the_tree(tmp_path):
+    _session(tmp_path, "1", "local_1", "0405 · غياب", TREE, cli="cli-1")
+    _session(tmp_path, "2", "local_2", "0423 · أعمدة", TREE, cli="cli-2")
+    assert si.app_title(TREE, "cli-2", tmp_path) == ("0423 · أعمدة", [])
+
+
+def test_shared_tree_without_session_id_is_ambiguous_not_guessed(tmp_path):
+    _session(tmp_path, "1", "local_1", "0405 · غياب", TREE)
+    _session(tmp_path, "2", "local_2", "0423 · أعمدة", TREE)
+    assert si.app_title(TREE, "", tmp_path) == (None, ["0405 · غياب", "0423 · أعمدة"])
+
+
+def test_single_live_session_on_the_tree_wins_over_stale_names(tmp_path):
+    _session(tmp_path, "1", "local_1", "0702 · معاون", TREE)
+    _session(tmp_path, "2", "local_2", "0101 · قديمة", TREE, archived=True)
+    assert si.app_title(TREE + "\tools", "", tmp_path) == ("0702 · معاون", [])
