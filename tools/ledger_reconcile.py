@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import re
 import subprocess
@@ -20,6 +21,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import ledger  # noqa: E402
+import stale_policy  # noqa: E402
 
 CODE = re.compile(r"W-(\d{8})-(\d{3})")
 BRANCH_CODE = re.compile(r"w(\d{8})-(\d{3})", re.I)
@@ -180,6 +182,14 @@ def _gh_json(args: list[str]):
         return None
 
 
+def branch_last_commit(repo: str, branch: str) -> dt.datetime | None:
+    b = _gh_json(["api", f"repos/{repo}/branches/{branch}", "--jq", "{d: .commit.commit.committer.date}"])
+    try:
+        return dt.datetime.fromisoformat(b["d"].replace("Z", "+00:00")) if b else None
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
 def fetch_branches(repo: str) -> list[str] | None:
     refs = _gh_json(["api", f"repos/{repo}/git/matching-refs/heads/claude", "--paginate", "--jq", "[.[].ref]"])
     return [r.removeprefix("refs/heads/") for r in refs] if isinstance(refs, list) else None
@@ -226,6 +236,11 @@ def write_report(res: dict, root: Path | None = None) -> Path:
     lines.append(f"الدفتر متقدّم على GitHub: {len(res['ahead'])}")
     lines += [f"- {x['card']}: {x['state']} — الطلبات {x['prs']}" for x in res["ahead"]]
     lines.append(f"غير مؤكد: {len(res['unconfirmed'])}")
+    st = res.get("stale") or {}
+    lines.append(f"راكدة تُعاد لطابور 0101 (عرض): {len(st.get('return_to_queue', []))}")
+    lines += [f"- {x['card']} ({x['holder']}): {x['state']} بلا نشاطٍ {x['idle_h']} س" for x in st.get("return_to_queue", [])]
+    lines.append(f"معتمَدة بلا دفع تُنبَّه (عرض): {len(st.get('nudge', []))}")
+    lines += [f"- {x['card']} ({x['holder']}): تنتظر {x['waiting_h']} س" for x in st.get("nudge", [])]
     if res.get("unmeasured"):
         lines.append("غير مقيس: " + "، ".join(res["unmeasured"]))
     day.write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
@@ -246,7 +261,11 @@ def main() -> int:
         return 0
     branches = fetch_branches(a.repo)
     check = make_published_check(a.repo, latest_prod_deploy(a.repo))
-    res = reconcile(ledger.reduce_state(ledger.load_events()), prs, check, branches)
+    state = ledger.reduce_state(ledger.load_events())
+    res = reconcile(state, prs, check, branches)
+    res["stale"] = stale_policy.plan(
+        state, dt.datetime.now(dt.timezone.utc).astimezone(), branches, lambda b: branch_last_commit(a.repo, b)
+    )
     res["unmeasured"] = [n for n, v in (("branches", branches),) if v is None]
     if a.report:
         write_report(res)
