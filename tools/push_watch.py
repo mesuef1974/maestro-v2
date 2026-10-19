@@ -62,7 +62,7 @@ def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git) -
                 continue
             seen.add(key)
             branch = w.get("branch") or ""
-            if not push_approved.BRANCH_RE.match(branch) or w.get("head", "")[:8] != want8:
+            if not push_approved.BRANCH_RE.match(branch) or not push_approved.same_head(w.get("head", ""), want8):
                 continue
             rc, log = git(w["path"], "log", "-1", "--format=%H", f"--grep={card}", w["head"], "^origin/main")
             if not rc and log.strip():
@@ -82,7 +82,7 @@ def scan(items: dict, repos: list[str], apply: bool = True, path=None, git=push_
         item = items[card]
         if item.get("state") != "approved":
             continue
-        want = (item.get("approved_head") or "")[:8]
+        want = (item.get("approved_head") or "").strip()
         base = {"card": card, "head": want, "branch": "", "holder": item.get("held_by") or ""}
         if not want:
             out.append({**base, "status": "skipped", "reason": "لا رأسَ اعتمادٍ في الدفتر"})

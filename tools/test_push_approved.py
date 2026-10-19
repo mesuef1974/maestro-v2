@@ -107,3 +107,30 @@ class Push(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_same_head_uses_common_prefix_of_at_least_seven():
+    pa = __import__("push_approved")
+    assert pa.same_head("3e60cdd1ff914e31", "3e60cdd")
+    assert pa.same_head("3e60cdd", "3e60cdd1")
+    assert pa.same_head("C149E527", "c149e527aa")
+    assert not pa.same_head("3e60cdd1", "3e60cde1")
+    assert not pa.same_head("3e60cd", "3e60cd"), "أقلّ من ٧ أحرف لا يكفي"
+    assert not pa.same_head("", "")
+
+
+def test_guard_accepts_seven_char_ledger_head_and_passes_it_unchanged_to_approval():
+    seven = {"W-1": {"state": "approved", "approved_head": "aaaaaaa"}}
+    seen = []
+    assert pa.guard("W-1", "claude/x", ".", seven, fake_git(), lambda c, h: seen.append(h) or True) == HEAD
+    assert seen == ["aaaaaaa"], "approval_check يتلقّى الرأس كما سُجّل في الدفتر لا مقتطعاً"
+
+
+def test_guard_still_rejects_a_head_that_differs_within_the_shared_prefix():
+    seven = {"W-1": {"state": "approved", "approved_head": "aaaaaab"}}
+    try:
+        pa.guard("W-1", "claude/x", ".", seven, fake_git(), lambda c, h: True)
+    except pa.PushRefused:
+        return
+    raise AssertionError("رأسٌ مخالف يجب أن يُرفض")
+
