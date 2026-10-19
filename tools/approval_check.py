@@ -160,6 +160,15 @@ def _has_key(key: str, ln: str) -> bool:
     return re.search(r"(?<![0-9A-Za-z_-])" + re.escape(key) + r"(?![0-9A-Za-z_-])", ln) is not None  # حدٌّ لاتيني: الحروفُ العربيّةُ بعد الرقم لا تُحسب جزءاً منه
 
 
+def source_line() -> str:
+    """مسارُ owner_confirmations.md المقروء مطلقاً وتاريخُ آخر تعديل، ليُكشف الاستعمالُ الصامتُ لنسخةٍ قديمةٍ في شجرةٍ أخرى."""
+    f = ROOT / "owner_confirmations.md"
+    if not f.exists():
+        return f"المصدر المقروء: {f} — غير موجود"
+    import datetime  # noqa: PLC0415
+    return f"المصدر المقروء: {f} — آخر تعديل {datetime.datetime.fromtimestamp(f.stat().st_mtime):%Y-%m-%d %H:%M}"
+
+
 def confirmations_evidence(key: str, pr_head: str | None = None, enforce: bool | None = None, path: Path | None = None) -> list[tuple[str, str]]:
     f = path or ROOT / "owner_confirmations.md"
     if not f.exists():
@@ -312,6 +321,7 @@ def main() -> int:
     ap.add_argument("target")
     ap.add_argument("--head", help="للبطاقة: رأسُ الإيداع الحاليّ للمقارنة (sha8)")
     a = ap.parse_args()
+    print(source_line())
     ev: list[tuple[str, str]] = []
     pr_head = a.head
     if a.kind == "visual":
