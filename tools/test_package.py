@@ -386,6 +386,82 @@ class BranchStatus(unittest.TestCase):
         r = bs.classify_tree("d", "claude/x", 3, 0, [self.pr(9, "OPEN", "d")], self.contains, elsewhere=[714])
         self.assertEqual(r["status"], bs.OPEN_PR)
 
+    # --- W-20260928-027: دمجٌ بالسحق لا يُبقي الفرعَ سلفاً ← مطابقةُ المحتوى عند إيداع الدمج ---
+    def merged_pr(self, n, head, merge="m"):
+        return {"number": n, "state": "MERGED", "headRefOid": head, "mergeCommit": {"oid": merge}}
+
+    def test_squash_by_content_is_merged_even_if_head_is_not_an_ancestor(self):
+        # رأسُ الشجرة «x» ليس سلفاً لرأس الطلب «z» ولا يساويه (أُعيدت كتابته)، لكنّ محتواه عند إيداع الدمج «m» مطابق
+        r = bs.classify_tree("x", "claude/x", 3, 0, [self.merged_pr(705, "z")], self.contains,
+                             content_merged=lambda h, m: (h, m) == ("x", "m"))
+        self.assertEqual((r["status"], r["prs"]), (bs.MERGED, [705]))
+
+    def test_content_mismatch_keeps_the_orphan_alert(self):
+        r = bs.classify_tree("x", "claude/x", 3, 0, [self.merged_pr(705, "z")], self.contains,
+                             content_merged=lambda h, m: False)
+        self.assertEqual(r["status"], bs.NO_PR)
+
+    def test_squash_by_content_with_dirty_files_still_flags(self):
+        r = bs.classify_tree("x", "claude/x", 3, 2, [self.merged_pr(705, "z")], self.contains,
+                             content_merged=lambda h, m: True)
+        self.assertEqual(r["status"], bs.MERGED_DIRTY)
+
+    def test_content_check_never_overrides_an_open_pr_or_missing_merge_commit(self):
+        everything = lambda h, m: True  # noqa: E731
+        r = bs.classify_tree("x", "claude/x", 3, 0, [self.merged_pr(1, "z"), self.pr(2, "OPEN", "x")], self.contains,
+                             content_merged=everything)
+        self.assertEqual(r["status"], bs.OPEN_PR)
+        nomerge = {"number": 3, "state": "MERGED", "headRefOid": "z"}
+        self.assertEqual(bs.classify_tree("x", "claude/x", 3, 0, [nomerge], self.contains, content_merged=everything)["status"], bs.NO_PR)
+
+    def test_real_squash_merge_in_a_synthetic_repository(self):
+        import subprocess
+
+        def git(repo, *a):
+            return subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=repo, check=True,
+                                  capture_output=True, encoding="utf-8").stdout.strip()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            git(repo, "init", "-q", "-b", "main")
+            (repo / "a.txt").write_text("1\n", encoding="utf-8")
+            git(repo, "add", "a.txt")
+            git(repo, "commit", "-q", "-m", "base")
+            git(repo, "checkout", "-q", "-b", "feature")
+            (repo / "a.txt").write_text("1\n2\n", encoding="utf-8")
+            (repo / "b.txt").write_text("new\n", encoding="utf-8")
+            git(repo, "add", "a.txt", "b.txt")
+            git(repo, "commit", "-q", "-m", "work 1")
+            (repo / "b.txt").write_text("newer\n", encoding="utf-8")
+            git(repo, "add", "b.txt")
+            git(repo, "commit", "-q", "-m", "work 2")
+            head = git(repo, "rev-parse", "HEAD")
+            git(repo, "checkout", "-q", "main")
+            (repo / "c.txt").write_text("other pr\n", encoding="utf-8")  # طلبٌ آخر اندمج قبله لملفٍّ مختلف
+            git(repo, "add", "c.txt")
+            git(repo, "commit", "-q", "-m", "other")
+            git(repo, "merge", "--squash", "-q", "feature")
+            git(repo, "commit", "-q", "-m", "squash feature (#705)")
+            merge = git(repo, "rev-parse", "HEAD")
+            contains = bs.git_contains(repo)
+            self.assertFalse(contains(head, merge), "السحقُ لا يُبقي الفرعَ سلفاً — أصلُ العطل")
+            pr = {"number": 705, "state": "MERGED", "headRefOid": "0" * 40, "mergeCommit": {"oid": merge}}
+            content = bs.git_content_merged(repo)
+            self.assertTrue(content(head, merge))
+            r = bs.classify_tree(head, "claude/feature", 2, 0, [pr], contains, content_merged=content)
+            self.assertEqual((r["status"], r["prs"]), (bs.MERGED, [705]))
+            self.assertEqual(bs.classify_tree(head, "claude/feature", 2, 0, [pr], contains)["status"], bs.NO_PR, "بلا الفحص: الإنذار الكاذب")
+            # عملٌ جديدٌ بعد السحق لا يطابق ← يبقى إنذاراً
+            git(repo, "checkout", "-q", "feature")
+            (repo / "b.txt").write_text("changed after the merge\n", encoding="utf-8")
+            git(repo, "add", "b.txt")
+            git(repo, "commit", "-q", "-m", "late")
+            late = git(repo, "rev-parse", "HEAD")
+            self.assertFalse(content(late, merge))
+            # فرعٌ بلا طلبٍ على اسمه (إعادةُ كتابة): يُلتقط عبر merged_elsewhere بالمحتوى
+            others = bs.merged_elsewhere(repo, head, [dict(pr, mergedAt="2999-01-01T00:00:00Z")], contains, content)
+            self.assertEqual(others, [705])
+
     def test_branch_of(self):
         self.assertEqual(bs.branch_of({"branch": "refs/heads/claude/x"}), "claude/x")
         self.assertEqual(bs.branch_of({"detached": ""}), "")
