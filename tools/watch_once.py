@@ -431,6 +431,7 @@ def orphan_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp"
     names = sl.load_json("session_names.json", project)
     ignored = set(sl.DEFAULT_IGNORED) | set(sl.load_json("ignored_trees.json", project).get("trees", []))
     contains = bs.git_contains(repo)
+    content = bs.git_content_merged(repo)
     merged = [p for rows in by_branch.values() for p in rows if p["state"] == "MERGED"]
     out = []
     for wt in sl.worktrees(repo, warn):
@@ -440,10 +441,11 @@ def orphan_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp"
         ahead = len(sl.run("git", "rev-list", f"origin/main..{wt['HEAD']}", cwd=repo).split())
         dirty = len(sl.run("git", "--no-optional-locks", "-C", wt["worktree"], "status", "--porcelain").splitlines())
         own = by_branch.get(bs.branch_of(wt), [])
-        result = bs.classify_tree(wt["HEAD"], bs.branch_of(wt), ahead, dirty, own, contains)
+        result = bs.classify_tree(wt["HEAD"], bs.branch_of(wt), ahead, dirty, own, contains, content_merged=content)
         if result["status"] == bs.NO_PR and ahead:  # قد يكون عملُها اندمج عبر طلب فرعٍ آخر
             result = bs.classify_tree(wt["HEAD"], bs.branch_of(wt), ahead, dirty, own, contains,
-                                      elsewhere=bs.merged_elsewhere(repo, wt["HEAD"], merged, contains))
+                                      elsewhere=bs.merged_elsewhere(repo, wt["HEAD"], merged, contains, content),
+                                      content_merged=content)
         if result["status"] in bs.PENDING:
             same, total = bs.overlap(repo, wt["HEAD"])
             left = f" · {total - same} من {total} ملفّاً ما زال مختلفاً عن main" if total else ""

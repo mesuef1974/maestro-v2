@@ -39,10 +39,18 @@ LABEL_AR = {
 }
 
 
+def merge_oid(pr: dict) -> str:
+    """إيداعُ الدمج في main لطلبٍ مدموج (حقل mergeCommit من gh)؛ فارغٌ إن غاب."""
+    mc = pr.get("mergeCommit")
+    return (mc.get("oid") if isinstance(mc, dict) else mc) or ""
+
+
 def classify_tree(head: str, branch: str, ahead: int, dirty: int, prs: list[dict],
-                  contains: Callable[[str, str], bool], elsewhere: list[int] | None = None) -> dict:
-    """حكمٌ نقيّ. prs: طلباتُ هذا الفرع [{number, state, headRefOid}]؛ contains(a, b) = a سلفٌ لـb (أو يساويه)؛
-    elsewhere: طلباتٌ مدموجةٌ من فروعٍ أخرى رأسُها يحوي رأسَ الشجرة (تُحسب خارجاً لأنّها مكلفة)."""
+                  contains: Callable[[str, str], bool], elsewhere: list[int] | None = None,
+                  content_merged: Callable[[str, str], bool] | None = None) -> dict:
+    """حكمٌ نقيّ. prs: طلباتُ هذا الفرع [{number, state, headRefOid, mergeCommit}]؛ contains(a, b) = a سلفٌ لـb (أو يساويه)؛
+    elsewhere: طلباتٌ مدموجةٌ من فروعٍ أخرى رأسُها يحوي رأسَ الشجرة (تُحسب خارجاً لأنّها مكلفة)؛
+    content_merged(head, mergeOid): محتوى ما غيّره الفرعُ مطابقٌ لمحتواه عند إيداع الدمج (للسحق الذي لا يُبقي الفرعَ سلفاً — W-20260928-027)."""
     opened = sorted(p["number"] for p in prs if p["state"] == "OPEN")
     if opened:
         return {"status": OPEN_PR, "prs": opened}
@@ -54,6 +62,9 @@ def classify_tree(head: str, branch: str, ahead: int, dirty: int, prs: list[dict
     beyond = [p for p in merged if contains(p["headRefOid"], head)]
     if beyond:
         return {"status": WORK_AFTER_MERGE, "prs": sorted(p["number"] for p in beyond)}
+    squashed = [p for p in merged if content_merged and merge_oid(p) and content_merged(head, merge_oid(p))]
+    if squashed:
+        return {"status": MERGED_DIRTY if dirty else MERGED, "prs": sorted(p["number"] for p in squashed)}
     if elsewhere and ahead:
         return {"status": MERGED_DIRTY if dirty else MERGED_ELSEWHERE, "prs": sorted(elsewhere)}
     closed = sorted(p["number"] for p in prs if p["state"] == "CLOSED")
@@ -70,7 +81,7 @@ def describe(result: dict, ahead: int, dirty: int) -> str:
 def prs_by_branch(repo: Path, warn: list[str] | None = None) -> dict[str, list[dict]] | None:
     """استدعاءٌ واحدٌ لكلّ الطلبات (مفتوحة ومدموجة ومغلقة) مفهرسةً باسم الفرع. None إن تعذّر gh."""
     proc = subprocess.run(
-        ["gh", "pr", "list", "--state", "all", "--limit", "2000", "--json", "number,state,headRefName,headRefOid,mergedAt"],
+        ["gh", "pr", "list", "--state", "all", "--limit", "2000", "--json", "number,state,headRefName,headRefOid,mergedAt,mergeCommit"],
         cwd=repo, capture_output=True, encoding="utf-8", errors="replace", check=False,
     )
     if proc.returncode != 0:
@@ -97,12 +108,32 @@ def git_contains(repo: Path) -> Callable[[str, str], bool]:
     return contains
 
 
+def git_content_merged(repo: Path) -> Callable[[str, str], bool]:
+    """هل ما غيّره الفرعُ (عن نقطة تفرّعه من إيداع الدمج) مطابقٌ لمحتوى تلك الملفّات في إيداع الدمج؟ (`git diff --quiet`)
+    السحقُ يضع إيداعاً جديداً في main فلا يكون الفرعُ سلفاً، لكنّ محتوى ملفّاته يصير مطابقاً. لا ملفَّ تغيّر ⇒ False؛
+    وملفٌّ لمسه طلبٌ آخر قبل الدمج يُظهر اختلافاً ⇒ False (حكمٌ متحفّظٌ يُبقي الإنذار لا يُخفيه)."""
+    def run(*a: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *a], cwd=repo, capture_output=True, encoding="utf-8", errors="replace", check=False)
+
+    def content_merged(head: str, merge_commit: str) -> bool:
+        base = run("merge-base", head, merge_commit)
+        if base.returncode != 0 or not base.stdout.strip():
+            return False
+        names = run("diff", "--name-only", "-z", base.stdout.strip(), head)
+        files = [f for f in names.stdout.split("\0") if f]
+        if names.returncode != 0 or not files:
+            return False
+        return run("diff", "--quiet", head, merge_commit, "--", *files).returncode == 0
+    return content_merged
+
+
 def branch_of(wt: dict) -> str:
     """git worktree list --porcelain يعطي 'branch refs/heads/<اسم>'؛ الرأسُ المنفصل بلا فرع."""
     return wt.get("branch", "").removeprefix("refs/heads/")
 
 
-def merged_elsewhere(repo: Path, head: str, merged: list[dict], contains: Callable[[str, str], bool]) -> list[int]:
+def merged_elsewhere(repo: Path, head: str, merged: list[dict], contains: Callable[[str, str], bool],
+                     content_merged: Callable[[str, str], bool] | None = None) -> list[int]:
     """طلباتٌ مدموجةٌ (أيُّ فرع) رأسُها يحوي رأسَ الشجرة. لا يُفحص إلّا ما اندمج بعد تاريخ إيداع الرأس — فالسلفُ لا
     يكون داخل طلبٍ اندمج قبل وجوده؛ هذا يقصر الفحصَ على عشراتٍ بدل مئاتٍ من استدعاءات merge-base."""
     stamp = subprocess.run(["git", "show", "-s", "--format=%cI", head], cwd=repo, capture_output=True,
@@ -112,7 +143,8 @@ def merged_elsewhere(repo: Path, head: str, merged: list[dict], contains: Callab
     from datetime import datetime
     t0 = datetime.fromisoformat(stamp)
     later = [p for p in merged if p.get("mergedAt") and datetime.fromisoformat(p["mergedAt"].replace("Z", "+00:00")) >= t0]
-    return sorted(p["number"] for p in later if contains(head, p["headRefOid"]))
+    return sorted(p["number"] for p in later if contains(head, p["headRefOid"])
+                  or (content_merged and merge_oid(p) and content_merged(head, merge_oid(p))))
 
 
 def overlap(repo: Path, head: str) -> tuple[int, int]:
