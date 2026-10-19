@@ -539,7 +539,7 @@ def _run_preflight(card_id: str, repo: str) -> tuple[int, str]:
 
 def check_preflight_ready(item: dict, state: str, repo: str | None, waive: str | None, runner=None) -> str | None:
     """الفحصُ المسبق قبل «جاهزٌ للمعاينة» (W-20261014-022): يمنع إعادة الاعتماد من أساسٍ غير مدفوعٍ أو متأخّر أو mypy مختلف.
-    مع --preflight-repo يُشغَّل pr_open_prep --preflight ويُرفض الانتقال عند الفشل؛ بدونه إنذارٌ (PREFLIGHT_ENFORCE=1 يجعله رفضاً).
+    مع --preflight-repo يُشغَّل pr_open_prep --preflight ويُرفض الانتقال عند الفشل؛ بدونه رفضٌ (قرار المالك 2026-10-19: الإلزامُ افتراضيّ؛ PREFLIGHT_ENFORCE=0 يعيده إنذاراً).
     P0 معفى؛ والاستثناءُ المسجَّل --waive-preflight "السبب" يُدوَّن في ملاحظة."""
     if state != "ready_for_review" or item.get("priority") == "P0":
         return None
@@ -547,7 +547,7 @@ def check_preflight_ready(item: dict, state: str, repo: str | None, waive: str |
         return f"استثناءُ الفحص المسبق: {waive}"
     if not repo:
         msg = "لم يُشغَّل الفحصُ المسبق قبل «جاهزٌ للمعاينة» — مرِّر --preflight-repo <شجرتك> (أو --waive-preflight \"السبب\")"
-        if os.environ.get("PREFLIGHT_ENFORCE") == "1":
+        if os.environ.get("PREFLIGHT_ENFORCE") != "0":
             raise LedgerError(msg)
         return msg
     code, out = (runner or _run_preflight)(item["id"], repo)
