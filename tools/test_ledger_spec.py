@@ -30,14 +30,14 @@ class Spec(unittest.TestCase):
     def test_full_card_rejected_until_complete(self):
         cid = self.card()
         with self.assertRaises(ledger.LedgerError) as cm:
-            ledger.move(cid, "routed", path=self.path)
+            ledger.move(cid, "routed", held_by="0402", path=self.path)
         self.assertIn("files_allowed", str(cm.exception))
         with self.assertRaises(ledger.LedgerError):
             ledger.move(cid, "in_progress", path=self.path)
         ledger.set_spec(
             cid, "full", FULL["ref"], None, None, FULL["assumptions"], FULL["source_of_truth"], FULL["files_allowed"],
             FULL["files_forbidden"], FULL["accept"], FULL["steps"], "0301", self.path)
-        ledger.move(cid, "routed", path=self.path)
+        ledger.move(cid, "routed", held_by="0402", path=self.path)
         it = ledger.reduce_state(ledger.load_events(self.path))[cid]
         self.assertEqual(it["spec_by"], "0301")
         self.assertIn("مكتملة", ledger.spec_status(it))
@@ -45,13 +45,14 @@ class Spec(unittest.TestCase):
 
     def test_waive_is_recorded(self):
         cid = self.card()
-        ledger.move(cid, "routed", path=self.path, waive_spec="عاجلٌ بأمر المالك")
+        ledger.move(cid, "routed", held_by="0402", path=self.path, waive_spec="عاجلٌ بأمر المالك")
         notes = ledger.reduce_state(ledger.load_events(self.path))[cid]["notes"]
         self.assertTrue(any("استثناءُ المواصفة" in n["text"] for n in notes))
 
     def test_basic_only_warns(self):
         cid = self.card("tool", problem="سكربت")
-        ledger.move(cid, "routed", path=self.path)
+        ledger.set_spec(cid, accept=["لقطة"], steps=["اقرأ"], by="0301", path=self.path, basic_ok="سكربتٌ صغير")
+        ledger.move(cid, "routed", held_by="0402", path=self.path)
 
     def test_open_assumption_must_be_declared(self):
         cid = self.card()
@@ -67,7 +68,8 @@ class Spec(unittest.TestCase):
 
     def test_return_and_kpi(self):
         cid = self.card("tool", problem="سكربت")
-        ledger.move(cid, "routed", path=self.path)
+        ledger.set_spec(cid, accept=["لقطة"], steps=["اقرأ"], by="0301", path=self.path, basic_ok="سكربتٌ صغير")
+        ledger.move(cid, "routed", held_by="0402", path=self.path)
         ledger.return_card(cid, "ينقصها المرجع", "0501", self.path)
         events = ledger.load_events(self.path)
         it = ledger.reduce_state(events)[cid]

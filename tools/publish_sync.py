@@ -108,7 +108,7 @@ def commands(row: dict) -> list[str]:
     start = CHAIN.index(row["state"]) + 1 if row["state"] in CHAIN else 0
     why = f"#{row['pr']} مدموج {row['merge']} ومنشور {row['prod']}"
     return [
-        f'python tools/ledger.py move {row["id"]} {s} --waive-remote-check "{why}"' for s in CHAIN[start:]
+        f'python tools/ledger.py move {row["id"]} {s} --by 0601 --waive-remote-check "{why}"' for s in CHAIN[start:]
     ]
 
 
@@ -169,6 +169,18 @@ def main(argv=None) -> int:
         r["prod"] = prod[:7]
     if a.json:
         print(json.dumps({"prod": prod, "due": rows}, ensure_ascii=False, indent=2))
+        return 0
+    if a.write_notes:
+        done = write_notes(rows, prod[:7], a.by)
+        print(f"دُوّنت الملاحظةُ المجمَّعة على {len(done)} بطاقة (ملاحظةٌ فقط، بلا نقل حالة): " + "، ".join(done) if done else "لا بطاقاتٍ مستحقّة لتدوينها")
+        return 0
+    if a.digest:
+        if not rows:
+            print("لا بطاقاتٍ مستحقّة")
+            return 0
+        print(digest_note(rows[0], rows, prod[:7]))
+        for owner, msg in messages_by_owner(rows, states, prod[:7]).items():
+            print(f"\nإلى {owner}:\n  {msg}")
         return 0
     print(f"الإنتاج {prod[:7]} — {len(rows)} بطاقة دُمجت وصارت داخله ولم تُنقل إلى published")
     for r in rows:

@@ -173,3 +173,22 @@ def test_card_suffix_does_not_match(tmp_path):
     c = _conf(tmp_path, "| إعفاء manifest | W-1-0081 @abcd1234 |")
     with pytest.raises(ValueError):
         vg.waive("W-1-008", "abcd1234", "r", "0101", tmp_path, c)
+
+
+def test_unavailable_page_is_not_a_violation_but_all_unavailable_fails(tmp_path):
+    na = {"path": "/w/", "role": "principal", "shots": [], "violations": [], "unavailable": True, "unavailable_reason": "رمز الاستجابة 404 بدور principal"}
+    write_evidence(tmp_path / "W-1" / "eeee5555", "eeee5555", [page(), na])
+    ok, msg = vg.evidence_status("W-1", "eeee5555", tmp_path)
+    assert ok and "غيرُ متاحةٍ بدورها: 1" in msg and "/w/" in msg
+    write_evidence(tmp_path / "W-1" / "ffff6666", "ffff6666", [na])
+    ok, msg = vg.evidence_status("W-1", "ffff6666", tmp_path)
+    assert not ok and "غيرُ متاحةٍ" in msg
+
+
+def test_subtract_shell_justifies_only_matching_admin_shell_violations():
+    shell = {("font", "div#user-tools")}
+    vs = [{"kind": "font", "selector": "div#user-tools", "detail": "11px", "count": 1, "justified": False},
+          {"kind": "font", "selector": "p.mine", "detail": "10px", "count": 1, "justified": False}]
+    out = vg.subtract_shell(vs, shell)
+    assert out[0]["justified"] and "قشرة إدارة Django" in out[0]["reason"] and not out[1]["justified"]
+    assert not vg.subtract_shell([dict(vs[1])], None)[0]["justified"]
