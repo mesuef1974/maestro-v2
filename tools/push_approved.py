@@ -35,6 +35,16 @@ def _git(repo: str, *args: str) -> tuple[int, str]:
     return p.returncode, (p.stdout or "") + (p.stderr if p.returncode else "")
 
 
+MIN_HEAD = 7
+
+
+def same_head(a: str, b: str) -> bool:
+    """تطابقُ رأسين ببادئةٍ مشتركةٍ بطول الأقصر منهما (٧ أحرف فأكثر): الدفترُ قد يحمل رأساً بسبعة أو ثمانية أحرف (W-20261019-021)."""
+    a, b = a.strip().lower(), b.strip().lower()
+    n = min(len(a), len(b))
+    return n >= MIN_HEAD and a[:n] == b[:n]
+
+
 def approval_ok(card: str, head: str) -> bool:
     p = subprocess.run(
         [sys.executable, "-X", "utf8", str(HERE / "approval_check.py"), "card", card, "--head", head],
@@ -52,15 +62,15 @@ def guard(card: str, branch: str, repo: str, items: dict, git=_git, approved=app
         raise PushRefused(f"بطاقةٌ غيرُ موجودة: {card}")
     if item.get("state") != "approved":
         raise PushRefused(f"البطاقةُ في «{item.get('state')}» لا approved: لا دفعَ")
-    want = (item.get("approved_head") or "")[:8]
+    want = (item.get("approved_head") or "").strip()
     if not want:
         raise PushRefused("لا رأسَ اعتمادٍ في الدفتر: لا دفعَ بلا رأس")
     rc, head = git(repo, "rev-parse", "HEAD")
     head = head.strip()
     if rc or not head:
         raise PushRefused("تعذّرت قراءةُ HEAD في الشجرة")
-    if head[:8] != want:
-        raise PushRefused(f"HEAD الشجرة {head[:8]} ≠ الرأس المعتمَد {want}: إيداعٌ بعد الاعتماد يُبطله")
+    if not same_head(head, want):
+        raise PushRefused(f"HEAD الشجرة {head[:8]} ≠ الرأس المعتمَد {want[:8]}: إيداعٌ بعد الاعتماد يُبطله")
     rc, dirty = git(repo, "status", "--porcelain", "--untracked-files=no")
     if rc or dirty.strip():
         raise PushRefused("في الشجرة تعديلٌ غيرُ مودَع لملفٍّ متتبَّع: الملفّاتُ تغيّرت بعد الاعتماد")
