@@ -24,6 +24,15 @@ REPO_DIR = "D:/shschool_mvp"
 SLUG = "sh-school/shschool_mvp"
 
 
+def source_line() -> str:
+    """مسارُ owner_confirmations.md المقروء مطلقاً وتاريخُ آخر تعديل، ليُكشف الاستعمالُ الصامتُ لنسخةٍ قديمةٍ في شجرةٍ أخرى."""
+    f = ROOT / "owner_confirmations.md"
+    if not f.exists():
+        return f"المصدر المقروء: {f} — غير موجود"
+    import datetime  # noqa: PLC0415
+    return f"المصدر المقروء: {f} — آخر تعديل {datetime.datetime.fromtimestamp(f.stat().st_mtime):%Y-%m-%d %H:%M}"
+
+
 def run(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return p.returncode, (p.stdout or "") + (p.stderr or "")
@@ -162,6 +171,7 @@ def main() -> None:
     u.add_argument("target")
     u.add_argument("--base", default="http://localhost:8500")
     a = ap.parse_args()
+    print(source_line())
     {"pr": cmd_pr, "branch": cmd_branch, "alert": cmd_alert, "card": cmd_card}.get(a.kind, lambda t: None)(a.target) \
         if a.kind != "url" else cmd_url(a.target, a.base)
 
