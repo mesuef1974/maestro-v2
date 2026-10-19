@@ -421,6 +421,48 @@ def check_spec_gate(item: dict, target: str, history_states: set[str], waive: st
     return "تحذير: مواصفةٌ ناقصة (basic): " + "؛ ".join(miss)
 
 
+#: بوّابةُ الاعتماد (W-20261019-011، أمر المالك 2026-10-19): لا approved لبطاقةٍ جديدةٍ بمواصفةٍ ناقصة. القديمةُ لا تُمسّ (SPEC_STRICT_FROM).
+WAIVED_MARK = "استثناءُ المواصفة"
+SPEC_OPEN_EXCLUDED = ("merged", "published", "closed", "deferred")
+
+
+def spec_blockers(item: dict) -> list[str]:
+    """ما يمنع الاعتماد: نقصُ المواصفة؛ والصغيرةُ بوسم الأساس يكفيها الحدُّ الأدنى."""
+    miss = spec_missing(item)
+    if effective_spec_tier(item) == "basic" and item.get("spec_basic_ok"):
+        miss = [m for m in miss if m.split(" ", 1)[0] in BASIC_OK_REQUIRED]
+    return miss
+
+
+def check_spec_on_approval(item: dict, target: str, waive: str | None) -> str | None:
+    """يرفض approved لبطاقةٍ جديدةٍ ناقصةِ المواصفة؛ يعيد نصَّ الاستثناء المسجَّل إن وُجد (أو سبقَ تسجيلُه عند التوجيه)."""
+    if target != "approved" or str(item.get("created", ""))[:10] < SPEC_STRICT_FROM:
+        return None
+    miss = spec_blockers(item)
+    if not miss:
+        return None
+    if any(WAIVED_MARK in str(n.get("text", "")) for n in item.get("notes") or []):
+        return None  # استُثنيت عند التوجيه بسببٍ مدوَّن
+    if waive:
+        return f"{WAIVED_MARK} عند الاعتماد: {waive}"
+    raise LedgerError("المواصفةُ ناقصة (بطاقةٌ جديدة) — لا اعتماد: " + "؛ ".join(miss)
+                      + ' (تُكمَل بـspec، أو استثناءٌ مسجَّل --waive-spec "<سبب>")')
+
+
+def spec_gaps(items: dict) -> list[dict]:
+    """البطاقاتُ المفتوحةُ ناقصةُ المواصفة (قراءةٌ فقط): المعرّفُ والحالةُ والمستوى والجديدةُ منها وما ينقص."""
+    out = []
+    for it in sorted(items.values(), key=order_key):
+        if it.get("state") in SPEC_OPEN_EXCLUDED:
+            continue
+        miss = spec_missing(it)
+        if miss:
+            out.append({"id": it["id"], "state": it.get("state"), "priority": it.get("priority", "—"),
+                        "tier": effective_spec_tier(it), "new": str(it.get("created", ""))[:10] >= SPEC_STRICT_FROM,
+                        "held_by": it.get("held_by") or "", "missing": miss})
+    return out
+
+
 RETURNABLE = {"verified", "routed", "in_progress", "ready_for_review", "notes"}
 
 
@@ -640,6 +682,9 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if waive_spec and state in ("routed", "in_progress") and spec_missing(items[item_id]) and (
             effective_spec_tier(items[item_id]) == "full" or str(items[item_id].get("created", ""))[:10] >= SPEC_STRICT_FROM):
         note = f"{note + ' — ' if note else ''}استثناءُ المواصفة: {waive_spec}"
+    approval_waiver = check_spec_on_approval(items[item_id], state, waive_spec)
+    if approval_waiver:
+        note = f"{note + ' — ' if note else ''}{approval_waiver}"
     if spec_warning:
         print(spec_warning, file=sys.stderr)
     if state == "in_progress":
@@ -1226,6 +1271,7 @@ def main() -> None:
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
+    sub.add_parser("spec-gaps", help="البطاقاتُ المفتوحةُ ناقصةُ المواصفة (قراءةٌ فقط؛ الجديدةُ منها تُحجَب عند الاعتماد)")
     sh = sub.add_parser("show"); sh.add_argument("id"); sh.add_argument("--brief", action="store_true", help="ملخّصٌ ≤12 سطراً")
     tg = sub.add_parser("tag", help="يكتب خطورةَ البطاقة ومجالها من مسارات عملها")
     tg.add_argument("id")
@@ -1280,6 +1326,12 @@ def main() -> None:
                 print(json.dumps(it, ensure_ascii=False, indent=2))
                 if it:
                     print("المواصفة — " + spec_status(it))
+            elif args.cmd == "spec-gaps":
+                gaps = spec_gaps(items)
+                for g in gaps:
+                    print(f"{g['id']}  {g['priority']}  {g['state']:16} {g['tier']:5} {'جديدة' if g['new'] else 'قديمة'}"
+                          + (f"  [حاجزها {g['held_by']}]" if g["held_by"] else "") + "  ينقص: " + "؛ ".join(m.split(" ", 1)[0] for m in g["missing"]))
+                print(f"المجموع: {len(gaps)} مفتوحةً ناقصة (منها {sum(g['tier'] == 'basic' for g in gaps)} أساسيّة و{sum(g['new'] for g in gaps)} جديدة)")
             else:
                 for it in sorted(items.values(), key=order_key):
                     if not args.state or it["state"] == args.state:

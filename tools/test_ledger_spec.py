@@ -82,5 +82,66 @@ class Spec(unittest.TestCase):
         self.assertEqual(ledger.effective_spec_tier({"created": "2026-10-01T08:00:00+03:00", "type": "ui"}), "basic")
 
 
+class ApprovalGate(unittest.TestCase):
+    """W-20261019-011: approved يرفض مواصفةً ناقصةً لبطاقةٍ جديدة؛ والقديمةُ لا تُمسّ."""
+
+    def setUp(self):
+        self.path = str(Path(tempfile.mkdtemp()) / "e.jsonl")
+
+    def ready(self, created="2026-10-19T09:00:00+03:00", typ="tool", spec=False, basic_ok=None):
+        cid = ledger.add_item("owner", typ, "سكربت", "أ", "ق", start="2026-10-19T08:00", priority="P2", path=self.path)
+        ledger.append_event("update", cid, {"created": created, "spec_tier": "basic"}, self.path)
+        if spec:
+            ledger.set_spec(cid, "basic", FULL["ref"], None, None, FULL["assumptions"], FULL["source_of_truth"], FULL["files_allowed"],
+                            FULL["files_forbidden"], FULL["accept"], FULL["steps"], "0301", self.path)
+        if basic_ok:
+            ledger.set_spec(cid, "basic", accept=FULL["accept"], steps=FULL["steps"], by="0301", path=self.path, basic_ok=basic_ok)
+        ledger.append_event("state", cid, {"state": "ready_for_review", "by": "0702"}, self.path)
+        return cid
+
+    def approve(self, cid, **kw):
+        ledger.move(cid, "approved", by="0501", head="abcdef12", path=self.path, note="اعتُمد من المالك على 8500 — 2026-10-19", **kw)
+        return ledger.reduce_state(ledger.load_events(self.path))[cid]
+
+    def test_new_incomplete_card_is_refused_at_approval(self):
+        cid = self.ready()
+        with self.assertRaises(ledger.LedgerError) as cm:
+            self.approve(cid)
+        self.assertIn("لا اعتماد", str(cm.exception))
+        self.assertIn("files_allowed", str(cm.exception))
+        self.assertNotEqual(ledger.reduce_state(ledger.load_events(self.path))[cid]["state"], "approved")
+
+    def test_complete_card_is_approved(self):
+        self.assertEqual(self.approve(self.ready(spec=True))["state"], "approved")
+
+    def test_basic_ok_minimum_is_enough(self):
+        self.assertEqual(self.approve(self.ready(basic_ok="سكربتٌ صغير"))["state"], "approved")
+
+    def test_waiver_is_recorded_in_a_note(self):
+        it = self.approve(self.ready(), waive_spec="عاجلٌ بأمر المالك")
+        self.assertEqual(it["state"], "approved")
+        self.assertTrue(any("استثناءُ المواصفة عند الاعتماد" in n["text"] for n in it["notes"]))
+
+    def test_a_waiver_given_at_routing_is_honoured_at_approval(self):
+        cid = self.ready()
+        ledger.append_event("note", cid, {"text": "استثناءُ المواصفة: عاجل"}, self.path)
+        self.assertEqual(self.approve(cid)["state"], "approved")
+
+    def test_old_cards_are_untouched(self):
+        self.assertEqual(self.approve(self.ready(created="2026-10-10T09:00:00+03:00"))["state"], "approved")
+
+    def test_spec_gaps_lists_only_open_incomplete_cards(self):
+        open_gap = self.ready()
+        done = self.ready(spec=True)
+        closed = self.ready()
+        ledger.append_event("state", closed, {"state": "merged", "by": "0601"}, self.path)
+        gaps = ledger.spec_gaps(ledger.reduce_state(ledger.load_events(self.path)))
+        ids = {g["id"] for g in gaps}
+        self.assertIn(open_gap, ids)
+        self.assertNotIn(done, ids)
+        self.assertNotIn(closed, ids)
+        self.assertTrue(next(g for g in gaps if g["id"] == open_gap)["new"])
+
+
 if __name__ == "__main__":
     unittest.main()

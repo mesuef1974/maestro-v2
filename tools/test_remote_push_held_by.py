@@ -11,7 +11,7 @@ import my_state
 def fresh():
     path = os.path.join(tempfile.mkdtemp(), "e.jsonl")
     cid = ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-10-04T08:00", priority="P2", path=path)
-    ledger.move(cid, "approved", path=path, note="اعتمد المالك على 8500", head="abcdef12", by="0501")
+    ledger.move(cid, "approved", path=path, note="اعتمد المالك على 8500", head="abcdef12", by="0501", waive_spec="اختبارُ الدفع لا المواصفة")
     return path, cid
 
 
