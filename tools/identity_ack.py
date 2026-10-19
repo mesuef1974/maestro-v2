@@ -4,7 +4,7 @@
     python identity_ack.py [--cwd <مسار الشجرة>]
 
 الإيصالُ ملفٌّ في مجلّد git الخاصّ بالشجرة (`<git-dir>/identity_ack.json`) لا في شجرة العمل: غيرُ متتبَّعٍ ولا يظهر
-في `git status` ولا يُودَع. فيه بصمةُ references/95-checklist.md ووقتُ القراءة. ويبطل تلقائياً إن تغيّر الملفّ
+في `git status` ولا يُودَع. فيه بصمةُ references/95-checklist.md ووقتُ القراءة ورأسُ HEAD وقتَها (D-376م: يربط الإيصالَ برأسٍ). ويبطل تلقائياً إن تغيّر الملفّ
 (حدّثته ترقيةٌ لاحقة) فتُقرأ القائمةُ من جديد. يقرأه identity_guard.py.
 """
 
@@ -14,12 +14,22 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import identity_guard as g  # noqa: E402
+
+
+def current_head(top: Path) -> str:
+    """رأسُ HEAD الكامل للشجرة وقتَ القراءة، أو فراغ إن تعذّر (الإيصالُ يبقى صالحاً بلا رأس)."""
+    try:
+        r = subprocess.run(["git", "-C", str(top), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
 
 
 def main() -> int:
@@ -46,6 +56,7 @@ def main() -> int:
         "sha256": hashlib.sha256(data).hexdigest(),
         "time": datetime.now().astimezone().isoformat(timespec="seconds"),
         "tree": top.name,
+        "head": current_head(top),
     }, ensure_ascii=False), encoding="utf-8")
     print(f"\n[إيصال] سُجِّلت قراءةُ 95 للشجرة {top.name}. اعمل الآن وفق القائمة أعلاه؛ ويبطل الإيصالُ إن تغيّر الملفّ.")
     return 0

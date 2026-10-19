@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>عصف تجويد الدفتر - 2026-10-18</title>
+<style>
+body{font-family:Tajawal,Segoe UI,Tahoma,sans-serif;margin:1.5rem auto;max-width:1150px;padding:0 1rem;line-height:1.9;color:#222}
+h1{border-bottom:3px solid #7a1f2b;padding-bottom:.4rem}h2{color:#7a1f2b;margin-top:2rem}
+table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{border:1px solid #ddd;padding:.4rem .6rem;text-align:start;vertical-align:top}
+thead th{background:#f4eaec}.box{background:#faf5f6;border-inline-start:4px solid #7a1f2b;padding:.6rem 1rem;margin:1rem 0}
+.rec{background:#e8f5ea}.red{background:#fdecec;border-inline-start:4px solid #b00020;padding:.6rem 1rem;margin:1rem 0}
+.tag{font-size:.78rem;background:#eee;border-radius:4px;padding:0 .4rem}
+</style></head><body>
+<h1>عصف ذهني: كيف نجوّد الدفتر (2026-10-18)</h1>
+
+<div class="box"><b>خلاصة للمالك.</b>
+<ol>
+<li>الدفتر (<code>ledger/events.jsonl</code>: 6842 حدثاً، 556 بطاقة، 3.3 م.ب) يسجّل <b>الحالة</b> جيداً لكنه لا يسجّل <b>الأدلة</b>: لا رقم طلب في أي حدث <code>pushed/merged/published</code>، والرأس موجود في 92 فقط من 488 <code>pushed</code> وفي صفر من <code>merged</code>. <span class="tag">مقيس مرتين: مني ومن 0701</span></li>
+<li>النتيجة العملية: كل جلسة تعيد التحقق يدوياً (0501 يقارن أربعة أشياء في كل إحالة، 0601 يعفي فحص الفرع في كل بطاقة، 0301 يكتشف التكرار بالعين)، ولا يمكن حساب فشل التغيير ولا زمن الاستعادة (DORA).</li>
+<li>الدفتر <b>غير محميّ من التلاعب</b> بل مضبوط بالانضباط (0104): لا سلسلة تجزئة، ومعطى <code>--by</code> نصّ يصرّح به المستدعي، والملف خارج git.</li>
+<li>اتفقت الجلسات الخمس على <b>خطوتين رخيصتين</b>: (أ) فرض <code>--pr</code> و<code>--head</code> عند الانتقال إلى <code>pushed/merged/published</code> (يملأ حقلين فيُغني عن معظم التحقق اليدوي)، (ب) أمر واحد يطبع حالة البطاقة الكاملة. وكلاهما <b>إنذار بالظل أولاً</b> لا رفض.</li>
+<li>لا شيء نُفّذ: التقرير للقراءة، وكل تعديل على <code>ledger.py</code> يحتاج مواصفة 0301 وأمراً من المالك.</li>
+</ol></div>
+
+<h2>١. الوضع الراهن مقيساً</h2>
+<table><thead><tr><th>المقياس</th><th>القيمة</th><th>الدلالة</th></tr></thead><tbody>
+<tr><td>الأحداث</td><td>6842: note 2818، state 2779، update 670، created 556، approval 19</td><td>الملاحظات أكثر من الحالات؛ سجل واحد مختلط</td></tr>
+<tr><td>أحداث الحالة بلا <code>by</code></td><td>201 من 2779 (7%)</td><td>لا يُعرف من سجّلها</td></tr>
+<tr><td><code>approved</code> بلا <code>head</code></td><td>55 من 604 (9%)</td><td>الاعتماد لا يغطي رأساً معيّناً</td></tr>
+<tr><td><code>head</code> على pushed / merged / published</td><td>92 من 488 / 0 من 370 / 1 من 376</td><td>لا يمكن إثبات "المدموج = المعتمَد" من الدفتر</td></tr>
+<tr><td>رقم الطلب (<code>pr</code>) على pushed/merged/published</td><td>0 من 488 / 370 / 376</td><td>ربط البطاقة بالطلب استدلال من GitHub (مؤكَّد من 0701)</td></tr>
+<tr><td>بطاقات بمواصفة (<code>spec_by</code> إلخ)</td><td>335 من 556 (60%)</td><td>40% بلا مواصفة مسجلة</td></tr>
+<tr><td>بطاقات بـ<code>held_by</code></td><td>126 من 556 (23%)</td><td>أغلب البطاقات بلا حامل مسجّل</td></tr>
+<tr><td>بطاقات pushed لم تمرّ بـ<code>ready_for_review</code></td><td><b>233 من 379 (61%)</b></td><td>الانتقال لا يشترط المرحلة السابقة؛ 0103 قدّرها بـ"بطاقتين على الأقل" فالقياس أعلى بكثير. قد يكون بعضها مقصوداً قبل أن تُدخل المرحلة، لم أفرز <span class="tag">لم يُفرز</span></td></tr>
+<tr><td>انتقالات للخلف</td><td>99 (أكثرها approved←ready_for_review: 61)</td><td>إعادة اعتماد بعد تغيّر الرأس</td></tr>
+<tr><td>تكرار الحالة نفسها</td><td>405 (routed←routed: 142، approved←approved: 127)</td><td>تحديثات تُسجَّل كحالة وتضخّم السجل</td></tr>
+<tr><td>بطاقات بلا أي حدث حالة</td><td>56</td><td>لا تظهر في أي قياس للتدفق</td></tr>
+<tr><td>ملاحظات أطول من 240 حرفاً</td><td>10 من 2818</td><td>حدّ 240 لملاحظة reapprove يمسّ قلّة نادرة</td></tr>
+</tbody></table>
+<p>الأعداد أحداث إلا حيث ذُكر "بطاقة". قياسي والتحقق الجزئي من أرقام 0701 متطابقان في الرأس والطلب.</p>
+
+<h2>٢. مواقف الجلسات</h2>
+<table><thead><tr><th>الجلسة</th><th>ما يتعبها / ما ينقص الدفتر</th></tr></thead><tbody>
+<tr><td>0103 الحوكمة</td><td>(1) القفز في الحالات لا يُشترط. (2) نحو 80 بطاقة موجَّهة أو ملتقَطة بلا حركة فوق يوم (0701: 15، 0702: 14)، ولا تصعيد آلي. (3) <code>ledger add</code> لا يلزم رقم مواصفة 0301 ولا حقل <code>origin/owner_order</code> (ظهرت W-20261018-002)، وسجل المخالفات بلا مفتاح تسلسلي. مقترحاته بالظل: إنذار عند الانتقال دون <code>ready_for_review</code>، إنذار عند add مصدره المالك بلا <code>spec_by</code>، تقرير يومي لبطاقات بلا حركة فوق 3 س، رقم <code>V-YYYYMMDD-NN</code> مولَّد بالأداة.</td></tr>
+<tr><td>0501 الاعتماد</td><td>(1) <code>waive-head</code> يرفض إن كان <code>approved_head</code> قديماً فيحتاج reapprove من 0101، ونسخ أدوات قديمة (ينقصها <code>tests-main-chain</code>) تعطي ✘ كاذباً. (2) <code>approval_check</code> يخلط "معتمَد من إفادة جلسة" بـ"معتمَد بالدفتر". (3) لا ربط بين رأس <code>ls-remote</code> والرأس المعتمد. (4) تنازلات tests-only/red-fix تحتاج قراءة الفرق يدوياً لاستبعاد الصلاحيات؛ ينقصها فحص آلي. (5) يطلب <b>أمراً واحداً</b> يطبع: الرأس المعتمد، ورأس الفرع البعيد، وآخر تنازل، وهل الطلب مندمج.</td></tr>
+<tr><td>0601 الدمج والنشر</td><td>(1) <code>pushed</code> يشترط فرعاً قائماً، وبعد squash يُحذف الفرع فيلزم <code>--waive-remote-check</code> في كل بطاقة؛ يطلب قبول <code>--pr</code> مدموج بدله. (2) تسلسل pushed←merged←published يدوي، والمعتمدة تحتاج pushed بإعفاء أولاً؛ يطلب أمراً يمرّر المراحل من حقائق GitHub و<code>/health/</code>. (3) <code>publish_auto --apply</code> لا يقبل <code>--by</code> فلا يستعمله. (4) لا حقل للرأس المعتمد ولا للطلب. (5) دمج main فقط يعيد السؤال؛ يطلب أن فرقاً فارغاً من ملفات الطلب يعني اعتماداً سارياً. (6) فحوص pending/shard تُحسب فشلاً مبكراً في بعض الأدوات. (7) لا حالة "مدموج بانتظار النشر".</td></tr>
+<tr><td>0301 التصنيف</td><td>(1) لا أمر يعدّل problem/العنوان بعد add (W-20261015-015)، ولا إعادة حامل أو حالة مثل published←pushed (رُفضت لـ020). (2) لا حقل يربط بطاقتين تعدّلان الموضع نفسه (002/003 على ALL_STUDENTS_ROLES؛ #1090/017 على manifest_global.json)؛ يقترح <code>files_overlap</code> تلقائياً من <code>files_allowed</code>. (3) لا ربط PR↔بطاقة. (4) التكرار (010/011) كُشف بالعين؛ يقترح فحص تشابه problem+files عند add. (5) <code>urgent</code> منفصل عن الأولوية ولا يظهر في list. (6) يُعاد كتابته يدوياً: ملخصات لـ0101، جداول الحالة، نصوص أوامر المالك. (7) spec يرفض أخطاء الطول بصمت فتُكتشف بعد الكتابة.</td></tr>
+<tr><td>0701 القياس</td><td>مقيس من الدفتر: لا <code>pr</code> في أي حدث، <code>head</code> في 92 فقط من 488 pushed وفي صفر merged وواحد published، <code>branch</code> في 144 من 488 pushed. فلا قياس "رأس معتمد = رأس مدموج"، و<code>pushed</code> بلا طلب لا يُكشف إلا بمقابلة GitHub. DORA: change-failure وMTTR غير قابلين للحساب. حقول مقترحة: <code>pr</code> و<code>merge_sha</code> و<code>deployed_at</code> على merged/published، و<code>caused_by</code> و<code>restored_at</code> و<code>kind=incident|revert</code>. أرخص خطوة: فرض <code>--pr</code> و<code>--head</code> على move merged/published (تمسّ <code>ledger.py</code> فلا يُنفَّذ بلا مواصفة).</td></tr>
+<tr><td>0104 الأمان</td><td>الدفتر غير محميّ من التلاعب بل بالانضباط: لا سلسلة تجزئة (سطر {ts,id,kind,data})؛ <code>RECORDERS</code> تُنفَّذ في الأداة وحدها والـ<code>--by</code> نصّ يصرّح به المستدعي؛ الملف 0644 ومتجاهَل في git فلا تاريخ ولا نسخة مستقلة. أخطر ثغرة: سطر اعتماد مزوّر يفتح بوّابة الدفع، والحاجز بعده <code>approval_check</code> وسطر الاعتماد في الطلب. تخفيف رخيص: <code>prev_hash</code> متسلسل مع كل إضافة، ونسخة يومية لآخر تجزئة خارج المجلد، وفحص في <code>approval_check</code>؛ يكشف ولا يمنع. ويعدّ الخطر مقبولاً ما دام الفاعلون جلسات على جهاز المالك.</td></tr>
+<tr><td>المنفّذون (من مذكّرات التسليم لا مقاطعة)</td><td>0424 و0421 و0702 على طلبات حمراء فلم يُقاطَعوا. صوتهم السابق (0409، 0420 في عصف أمس): تضيع أسباب الاستبعاد والتنازلات الموقّعة وقرارات المالك الشفهية غير المسجّلة في <code>owner_confirmations</code>؛ والتسرّب بين فروع البطاقات.</td></tr>
+</tbody></table>
+
+<h2>٣. المحاور المتقاطعة والتحليل</h2>
+<table><thead><tr><th>المحور</th><th>من قال</th><th>الأثر</th><th>الكلفة</th></tr></thead><tbody>
+<tr class="rec"><td><b>١. الأدلة على الانتقال</b>: فرض/ملء <code>pr</code> و<code>head</code> و<code>merge_sha</code> عند pushed/merged/published</td><td>0701، 0601، 0501، 0301</td><td>كبير: يلغي مقارنة الرأس اليدوية (0501) و<code>--waive-remote-check</code> (0601) وتخمين الطلب (0301، 0701)، ويفتح قياس "المدموج = المعتمَد"</td><td>صغيرة (حقلان واختيار إلزامي بالظل)؛ تمسّ <code>ledger.py</code> فتحتاج مواصفة</td></tr>
+<tr class="rec"><td><b>٢. أمر حالة واحد للبطاقة</b>: الرأس المعتمد، الرأس البعيد، آخر تنازل، الطلب والدمج والنشر</td><td>0501، 0601</td><td>كبير على الوقت؛ قراءة فقط فلا خطر على الفلو</td><td>صغيرة (أداة قراءة)</td></tr>
+<tr><td><b>٣. بوابة الانتقال</b>: إنذار عند القفز دون <code>ready_for_review</code>، والمعتمدة تمرّ pushed بلا إعفاء مصطنع، وحالة "مدموج بانتظار النشر"</td><td>0103، 0601</td><td>متوسط: القفز 61% من البطاقات المدفوعة، فقد يكون معظمه سلوكاً معتاداً لا خطأ</td><td>متوسطة؛ <b>خطر الرفض المبكر</b>: يعطّل المسار المعتاد، فبالظل فقط</td></tr>
+<tr><td><b>٤. الإسناد والتصعيد الزمني</b>: <code>held_by</code> إلزامي عند routed، وتقرير آلي لبطاقات بلا حركة >3 س</td><td>0103، 0701</td><td>متوسط: 77% من البطاقات بلا حامل، ونحو 80 متروكة</td><td>صغيرة (تقرير)</td></tr>
+<tr><td><b>٥. جودة الالتقاط</b>: تعديل problem/العنوان، <code>files_overlap</code> تلقائي، فحص تشابه عند add، <code>urgent</code> في list، رسالة خطأ طول واضحة</td><td>0301</td><td>متوسط: يمنع تكرار بطاقتين وتصادم الأفرع</td><td>متوسطة</td></tr>
+<tr><td><b>٦. DORA</b>: <code>caused_by</code> و<code>restored_at</code> و<code>kind=incident|revert</code> و<code>deployed_at</code></td><td>0701</td><td>يفتح مقياسين غير مقيسين اليوم</td><td>متوسطة؛ يحتاج انضباط تسجيل</td></tr>
+<tr><td><b>٧. سلامة الدفتر</b>: <code>prev_hash</code> متسلسل ونسخة يومية خارج المجلد وفحص في <code>approval_check</code></td><td>0104</td><td>يكشف التلاعب ولا يمنعه؛ يستحق مع أن الفاعلين جلسات على جهاز المالك فالخطر مقبول بنص 0104</td><td>صغيرة–متوسطة</td></tr>
+<tr><td><b>٨. نظافة السجل</b>: فصل الملاحظات عن الحالات (2818 ملاحظة و405 تكرار حالة)، <code>by</code> إلزامي (201 بلا)، رقم تسلسلي للمخالفات <code>V-…</code></td><td>0103، قياسي</td><td>صغير–متوسط</td><td>صغيرة</td></tr>
+<tr><td><b>٩. دقة اعتماد approval_check</b>: فصل "إفادة جلسة" عن "الدفتر"، وفحص آلي لفرق الصلاحيات في تنازلات tests-only/red-fix، واعتماد ساري إن كان فرق الرأسين لا يمسّ ملفات الطلب</td><td>0501، 0601</td><td>متوسط؛ <b>الثالثة تمسّ قاعدة الاعتماد فهي قرار المالك</b></td><td>متوسطة–كبيرة</td></tr>
+</tbody></table>
+
+<div class="red"><b>تحفظات وخلافات:</b>
+<ul>
+<li>هل غياب <code>head</code> عن merged/published <b>مقصود في تصميم الأداة</b> أم نقص؟ لم أتحقق من كود <code>ledger.py</code>؛ سؤال لـ0701/0103.</li>
+<li>القفز دون <code>ready_for_review</code> (61%) قد يعكس مرحلة أُضيفت متأخرة أو مساراً مقبولاً (routed←approved بقرار المالك المباشر) فلا يصح عدّه كله مخالفة. <span class="tag">لم يُفرز بحسب التاريخ</span></li>
+<li>0104 يعدّ خطر التزوير مقبولاً حالياً، و0501 و0601 يهمّهما الوقت لا التزوير؛ الأولوية بينهما أمر المالك.</li>
+<li>ما نقلته من الجلسات لم أتحقق منه في الأدوات سوى الأرقام التي أعدت قياسها.</li>
+</ul></div>
+
+<h2>٤. التوصية</h2>
+<div class="box rec">تسلسل بثلاث مراحل، كلها <b>إنذار بالظل أولاً</b> (متغير بيئة للرفض لاحقاً كسائر الفحوص):
+<ol>
+<li><b>مرحلة قراءة (لا تمسّ <code>ledger.py</code>):</b> أداة <code>card_status</code> (المحور ٢) تطبع للبطاقة الرأس المعتمد والبعيد وآخر تنازل والطلب والدمج، وتقرير يومي للبطاقات بلا حركة (٤)، وقياس قفزات الحالة بحسب التاريخ لحسم نسبة المخالفة الحقيقية (٣).</li>
+<li><b>مرحلة أدلة (بمواصفة 0301 وأمر المالك):</b> إنذار عند الانتقال إلى pushed/merged/published بلا <code>--pr</code> و<code>--head</code> (١)، و<code>by</code> إلزامي، ورقم <code>V-…</code> للمخالفات (٨).</li>
+<li><b>مرحلة متانة:</b> <code>prev_hash</code> ونسخة خارج المجلد (٧)، وحقول DORA (٦)، وجودة الالتقاط (٥)؛ وبند ٩ يعرض على المالك لأنه يمسّ قاعدة الاعتماد.</li>
+</ol>
+الخطوة الأولى أرخص وأكثر أثراً: المحور ١ مع ٢.</div>
+
+<h2>٥. ما لم يُقَس</h2>
+<ul>
+<li>دقة <code>ledger_reconcile</code> و<code>publish_sync</code> (لم يقسها 0701).</li>
+<li>نسبة القفز المقبول بحسب التاريخ، وكلفة التنفيذ الفعلية بالساعات.</li>
+<li>المنفّذون لم يُستشاروا الآن (طلب 0101)؛ صوتهم من عصف أمس ومذكّرات التسليم.</li>
+<li>القيود احترمتها: قراءة وتقرير فقط، لا تعديل في <code>ledger.py</code> ولا الأدوات ولا البطاقات ولا الدفتر.</li>
+</ul>
+</body></html>
