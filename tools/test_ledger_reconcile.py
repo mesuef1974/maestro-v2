@@ -100,5 +100,53 @@ class ReconcileTest(unittest.TestCase):
         self.assertIn("غير مقيس", pr_.call_args[0][0])
 
 
+class PublishedAndBranchTest(unittest.TestCase):
+    def test_merged_card_becomes_published_when_deploy_contains_head(self):
+        out = lr.reconcile(
+            {"W-20261016-001": item("merged")},
+            [pr(5, title="(W-20261016-001)")],
+            published=lambda p: (True, "رأس الدمج abc محتوًى في آخر نشر"),
+        )
+        s = out["suggestions"][0]
+        self.assertEqual((s["from"], s["to"]), ("merged", "published"))
+        self.assertEqual(out["unconfirmed"], [])
+
+    def test_published_false_or_unmeasured_stays_unconfirmed(self):
+        for verdict in (False, None):
+            out = lr.reconcile(
+                {"W-20261016-001": item("merged")},
+                [pr(5, title="(W-20261016-001)")],
+                published=lambda p, v=verdict: (v, "x"),
+            )
+            self.assertEqual(out["suggestions"], [])
+            self.assertEqual(out["unconfirmed"][0]["card"], "W-20261016-001")
+
+    def test_branch_on_origin_suggests_pushed(self):
+        out = lr.reconcile(
+            {"W-20261016-015": item("in_progress"), "W-20261016-016": item("approved"), "W-20261016-017": item("pushed")},
+            [],
+            branches=["claude/w20261016-015-x", "claude/w20261016-016-y", "claude/w20261016-017-z"],
+        )
+        cards = {s["card"]: s["to"] for s in out["suggestions"]}
+        self.assertEqual(cards, {"W-20261016-015": "pushed", "W-20261016-016": "pushed"})
+
+    def test_approved_is_never_a_target(self):
+        out = lr.reconcile(
+            {"W-20261016-001": item("ready_for_review")}, [pr(5, "OPEN", title="(W-20261016-001)")]
+        )
+        self.assertNotIn("approved", [s["to"] for s in out["suggestions"]])
+
+    def test_report_writes_files_but_not_ledger(self):
+        import tempfile
+        from pathlib import Path
+
+        res = {"suggestions": [], "ahead": [], "unconfirmed": [], "unmeasured": ["branches"]}
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(ledger, "append_event") as w:
+            day = lr.write_report(res, Path(d))
+            self.assertTrue((Path(d) / "ledger" / "reconcile_latest.json").is_file())
+            self.assertIn("غير مقيس", day.read_text(encoding="utf-8"))
+        w.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
