@@ -264,12 +264,70 @@ def login_state(browser: Any, base: str, role: str, username: str | None = None)
     return state
 
 
-def capture_page(browser: Any, base: str, entry: dict[str, Any], outdir: Path, state: dict[str, Any] | None) -> dict[str, Any]:
+ADMIN_SHELL_PATH = "/admin/"
+
+
+def admin_shell_baseline(browser: Any, base: str, state: dict[str, Any] | None) -> set[tuple[str, str]]:
+    """(نوع، محدِّد) مخالفات قشرة إدارة Django على الرأس نفسه: تُقاس في صفحة /admin/ الرئيسة بكل المقاسات والسمتين."""
+    seen: set[tuple[str, str]] = set()
+    for theme in THEMES:
+        for _name, (w, h) in VIEWPORTS.items():
+            ctx = browser.new_context(viewport={"width": w, "height": h}, storage_state=state, locale="ar")
+            ctx.add_init_script(f"try{{localStorage.setItem('theme','{theme}')}}catch(e){{}}")
+            page = ctx.new_page()
+            try:
+                page.goto(base.rstrip("/") + ADMIN_SHELL_PATH, wait_until="load", timeout=30000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                seen.update((v["kind"], v["selector"]) for v in measure(page))
+            finally:
+                ctx.close()
+    return seen
+
+
+def probe_unavailable(browser: Any, base: str, entry: dict[str, Any], state: dict[str, Any] | None) -> str | None:
+    """سببُ عدم إتاحة الصفحة بهذا الدور (رمزٌ غيرُ 200، أو تحويلٌ لتسجيل الدخول، أو بلا علامة القالب)، وإلا None."""
+    path, role = entry["path"], entry.get("role", "anonymous")
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800}, storage_state=state, locale="ar")
+    try:
+        page = ctx.new_page()
+        resp = page.goto(base.rstrip("/") + path, wait_until="load", timeout=30000)
+        code = resp.status if resp else 0
+        if code != 200:
+            return f"رمز الاستجابة {code} بدور {role}"
+        if "/auth/login" in page.url and "/auth/login" not in path:
+            return f"حوّلت إلى تسجيل الدخول بدور {role}"
+        if page.locator(entry.get("expect") or "main, [role=main], h1").count() == 0:
+            return "لا علامةَ للقالب المتوقَّع (main/h1) في الصفحة"
+        return None
+    finally:
+        ctx.close()
+
+
+def subtract_shell(violations: list[dict[str, Any]], shell: set[tuple[str, str]] | None) -> list[dict[str, Any]]:
+    """يبرّر ما ظهر مثلُه في قشرة /admin/ على الرأس نفسه (قرار المالك 2026-10-19): الأصلُ من Django لا من الصفحة."""
+    for v in violations:
+        if shell and not v.get("justified") and (v["kind"], v["selector"]) in shell:
+            v["justified"], v["reason"] = True, "خطّ أساس قشرة إدارة Django على الرأس نفسه (/admin/)"
+    return violations
+
+
+def capture_page(browser: Any, base: str, entry: dict[str, Any], outdir: Path, state: dict[str, Any] | None, shell: set[tuple[str, str]] | None = None) -> dict[str, Any]:
     path, role = entry["path"], entry.get("role", "anonymous")
     key = f"{path}|{role}"
     started = time.time()
     shots: list[str] = []
     violations: list[dict[str, Any]] = []
+    why = probe_unavailable(browser, base, entry, state)
+    if why:
+        # 404/403/تحويلٌ لتسجيل الدخول = الصفحةُ غيرُ متاحةٍ بهذا الدور، لا مخالفةُ قالب (إنذار W-20261013-020 الكاذب)
+        out = {"path": path, "role": role, "shots": [], "seconds": round(time.time() - started, 1), "over_budget": False,
+               "violations": [], "unavailable": True, "unavailable_reason": why}
+        if entry.get("suggest"):
+            out["suggest"] = entry["suggest"]
+        return out
     for theme in THEMES:
         for name, (w, h) in VIEWPORTS.items():
             ctx = browser.new_context(viewport={"width": w, "height": h}, storage_state=state, locale="ar")
@@ -301,7 +359,7 @@ def capture_page(browser: Any, base: str, entry: dict[str, Any], outdir: Path, s
         "shots": shots,
         "seconds": elapsed,
         "over_budget": elapsed > PAGE_BUDGET_SECONDS,
-        "violations": classify(key, list(merged.values()), entry.get("justify") or {}),
+        "violations": subtract_shell(classify(key, list(merged.values()), entry.get("justify") or {}), shell),
     }
 
 
@@ -328,12 +386,18 @@ def run(card: str, head: str, base: str, entries: list[dict[str, Any]]) -> dict[
     with sync_playwright() as p:
         browser = p.chromium.launch()
         states: dict[str, Any] = {}
+        shells: dict[Any, set[tuple[str, str]]] = {}
         for entry in entries:
             role = entry.get("role", "anonymous")
             who = (role, entry.get("username"))
             if who not in states:
                 states[who] = login_state(browser, base, role, entry.get("username"))
-            pages.append(capture_page(browser, base, entry, outdir, states[who]))
+            shell = None
+            if entry["path"].startswith(ADMIN_SHELL_PATH) and entry["path"] != ADMIN_SHELL_PATH:
+                if who not in shells:
+                    shells[who] = admin_shell_baseline(browser, base, states[who])
+                shell = shells[who]
+            pages.append(capture_page(browser, base, entry, outdir, states[who], shell))
         browser.close()
     manifest = build_manifest(card, head, base, pages)
     (outdir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -417,6 +481,11 @@ def evidence_status(card: str, head: str, evidence_dir: Path | None = None, conf
     pages = manifest.get("pages") or []
     if not pages:
         return False, f"لا أدلة بصرية للرأس {head}: لا صفحةَ معلنة (القائمةُ الفارغة لبطاقة واجهةٍ مرفوضة)"
+    avail = [p for p in pages if not p.get("unavailable")]
+    if not avail:
+        return False, f"لا أدلة بصرية للرأس {head}: كلُّ الصفحات غيرُ متاحةٍ بأدوارها"
+    skipped = [p for p in pages if p.get("unavailable")]
+    pages = avail
     for page in pages:
         missing = [s for s in page.get("shots", []) if not (folder / s).exists()]
         if len(page.get("shots", [])) != SHOTS_PER_PAGE or missing:
@@ -425,7 +494,8 @@ def evidence_status(card: str, head: str, evidence_dir: Path | None = None, conf
     if bad:
         first = "؛ ".join(f"{path} [{v['kind']}] {v['selector']} {v['detail']}" for path, v in bad[:3])
         return False, f"لا أدلة بصرية للرأس {head}: {len(bad)} مخالفةٌ غيرُ مبرَّرة — {first}"
-    return True, f"أدلةٌ بصريّةٌ كاملةٌ للرأس {head}: {len(pages)} صفحةً × {SHOTS_PER_PAGE} لقطات، بلا مخالفةٍ غيرِ مبرَّرة"
+    note = f" — وغيرُ متاحةٍ بدورها: {len(skipped)} ({'؛ '.join(p['path'] for p in skipped)})" if skipped else ""
+    return True, f"أدلةٌ بصريّةٌ كاملةٌ للرأس {head}: {len(pages)} صفحةً × {SHOTS_PER_PAGE} لقطات، بلا مخالفةٍ غيرِ مبرَّرة{note}"
 
 
 def main() -> int:
@@ -466,6 +536,9 @@ def main() -> int:
     head = (a.head or head8(a.repo))[:8]
     manifest = run(a.card, head, a.base, entries)
     for p in manifest["pages"]:
+        if p.get("unavailable"):
+            print(f"{p['path']} [{p['role']}] — غير متاحة بهذا الدور: {p['unavailable_reason']}" + (f" (الحساب المقترح: {p['suggest']})" if p.get("suggest") else ""))
+            continue
         print(f"{p['path']} [{p['role']}] {p['seconds']}s — {len(p['violations'])} مخالفة")
         for v in p["violations"]:
             mark = "≈" if v["justified"] else "✘"
