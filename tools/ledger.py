@@ -484,6 +484,80 @@ def set_spec(item_id: str, tier: str | None = None, ref: str | None = None, role
     return data
 
 
+#: ختمُ التحقق من مصدر الحقيقة (W-20261020-003، المرحلة د من خطة تجويد الفلو): ما تدّعيه البطاقة يُقاس على المنصّة قبل العمل.
+#: بوّابةُ ظلٍّ: إنذارٌ فقط بلا حجب، وتُفعَّل بعد أسبوع قياس بقرار المالك.
+SOT_VERDICTS = ("مطابق", "مخالف", "متقادم")
+SOT_MAX_AGE_DAYS = 7
+SOT_EVIDENCE_MAX = 10
+SOT_MARK = "إنذارُ ختم المصدر"
+
+
+def parse_evidence(raw: str) -> dict:
+    """دليلٌ بصيغة «الأمر => النتيجة» (أداتا git وgh وground_truth والدفتر؛ قراءةٌ فقط)."""
+    if "=>" not in raw:
+        raise LedgerError('الدليلُ بصيغة "الأمر => النتيجة"')
+    cmd, res = (x.strip() for x in raw.split("=>", 1))
+    if not cmd or not res:
+        raise LedgerError('الدليلُ بصيغة "الأمر => النتيجة" (كلاهما إلزاميّ)')
+    return {"cmd": check_text("evidence_cmd", cmd), "result": check_text("evidence_result", res)}
+
+
+def set_sot_stamp(item_id: str, verdict: str, head: str, evidence: list[str], by: str, correction: str | None = None,
+                  remeasure: bool = False, path=None) -> dict:
+    """يُلحق ختمَ التحقق (أو إعادةَ القياس قبل «جاهزٌ للمعاينة» بـremeasure) حدثَ update. «مخالف» يستلزم نصَّ التصحيح."""
+    item = reduce_state(load_events(path)).get(item_id)
+    if not item:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    check_session(by or "")
+    if verdict not in SOT_VERDICTS:
+        raise LedgerError(f"--verdict واحدٌ من {'، '.join(SOT_VERDICTS)}")
+    if not head or not re.fullmatch(r"[0-9a-f]{7,40}", head):
+        raise LedgerError("--head إلزاميّ: الرأسُ أو النسخةُ المقيسُ عليها (sha، 7 أحرفٍ فأكثر)")
+    if not evidence or len(evidence) > SOT_EVIDENCE_MAX:
+        raise LedgerError(f"الأدلةُ إلزاميّة (1..{SOT_EVIDENCE_MAX})")
+    if verdict == "مخالف" and not correction:
+        raise LedgerError('الحكمُ «مخالف» يستلزم --correction: التصحيحُ (رقمٌ أو نطاقٌ أو إغلاق) قبل العمل')
+    stamp = {"at": now_doha(), "by": by, "head": head[:40], "verdict": verdict, "evidence": [parse_evidence(e) for e in evidence]}
+    if correction:
+        stamp["correction"] = check_text("correction", correction)
+    append_event("update", item_id, {"sot_remeasure" if remeasure else "sot_stamp": stamp}, path)
+    if verdict == "مخالف":
+        append_event("note", item_id, {"text": check_text("note", f"({by}) ختمُ المصدر مخالف — التصحيح: {correction}")}, path)
+    return stamp
+
+
+def check_sot_gate(item: dict, target: str, head_now: str | None = None, now: datetime | None = None) -> str | None:
+    """بوّابةُ الظلّ: عند in_progress لا ختمَ حديثًا ← إنذار (نصٌّ يُعاد ويُدوَّن)؛ وعند ready_for_review لا إعادةَ قياس ← إنذار. لا رفضَ أبدًا."""
+    if target not in ("in_progress", "ready_for_review"):
+        return None
+    stamp = item.get("sot_stamp")
+    problems: list[str] = []
+    if target == "in_progress":
+        if not stamp:
+            problems.append("لا ختمَ تحقّقٍ من مصدر الحقيقة")
+        else:
+            try:
+                at = datetime.fromisoformat(stamp["at"])
+                if at.tzinfo is None:  # توقيتُ الدوحة افتراضًا لختمٍ بلا منطقة
+                    at = at.replace(tzinfo=timezone(timedelta(hours=3)))
+                age = (now or datetime.now(timezone(timedelta(hours=3)))) - at
+            except (KeyError, ValueError, TypeError):
+                age = None
+            if age is None or age > timedelta(days=SOT_MAX_AGE_DAYS):
+                problems.append(f"الختمُ أقدمُ من {SOT_MAX_AGE_DAYS} أيام أو بلا تاريخ")
+            if stamp.get("verdict") == "متقادم":
+                problems.append("حكمُ الختم «متقادم»")
+            if stamp.get("verdict") == "مخالف" and not stamp.get("correction"):
+                problems.append("حكمُ الختم «مخالف» بلا تصحيح")
+            if head_now and stamp.get("head") and not (head_now.startswith(stamp["head"]) or stamp["head"].startswith(head_now)):
+                problems.append(f"تغيّر الرأسُ المقيسُ عليه ({stamp['head'][:8]} ← {head_now[:8]})")
+    elif stamp and not item.get("sot_remeasure"):
+        problems.append("لم تُلحَق إعادةُ قياس الادّعاء الأصليّ قبل «جاهزٌ للمعاينة»")
+    if not problems:
+        return None
+    return f"{SOT_MARK} (ظلّ، لا حجب): " + "؛ ".join(problems)
+
+
 def check_spec_gate(item: dict, target: str, history_states: set[str], waive: str | None) -> str | None:
     """بوّابةُ المواصفة عند routed (أو in_progress لم يمرّ بـrouted). full: رفضٌ؛ basic: تحذيرٌ يُعاد نصُّه. يعيد نصَّ التحذير أو None."""
     if target not in ("routed", "in_progress"):
@@ -775,6 +849,12 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         note = f"{note + ' — ' if note else ''}{approval_waiver}"
     if spec_warning:
         print(spec_warning, file=sys.stderr)
+    try:
+        sot_warning = check_sot_gate(items[item_id], state, head_now)
+    except Exception as exc:  # بوّابةُ الظلّ لا تحجب نقلاً مهما كان شكلُ الختم
+        sot_warning = f"{SOT_MARK} (ظلّ): تعذّر فحصُ الختم ({type(exc).__name__})"
+    if sot_warning:
+        print(sot_warning, file=sys.stderr)
     if state == "in_progress":
         wip_note = check_wip(items, item_id, by, waive_wip)
         if wip_note:
@@ -791,6 +871,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if fp_note:
         print(fp_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{fp_note}"
+    if sot_warning:
+        short = f"{note + ' — ' if note else ''}{sot_warning}"
+        if len(short) <= FIELD_MAX:  # بوّابةُ الظلّ لا تُفشل نقلاً أبدًا: إن طال التدوينُ اكتُفي بالطباعة
+            note = short
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
@@ -1348,6 +1432,10 @@ def main() -> None:
     sp.add_argument("--files-allowed", nargs="*"); sp.add_argument("--files-forbidden", nargs="*")
     sp.add_argument("--accept", action="append"); sp.add_argument("--step", action="append"); sp.add_argument("--by", required=True)
     sp.add_argument("--basic-ok", help="وسمُ «أساس» لبطاقةٍ صغيرة (السبب): يكفيها accept وstep")
+    ss = sub.add_parser("sot-stamp", help="يُلحق ختمَ التحقق من مصدر الحقيقة (أو إعادةَ القياس قبل جاهزٌ للمعاينة بـ--remeasure)")
+    ss.add_argument("id"); ss.add_argument("--verdict", required=True, choices=SOT_VERDICTS); ss.add_argument("--head", required=True)
+    ss.add_argument("--evidence", action="append", required=True, help='"الأمر => النتيجة" (يتكرّر)'); ss.add_argument("--by", required=True)
+    ss.add_argument("--correction"); ss.add_argument("--remeasure", action="store_true")
     nt = sub.add_parser("note", help="ملاحظةٌ على بطاقةٍ دون نقل حالتها")
     nt.add_argument("id"); nt.add_argument("--text", required=True); nt.add_argument("--by", required=True)
     rt = sub.add_parser("return", help="تعيد بطاقةً لنقص المواصفة إلى captured")
@@ -1382,6 +1470,8 @@ def main() -> None:
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
                      args.files_allowed, args.files_forbidden, args.accept, args.step, args.by, basic_ok=args.basic_ok); print("ok")
+        elif args.cmd == "sot-stamp":
+            set_sot_stamp(args.id, args.verdict, args.head, args.evidence, args.by, args.correction, args.remeasure); print("ok")
         elif args.cmd == "note":
             add_note(args.id, args.text, args.by); print("ok")
         elif args.cmd == "return":
