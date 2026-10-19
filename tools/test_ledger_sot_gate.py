@@ -66,6 +66,23 @@ class SotGate(unittest.TestCase):
         self.assertEqual(self.item()["state"], "in_progress")
         self.assertTrue(any(ledger.SOT_MARK in n["text"] for n in self.item()["notes"]))
 
+    def test_malformed_stamp_at_never_raises(self):
+        for at in ("2026-10-20T10:00:00", None, 12345, "ليس تاريخًا"):
+            item = {"sot_stamp": {"at": at, "head": HEAD, "verdict": "مطابق"}}
+            self.assertIsInstance(ledger.check_sot_gate(item, "in_progress"), (str, type(None)))
+        naive = {"sot_stamp": {"at": "2026-10-20T10:00:00", "head": HEAD, "verdict": "مطابق"}}
+        now = datetime.fromisoformat("2026-10-21T10:00:00+03:00")
+        self.assertIsNone(ledger.check_sot_gate(naive, "in_progress", now=now))
+
+    def test_move_survives_malformed_stamp(self):
+        for at in ("2026-10-20T10:00:00", None, 12345):
+            path = str(Path(tempfile.mkdtemp()) / "e.jsonl")
+            cid = ledger.add_item("owner", "tool", "سكربت", "أ", "ق", start="2026-10-20T09:00", priority="P2", path=path)
+            ledger.append_event("update", cid, {"sot_stamp": {"at": at, "head": HEAD, "verdict": "مطابق"}}, path)
+            ledger.move(cid, "routed", held_by="0103", waive_spec="اختبار", path=path)
+            ledger.move(cid, "in_progress", by="0103", waive_spec="اختبار", waive_wip="اختبار", path=path)
+            self.assertEqual(ledger.reduce_state(ledger.load_events(path))[cid]["state"], "in_progress")
+
     def test_bad_inputs_rejected(self):
         with self.assertRaises(ledger.LedgerError):
             ledger.set_sot_stamp(self.cid, "غير", HEAD, EV, "0301", path=self.path)

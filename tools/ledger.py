@@ -537,8 +537,11 @@ def check_sot_gate(item: dict, target: str, head_now: str | None = None, now: da
             problems.append("لا ختمَ تحقّقٍ من مصدر الحقيقة")
         else:
             try:
-                age = (now or datetime.now(timezone(timedelta(hours=3)))) - datetime.fromisoformat(stamp["at"])
-            except (KeyError, ValueError):
+                at = datetime.fromisoformat(stamp["at"])
+                if at.tzinfo is None:  # توقيتُ الدوحة افتراضًا لختمٍ بلا منطقة
+                    at = at.replace(tzinfo=timezone(timedelta(hours=3)))
+                age = (now or datetime.now(timezone(timedelta(hours=3)))) - at
+            except (KeyError, ValueError, TypeError):
                 age = None
             if age is None or age > timedelta(days=SOT_MAX_AGE_DAYS):
                 problems.append(f"الختمُ أقدمُ من {SOT_MAX_AGE_DAYS} أيام أو بلا تاريخ")
@@ -846,7 +849,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         note = f"{note + ' — ' if note else ''}{approval_waiver}"
     if spec_warning:
         print(spec_warning, file=sys.stderr)
-    sot_warning = check_sot_gate(items[item_id], state, head_now)
+    try:
+        sot_warning = check_sot_gate(items[item_id], state, head_now)
+    except Exception as exc:  # بوّابةُ الظلّ لا تحجب نقلاً مهما كان شكلُ الختم
+        sot_warning = f"{SOT_MARK} (ظلّ): تعذّر فحصُ الختم ({type(exc).__name__})"
     if sot_warning:
         print(sot_warning, file=sys.stderr)
     if state == "in_progress":
