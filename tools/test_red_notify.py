@@ -71,7 +71,7 @@ class Red(unittest.TestCase):
 
     def test_an_unknown_holder_still_reaches_0101_and_says_so(self):
         msgs = rn.messages(
-            rn.fresh_failures([pr(checks=[check("x")], title="بلا بطاقة")], {}, NOW),
+            rn.fresh_failures([pr(checks=[check("x")])], {}, NOW),
             {},
             DIR,
         )
