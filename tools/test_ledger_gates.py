@@ -44,6 +44,22 @@ class Gates(unittest.TestCase):
         for st in ("routed", "in_progress", "ready_for_review", "notes", "deferred", "closed"):
             ledger.check_transition("captured", st, None)
 
+    def test_same_free_state_twice_is_a_repeat_but_holder_change_is_not(self):
+        ev = [
+            {"id": "W-1", "kind": "state", "ts": "t1", "data": {"state": "in_progress", "held_by": "0701"}},
+        ]
+        orig = ledger.load_events
+        ledger.load_events = lambda path=None: ev
+        try:
+            with self.assertRaises(ledger.LedgerError):
+                ledger.check_not_repeat("W-1", "in_progress", "in_progress", None, None)
+            with self.assertRaises(ledger.LedgerError):
+                ledger.check_not_repeat("W-1", "in_progress", "in_progress", None, "0701")
+            ledger.check_not_repeat("W-1", "in_progress", "in_progress", None, "0702")  # حاملٌ جديد
+            ledger.check_not_repeat("W-1", "in_progress", "ready_for_review", None, None)  # حالةٌ جديدة
+        finally:
+            ledger.load_events = orig
+
 
 if __name__ == "__main__":
     unittest.main()
