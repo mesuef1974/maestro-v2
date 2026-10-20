@@ -771,7 +771,25 @@ def _git_out(repo: str, *args: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def check_prepush_receipt(repo: str, git=None) -> str | None:
+def _merge_conflicts(repo: str) -> list[str] | None:
+    """ملفّاتُ التصادم الفعليّ لو دُمج origin/main في HEAD الآن (`git merge-tree --write-tree`، بلا مساسٍ بالشجرة).
+
+    None إن تعذّر الحساب (git أقدم من 2.38 أو لا origin/main) فلا يُدّعى تصادمٌ بلا دليل؛ قائمةٌ فارغةٌ = لا تصادم."""
+    import subprocess
+    if subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "-q", "origin/main"], capture_output=True).returncode != 0:
+        return None
+    r = subprocess.run(["git", "-C", repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", "origin/main"],
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
+    if r.returncode == 0:
+        return []
+    if r.returncode == 1:
+        names = [ln for ln in r.stdout.splitlines()[1:] if ln.strip()]
+        return names[:20] or ["(ملفّاتٌ غير مسمّاة)"]
+    return None
+
+
+
+def check_prepush_receipt(repo: str, git=None, conflicts=None) -> str | None:
     """قائمةُ ما قبل «جاهز» (W-20261017-014، قرار المالك 10-17): (1) إيصالُ `make prepush` الناجح لرأس الشجرة الحاليّ يكتبه prepush_check
     في مجلّد git للشجرة؛ (2) الرأسُ لا يتأخّر عن origin/main بأكثر من MAIN_LAG_MAX إيداعاً. الظلُّ أوّلاً: إنذارٌ، ورفضٌ مع PREPUSH_RECEIPT_ENFORCE=1."""
     import json as _json
@@ -792,6 +810,9 @@ def check_prepush_receipt(repo: str, git=None) -> str | None:
     lag = g("rev-list", "--count", "HEAD..origin/main")
     if lag.isdigit() and int(lag) > MAIN_LAG_MAX:
         problems.append(f"الرأسُ متأخّرٌ عن origin/main بـ{lag} إيداعاً (الحدُّ {MAIN_LAG_MAX}) — ادمج main أوّلاً")
+    clash = (conflicts or (_merge_conflicts if git is None else (lambda _r: None)))(repo)
+    if clash:
+        problems.append(f"تصادمٌ فعليٌّ مع origin/main في: {', '.join(clash[:5])} — ادمج main وحُلّ التعارض قبل «جاهز» (يبطل الاعتمادُ بعده)")
     if not problems:
         return f"قائمة ما قبل جاهز: إيصال prepush للرأس {head} وحداثة main سليمان"
     msg = "؛ ".join(problems)
