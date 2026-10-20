@@ -825,6 +825,21 @@ def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, 
     return f"إنذار (الظلّ): {problem}"
 
 
+REPEAT_GUARDED = frozenset({"routed", "in_progress"})  # pushed/merged/published/approved تحجبها GATES؛ هاتان حرّتان فيتكرّر حدثُهما؛ وready_for_review يعلن رأسَه في ملاحظةٍ فيُعاد بالرأس الجديد (أمر المالك 10-20 بند5)
+
+
+def check_not_repeat(item_id: str, current: str, state: str, head: str | None, held_by: str | None, path=None) -> None:
+    """يرفض تكرارَ الحدث نفسه في الدفتر: النقلُ إلى حالةٍ هي الحاليّةُ بالرأس نفسه وبلا تغيير حامل (تكرارُه يوقظ الجلسةَ بلا جديد)."""
+    if state != current or state not in REPEAT_GUARDED:
+        return
+    holder = next((e["data"].get("held_by") for e in reversed(load_events(path)) if e["id"] == item_id and e["kind"] == "state" and "held_by" in e["data"]), None)
+    if held_by is not None and (held_by if held_by != "-" else "") != (holder or ""):
+        return  # تغييرُ الحامل نقلٌ حقيقيّ لا تكرار
+    last = next((e for e in reversed(load_events(path)) if e["id"] == item_id and e["kind"] == "state"), None)
+    if last and last["data"].get("state") == state and (last["data"].get("head") or None) == (head or None):
+        raise LedgerError(f"حدثٌ مكرَّر: البطاقةُ في «{state}» أصلاً بالرأس نفسه — لا يُعاد تسجيلُه (أعد القراءةَ بـshow)")
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
          branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None, preflight_repo: str | None = None, waive_preflight: str | None = None, premerge_sha: str | None = None, head_now: str | None = None) -> None:
     if state not in STATES:
@@ -837,6 +852,7 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if item_id not in items:
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
     check_transition(items[item_id]["state"], state, note)
+    check_not_repeat(item_id, items[item_id]["state"], state, push_head or head, held_by, path)
     check_holder_on_route(items[item_id], state, held_by)
     check_recorder(state, by)
     history = {e["data"].get("state") for e in load_events(path) if e["id"] == item_id and e["kind"] == "state"}

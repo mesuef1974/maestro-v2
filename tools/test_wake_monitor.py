@@ -139,3 +139,27 @@ def test_watch_mode_does_not_write_cursor_or_log(tmp_path, monkeypatch, capsys):
     wm.main(["--watch", "--once"])
     assert sorted(p.name for p in tmp_path.iterdir()) == []
     assert capsys.readouterr().out == ""
+
+
+def _burst(n):
+    ev = []
+    for k in range(1, n + 1):
+        i = f"W-20261016-00{k}"
+        ev += [created(i, held=f"0{k}01"), state(i, "routed", NEW, held_by=f"0{k}01")]
+    return ev
+
+
+def test_per_minute_cap_defers_the_excess_and_holds_the_cursor():
+    p = wm.plan(_burst(6), CUR, DIR, set(), verify=ok)
+    assert len(p.wakes) == wm.MAX_PER_MINUTE and p.deferred
+    assert sum("تأجيل" in why for _, why in p.skipped) == 6 - wm.MAX_PER_MINUTE
+
+
+def test_recent_wakes_use_up_the_minute_allowance():
+    assert wm.plan(_burst(2), CUR, DIR, set(), verify=ok, recent=wm.MAX_PER_MINUTE).wakes == {}
+
+
+def test_same_event_is_not_woken_twice():
+    ev = _burst(1)
+    p = wm.plan(ev, CUR, DIR, set(), verify=ok, already=frozenset({("W-20261016-001", "routed")}))
+    assert p.wakes == {} and "لا تكرار" in p.skipped[0][1]

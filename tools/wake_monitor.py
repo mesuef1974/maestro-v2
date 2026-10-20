@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -31,6 +32,7 @@ EVENTS = ROOT / "ledger" / "events.jsonl"
 CURSOR = ROOT / "wake_cursor.json"
 LOG = ROOT / "wake_log.jsonl"
 MAX_BATCH = 20
+MAX_PER_MINUTE = 3  # أقصى جلساتٍ تُوقَظ (تبدأ عملاً) في الدقيقة؛ الزائدُ يُؤجَّل لا يُسقط (أمر المالك 10-20 بند5)
 MAX_LIVE = 14
 TEST_CHANNEL = frozenset({"0701", "0702", "0103", "0102"})  # أسبوعُ التجربة (W-20261017-007) قبل تعميم الإرسال
 COUNTER_GUARD = 130  # فوقها (من 150) لا إرسال ويُبلَّغ 0101
@@ -47,6 +49,7 @@ class WakePlan:
         self.skipped: list[tuple[str, str]] = []
         self.halted: str = ""
         self.cursor: str = ""
+        self.deferred = False  # أُجّل بعضُها: لا يتقدّم المؤشّر فيعاد في الدورة التالية (والمُوقَظ منها لا يتكرّر بـ already)
 
 
 def read_events(path: Path) -> list[dict]:
@@ -96,9 +99,10 @@ def sender_count(sender: str, path: Path = COUNTER) -> int:
         return COUNTER_GUARD
 
 
-def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, sent=0) -> WakePlan:
+def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, sent=0, already=frozenset(), recent=0) -> WakePlan:
     """directory: رقم←معرّف؛ live: أرقامُ الجلسات الحيّة؛ channel: الحاملون المسموح إيقاظُهم (None = الكلّ)؛
-    sent: ما أرسله المرسِلُ حتى الآن. دالّةٌ نقيّةٌ إلّا ما يفعله verify."""
+    sent: ما أرسله المرسِلُ حتى الآن؛ already: أزواجُ (بطاقة، حالة) أُيقظ لها من قبلُ فلا تتكرّر؛
+    recent: ما أُيقظ في الدقيقة الأخيرة (سقفُ MAX_PER_MINUTE). دالّةٌ نقيّةٌ إلّا ما يفعله verify."""
     p = WakePlan()
     p.cursor = events[-1]["ts"] if events else cursor
     items = ledger.reduce_state(events)
@@ -118,10 +122,19 @@ def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, 
         if holder not in directory:
             p.skipped.append((item_id, f"لا معرّفَ للجلسة {holder}"))
             continue
+        if (item_id, state) in already:
+            p.skipped.append((item_id, "أُيقظ لهذا الحدث من قبلُ: لا تكرار"))
+            continue
         if not verify(item_id, state):
             p.skipped.append((item_id, "فشل ground_truth: لا إرسال"))
             continue
         p.wakes.setdefault(holder, []).append((item_id, state))
+    room = max(0, MAX_PER_MINUTE - recent)
+    if len(p.wakes) > room:
+        for holder in list(p.wakes)[room:]:
+            for item_id, _ in p.wakes.pop(holder):
+                p.skipped.append((item_id, f"تأجيل: سقفُ {MAX_PER_MINUTE} إيقاظاتٍ في الدقيقة"))
+        p.deferred = True
     if p.wakes and sent + len(p.wakes) > COUNTER_GUARD:
         p.halted = f"حارس msg_counter: {sent} + {len(p.wakes)} رسالةً يتجاوز {COUNTER_GUARD} من 150: لا إرسال، أبلغ 0101"
         p.wakes = {}
@@ -129,6 +142,24 @@ def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, 
         p.halted = f"الجلساتُ الحيّةُ مع الموقَظين تتجاوز {MAX_LIVE}: لا إيقاظ"
         p.wakes = {}
     return p
+
+
+def woken_history(path: Path = LOG, now: datetime | None = None) -> tuple[frozenset, int]:
+    """(أزواجُ (بطاقة، حالة) أُيقظ لها، وعددُ الجلسات الموقَظة في آخر دقيقة) من wake_log.jsonl."""
+    now = now or datetime.now(timezone(timedelta(hours=3)))
+    done, recent = set(), 0
+    if not path.is_file():
+        return frozenset(), 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+            at = datetime.fromisoformat(rec["ts"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        done.update((i, st) for i, st in rec.get("pairs") or [])
+        if at.tzinfo and 0 <= (now - at).total_seconds() < 60:
+            recent += len(rec.get("wakes") or {})
+    return frozenset(done), recent
 
 
 def live_sessions() -> set[str]:
@@ -170,6 +201,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     import session_directory as sd
 
+    hist = woken_history()
     if a.watch:
         seen: set = set()
         while True:
@@ -177,7 +209,8 @@ def main(argv=None) -> int:
                 events = read_events(EVENTS)
                 cursor = json.loads(CURSOR.read_text(encoding="utf-8"))["ts"] if CURSOR.is_file() else (events[-1]["ts"] if events else "")
                 directory = {n: e["id"] for n, e in sd.entries().items()}
-                p = plan(events, cursor, directory, live_sessions(), channel=None if a.all else TEST_CHANNEL, sent=sender_count(a.sender))
+                hist = woken_history()
+                p = plan(events, cursor, directory, live_sessions(), channel=None if a.all else TEST_CHANNEL, sent=sender_count(a.sender), already=hist[0], recent=hist[1])
                 for line in watch_lines(p, directory, seen):
                     print(line, flush=True)
             except Exception as exc:  # noqa: BLE001 — المراقبةُ لا تسقط من عطلٍ عابر
@@ -189,7 +222,7 @@ def main(argv=None) -> int:
     events = read_events(EVENTS)
     cursor = json.loads(CURSOR.read_text(encoding="utf-8"))["ts"] if CURSOR.is_file() else (events[-1]["ts"] if events else "")
     directory = {n: e["id"] for n, e in sd.entries().items()}
-    p = plan(events, cursor, directory, live_sessions(), channel=None if a.all else TEST_CHANNEL, sent=sender_count(a.sender))
+    p = plan(events, cursor, directory, live_sessions(), channel=None if a.all else TEST_CHANNEL, sent=sender_count(a.sender), already=hist[0], recent=hist[1])
     if a.json:
         print(json.dumps([{"to": n, "session_id": directory[n], "message": message_for(n, r)} for n, r in sorted(p.wakes.items())],
                          ensure_ascii=False))
@@ -206,10 +239,10 @@ def main(argv=None) -> int:
         with LOG.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(
                 {"ts": ledger.now_doha(), "wakes": {k: [i for i, _ in v] for k, v in p.wakes.items()},
-                 "skipped": p.skipped, "halted": p.halted}, ensure_ascii=False) + "\n")
+                 "pairs": [[i, st] for v in p.wakes.values() for i, st in v], "skipped": p.skipped, "halted": p.halted}, ensure_ascii=False) + "\n")
         if p.wakes:
             subprocess.run([sys.executable, str(HERE / "msg_counter.py"), "add", a.sender, str(len(p.wakes))], check=False)  # noqa: S603
-        if not p.halted:
+        if not p.halted and not p.deferred:
             CURSOR.write_text(json.dumps({"ts": p.cursor}), encoding="utf-8")
     return 0
 
