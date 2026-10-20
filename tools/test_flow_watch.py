@@ -93,6 +93,25 @@ class TestSevenCases(unittest.TestCase):
             by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 1)[0].severity, "red"
         )
 
+    def test_1_hour_without_reason_note_escalates_to_0501_then_0601(self):
+        ev = [created("A"), state("A", "approved", 70, held_by="0701")]
+        r = by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 1)[0]
+        self.assertEqual(r.owner, "0501")
+        ev = [created("A"), state("A", "approved", 130, held_by="0701")]
+        self.assertEqual(
+            by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 1)[0].owner, "0601"
+        )
+
+    def test_1_reason_note_keeps_alert_with_holder(self):
+        ev = [
+            created("A"),
+            state("A", "approved", 90, held_by="0701"),
+            note("A", "(0701) انتظار الرأس", 20),
+        ]
+        self.assertEqual(
+            by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 1)[0].owner, "0701"
+        )
+
     def test_2_pushed_not_merged_with_pr_states(self):
         ev = [
             created("A"),
@@ -403,16 +422,33 @@ class TestChangesOnly(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "events.jsonl"
-            path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8")
+            path.write_text(
+                "\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n",
+                encoding="utf-8",
+            )
             state_file = Path(tmp) / "state.json"
             os.environ["LEDGER_PATH"] = str(path)
             raw = io.BytesIO()
             buf = io.TextIOWrapper(raw, encoding="utf-8")
             try:
-                with contextlib.redirect_stdout(buf), mock.patch.object(fw, "fetch_prs", return_value=[]), mock.patch.object(
-                    fw, "read_preview_status", return_value=""
-                ), mock.patch.object(fw.ledger_reconcile, "fetch_prs", return_value=[]):
-                    code = fw.main(["--changes-only", "--state-file", str(state_file), "--now", now.isoformat(), *extra])
+                with (
+                    contextlib.redirect_stdout(buf),
+                    mock.patch.object(fw, "fetch_prs", return_value=[]),
+                    mock.patch.object(fw, "read_preview_status", return_value=""),
+                    mock.patch.object(
+                        fw.ledger_reconcile, "fetch_prs", return_value=[]
+                    ),
+                ):
+                    code = fw.main(
+                        [
+                            "--changes-only",
+                            "--state-file",
+                            str(state_file),
+                            "--now",
+                            now.isoformat(),
+                            *extra,
+                        ]
+                    )
             finally:
                 os.environ.pop("LEDGER_PATH", None)
             buf.flush()
@@ -434,7 +470,10 @@ class TestChangesOnly(unittest.TestCase):
         ev = [created("A"), state("A", "approved", 45)]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "events.jsonl"
-            path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in ev) + "\n", encoding="utf-8")
+            path.write_text(
+                "\n".join(json.dumps(e, ensure_ascii=False) for e in ev) + "\n",
+                encoding="utf-8",
+            )
             sf = Path(tmp) / "state.json"
             os.environ["LEDGER_PATH"] = str(path)
             outs = []
@@ -442,10 +481,23 @@ class TestChangesOnly(unittest.TestCase):
                 for _ in range(2):
                     raw = io.BytesIO()
                     buf = io.TextIOWrapper(raw, encoding="utf-8")
-                    with contextlib.redirect_stdout(buf), mock.patch.object(fw, "fetch_prs", return_value=[]), mock.patch.object(
-                        fw, "read_preview_status", return_value=""
-                    ), mock.patch.object(fw.ledger_reconcile, "fetch_prs", return_value=[]):
-                        fw.main(["--changes-only", "--state-file", str(sf), "--now", NOW.isoformat()])
+                    with (
+                        contextlib.redirect_stdout(buf),
+                        mock.patch.object(fw, "fetch_prs", return_value=[]),
+                        mock.patch.object(fw, "read_preview_status", return_value=""),
+                        mock.patch.object(
+                            fw.ledger_reconcile, "fetch_prs", return_value=[]
+                        ),
+                    ):
+                        fw.main(
+                            [
+                                "--changes-only",
+                                "--state-file",
+                                str(sf),
+                                "--now",
+                                NOW.isoformat(),
+                            ]
+                        )
                     buf.flush()
                     outs.append(raw.getvalue().decode("utf-8"))
             finally:
