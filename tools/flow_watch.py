@@ -440,17 +440,35 @@ def ledger_vs_github(items: dict, recon_prs: list[dict] | None) -> list[Row]:
     return rows
 
 
+def in_work_window(now: datetime) -> bool:
+    """أحد–خميس 07:00–14:30 بتوقيت الدوحة (UTC+3): نافذةُ منع الدمج (CLAUDE.md)."""
+    q = now.astimezone(timezone(timedelta(hours=3)))
+    return q.isoweekday() not in (5, 6) and (7, 0) <= (q.hour, q.minute) < (14, 30)
+
+
+def _only_awaiting_merge(rollup: list[dict] | None) -> bool:
+    """كلُّ المعلَّق في الفحوص بحالة EXPECTED (ينتظر الدمج/الطابور) ولا شيءَ يعمل أو يفشل."""
+    import pr_red
+
+    cls = pr_red.classify(rollup)
+    return bool(cls["pending"]) and not cls["failed"] and all(
+        (c.get("state") or "").upper() == "EXPECTED" and not c.get("status") for c in cls["pending"]
+    )
+
+
 def merge_queue_stalled(
     prs: list[dict] | None, now: datetime, th: Thresholds
 ) -> list[Row]:
     """الحالة 9: طابورُ الدمج متوقف — طلبٌ أخضرُ الفحوص بسطر اعتمادٍ ينتظر الدمج أكثر من العتبة."""
-    if prs is None:
-        return []
+    if prs is None or in_work_window(now):
+        return []  # داخل الدوام الدمجُ ممنوعٌ بالقاعدة: انتظارُ الأخضر المعتمَد متوقَّعٌ لا عَطَل (أمر المالك 10-20 بند4)
     rows = []
     for raw in prs:
         if raw["state"] != "OPEN" or raw.get("isDraft"):
             continue
         p = pr_watch.normalize(raw)
+        if p["checks"] == "pending" and _only_awaiting_merge(raw.get("statusCheckRollup")):
+            p["checks"] = "green"  # فحصُ أداةِ CI المعلَّق (EXPECTED) لا يبدأ إلا عند الدمج: ليس عائقاً
         age = int(pr_watch._age(p["created"], now))
         if p["checks"] == "green" and p["approval"] and age > th.merge_wait_min:
             cids = CARD_RE.findall(p["text"])
