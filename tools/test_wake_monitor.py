@@ -183,3 +183,19 @@ def test_halt_is_logged_once_per_hour(tmp_path):
     rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 2 and rows[0]["halted"] == p.halted and rows[0]["wakes"] == {}
     assert wm.log_halt(wm.WakePlan(), log, t0) is False
+
+
+def test_stale_wakes_holder_of_card_waiting_past_limit():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    p = wm.stale_plan(ev, DIR, set(), now, verify=ok)
+    assert p.wakes == {"0701": [("W-20261016-001", "approved")]}
+
+
+def test_stale_does_not_rewake_within_an_hour():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    log = [{"ts": "2026-10-16T13:30:00+03:00", "wakes": {"0701": ["W-20261016-001"]}}]
+    assert wm.stale_plan(ev, DIR, set(), now, log=log, verify=ok).wakes == {}
