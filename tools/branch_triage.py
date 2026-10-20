@@ -42,12 +42,16 @@ def triage(
     content_merged: Callable[[str, str], bool] | None = None,
     elsewhere: Callable[[str], list[int]] | None = None,
     checked_out: frozenset[str] = frozenset(),
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, list[dict]]:
     """حكمٌ نقيٌّ على {اسمُ الفرع: رأسُه}. `elsewhere(head)` مكلفةٌ فلا تُستدعى إلّا لما لا طلبَ له وفيه إيداعات.
     فرعٌ مفتوحٌ في شجرة عملٍ حيّة يُعلَّم `checked_out` ويُستبعد من قائمة الحذف المقترحة."""
     out: dict[str, list[dict]] = {key: [] for key, _label, _st in LISTS}
     out["other"] = []
-    for name in sorted(branches):
+    names = sorted(branches)
+    for i, name in enumerate(names, 1):
+        if progress:
+            progress(i, len(names), name)
         if name in PROTECTED:
             continue
         head = branches[name]
@@ -109,6 +113,20 @@ def worktree_branches(repo: Path) -> frozenset[str]:
     return frozenset(names)
 
 
+def ancestor_index(repo: Path, merged: list[dict], branches: dict[str, str]) -> dict[str, list[int]]:
+    """{رأسُ الفرع: طلباتٌ مدموجةٌ رأسُها يحوي رأسَ الفرع} بنداءٍ واحدٍ لكل طلب (`for-each-ref --merged`) بدل merge-base لكل فرعٍ وطلب."""
+    by_head: dict[str, list[str]] = {}
+    for name, head in branches.items():
+        by_head.setdefault(head, []).append(name)
+    out: dict[str, list[int]] = {}
+    for p in merged:
+        oid = p.get("headRefOid") or ""
+        names = _git(repo, "for-each-ref", f"--merged={oid}", "--format=%(objectname)", "refs/heads").split()
+        for head in set(names):
+            out.setdefault(head, []).append(p["number"])
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -130,9 +148,12 @@ def main(argv: list[str] | None = None) -> int:
         out = _git(repo, "rev-list", "--count", f"{a.base}..{name}").strip()
         return int(out) if out.isdigit() else 0
 
+    branches = local_branches(repo)
+    index = ancestor_index(repo, merged, branches)
     result = triage(
-        local_branches(repo), ahead, prs, contains, cm,
-        lambda head: bs.merged_elsewhere(repo, head, merged, contains, cm), worktree_branches(repo),
+        branches, ahead, prs, contains, cm,
+        lambda head: sorted(index.get(head, [])), worktree_branches(repo),
+        lambda i, n, name: print(f"[{i}/{n}] {name}", file=sys.stderr, flush=True) if i % 10 == 0 or i == n else None,
     )
     text = json.dumps(result, ensure_ascii=False, indent=1) if a.json else render(result, str(repo))
     if a.out:
