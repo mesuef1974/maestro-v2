@@ -59,6 +59,12 @@ COMMON_DIGEST = """\n## قواعدُ تسري على كلّ الجلسات
 - الدفتر: `ledger.py move … --by <رقمك>`؛ والجدول المعتمد الحيّ (D-381م) لا يُمسّ؛ ولا `git add -A` ولا stash ولا force-push.
 """
 
+#: شرطُ قبول «جاهزٌ للمعاينة» (W-20261020-013): سطرٌ لكلّ دورٍ يقبل الثلاثيّةَ أو يكتب مواصفتَها.
+READY_GATE = {
+    "0501": "لا تقبل ثلاثيّةَ «جاهزٌ للمعاينة» قبل أن يخرج `python C:/Users/mesue/delivery_manager_work/tools/approval_check.py ready - --repo <شجرةُ الجلسة>` بـ✔: إيصالُ `make prepush` للرأس نفسه، ورأسٌ غيرُ متأخّرٍ عن main ولا متصادمٍ معه. وإلا أعِدها للجلسة المنفِّذة بنصّ ✘.",
+    "0301": "كلُّ مواصفةٍ تنفيذيّةٍ تذكر في خطواتها: `make prepush` أخضرُ للرأس ودمجُ main قبل «جاهزٌ للمعاينة» (يرفض 0501 ما سواه بـ`approval_check.py ready`).",
+}
+
 #: جلساتُ التجربة فقط (W-20261013-031): نواةٌ ≤4 كيلوبايت + details/<رقم>.md بالنصّ الكامل + COMMON.md.
 NUCLEUS_ROLES = ("0101", "04")
 NUCLEUS_MAX_BYTES = 4096
@@ -130,6 +136,8 @@ def card(title: str, ch: dict, tab: dict | None) -> str:
             "## مداي ومصادري", *[f"- **{k}:** {v}" for k, v in ch["scope"].items()], "",
             "## مخرجاتي", *[f"- {o}" for o in ch["outputs"]], "",
             "## حدودي (ما لا أفعله)", ch["boundaries"], ""]
+    if sid in READY_GATE:
+        out += ["## شرطُ قبول «جاهزٌ للمعاينة» (W-20261020-013)", READY_GATE[sid], ""]
     shared = bool(tab) and len(tab["members"]) > 1  # تبويبٌ مشتركٌ بين عدّة جلساتٍ: صلاحيّاتُه ومهاراتُه ليست لكلّ عضو
     perms = ch.get("permissions") or (None if shared else (tab or {}).get("permissions"))
     skills = ch.get("skills") or (None if shared else (tab or {}).get("skills"))

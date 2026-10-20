@@ -398,16 +398,41 @@ def label_delegation(text: str) -> str:
     return text
 
 
+def ready_problem(repo: str) -> str | None:
+    """(W-20261020-013) شرطُ قبول «جاهزٌ للمعاينة»: إيصالُ prepush ناجحٌ للرأس نفسه، والرأسُ غيرُ متأخّرٍ ولا متصادمٍ مع main.
+    يُشغَّل بالصرامة الكاملة دائماً (هذا الأمرُ لـ0501؛ الظلُّ للانتقال في الدفتر وحدَه)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import ledger
+
+    old = os.environ.get("PREPUSH_RECEIPT_ENFORCE")
+    os.environ["PREPUSH_RECEIPT_ENFORCE"] = "1"
+    try:
+        ledger.check_prepush_receipt(repo)
+        return None
+    except ledger.LedgerError as exc:
+        return str(exc)
+    finally:
+        if old is None:
+            os.environ.pop("PREPUSH_RECEIPT_ENFORCE", None)
+        else:
+            os.environ["PREPUSH_RECEIPT_ENFORCE"] = old
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("kind", choices=["card", "pr", "visual"])
+    ap.add_argument("kind", choices=["card", "pr", "visual", "ready"])
     ap.add_argument("target")
     ap.add_argument("--head", help="للبطاقة: رأسُ الإيداع الحاليّ للمقارنة (sha8)")
+    ap.add_argument("--repo", default=".", help="ready: شجرةُ عملِ الجلسة المراد قبولُ «جاهزٌ للمعاينة» منها")
     a = ap.parse_args()
     print(source_line())
     ev: list[tuple[str, str]] = []
     pr_head = a.head
+    if a.kind == "ready":
+        problem = ready_problem(a.repo)
+        print(("✘ " + problem) if problem else "✔ إيصالُ prepush للرأس نفسه وحداثةُ main بلا تصادم — تُقبل الثلاثيّة")
+        return 4 if problem else 0
     if a.kind == "visual":
         problem = visual_problem(a.target, a.head)
         print(("✘ " + problem) if problem else "✔ لا أدلةَ بصريّةً مطلوبة أو هي سليمة للرأس")
