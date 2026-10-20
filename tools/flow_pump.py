@@ -76,8 +76,37 @@ def approve_pass(states: dict[str, dict], apply: bool) -> list[str]:
     return out
 
 
+LOCK = HERE.parent / "ledger" / "flow_pump.lock"
+LOG = HERE.parent / "ledger" / "flow_pump.log"
+STALE_LOCK_S = 900
+
+
+def _lock() -> bool:
+    """قفلٌ بملفّ: دورتان لا تتداخلان؛ القفلُ الأقدم من 15 دقيقة يُعدّ ميتاً."""
+    import os
+    import time
+
+    try:
+        if LOCK.exists() and time.time() - LOCK.stat().st_mtime > STALE_LOCK_S:
+            LOCK.unlink()
+        os.close(os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        return True
+    except FileExistsError:
+        return False
+
+
 def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
+    if not _lock():
+        print("دورةٌ أخرى تعمل — تخطٍّ")
+        return 0
+    try:
+        return _run(argv)
+    finally:
+        LOCK.unlink(missing_ok=True)
+
+
+def _run(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--skip", nargs="*", default=[], help="بطاقاتٌ تُستثنى من النقل")
@@ -90,7 +119,15 @@ def main(argv=None) -> int:
     if a.skip:
         orig = ledger_sync.plan
         ledger_sync.plan = lambda st, *r, **k: orig({c: v for c, v in st.items() if c not in a.skip}, *r, **k)
-    return ledger_sync.cycle(a.apply, 80)
+    orig_move = ledger.move  # ledger_sync لا يمرّر by؛ يسجّلها المضخّة باسم 0101 (مسجِّلٌ مسموح لـmerged/published)
+    ledger.move = lambda *args, **kw: orig_move(*args, **{"by": SENDER, **kw})
+    rc = ledger_sync.cycle(a.apply, 80)
+    if a.apply:
+        from datetime import datetime
+
+        with LOG.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} rc={rc}\n")
+    return rc
 
 
 if __name__ == "__main__":
