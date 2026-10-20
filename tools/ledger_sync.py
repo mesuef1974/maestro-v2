@@ -33,14 +33,35 @@ ORDER = ("approved", *CHAIN)
 
 def fetch_prs(slug: str, state: str, limit: int, gh=ps._gh) -> dict[str, dict]:
     """رأس الطلب (8 أحرف) → {number, merge, at} لطلبات المستودع بالحالة المعطاة (merged|open)."""
-    rows = json.loads(gh(["pr", "list", "--repo", slug, "--state", state, "--limit", str(limit), "--json", "number,headRefOid,mergeCommit,mergedAt"]))
+    rows = json.loads(
+        gh(
+            [
+                "pr",
+                "list",
+                "--repo",
+                slug,
+                "--state",
+                state,
+                "--limit",
+                str(limit),
+                "--json",
+                "number,headRefOid,mergeCommit,mergedAt",
+            ]
+        )
+    )
     return {
-        r["headRefOid"][:8]: {"number": r["number"], "merge": (r.get("mergeCommit") or {}).get("oid", ""), "at": r.get("mergedAt") or ""}
+        r["headRefOid"][:8]: {
+            "number": r["number"],
+            "merge": (r.get("mergeCommit") or {}).get("oid", ""),
+            "at": r.get("mergedAt") or "",
+        }
         for r in rows
     }
 
 
-def target_for(slug_prod: bool, pr: dict, prod: str | None, check=ps.in_production) -> str | None:
+def target_for(
+    slug_prod: bool, pr: dict, prod: str | None, check=ps.in_production
+) -> str | None:
     """الحالةُ الهدف: published إن بلا إنتاجٍ منفصل أو دمجُه داخل الإنتاج؛ merged إن دُمج ولم يصل؛ وإلا None."""
     if not pr:
         return None
@@ -49,7 +70,12 @@ def target_for(slug_prod: bool, pr: dict, prod: str | None, check=ps.in_producti
     return "published" if prod and check(pr["merge"], prod) else "merged"
 
 
-def plan(states: dict, merged: dict[str, dict[str, dict]], prod: str | None, check=ps.in_production) -> list[dict]:
+def plan(
+    states: dict,
+    merged: dict[str, dict[str, dict]],
+    prod: str | None,
+    check=ps.in_production,
+) -> list[dict]:
     """صفوفُ النقل: {id, state, target, head, pr, slug, merge} لما حالتُه أدنى من هدفه، بلا قفز (النقلُ بالسلسلة)."""
     rows = []
     for cid, st in sorted(states.items()):
@@ -62,7 +88,18 @@ def plan(states: dict, merged: dict[str, dict[str, dict]], prod: str | None, che
             pr = merged.get(slug, {}).get(head)
             target = target_for(has_prod, pr, prod, check)
             if target and ORDER.index(st["state"]) < ORDER.index(target):
-                rows.append({"id": cid, "state": st["state"], "target": target, "head": head, "pr": pr["number"], "slug": slug, "merge": pr["merge"][:9]})
+                rows.append(
+                    {
+                        "id": cid,
+                        "state": st["state"],
+                        "target": target,
+                        "head": head,
+                        "pr": pr["number"],
+                        "slug": slug,
+                        "merge": pr["merge"][:9],
+                        "at": pr.get("at", ""),
+                    }
+                )
                 break
     return rows
 
@@ -74,7 +111,13 @@ def steps(row: dict) -> list[str]:
     return list(CHAIN[start:end])
 
 
-def orphans(states: dict, events: list[dict], open_prs: dict[str, dict[str, dict]], merged: dict[str, dict[str, dict]], now: datetime) -> list[dict]:
+def orphans(
+    states: dict,
+    events: list[dict],
+    open_prs: dict[str, dict[str, dict]],
+    merged: dict[str, dict[str, dict]],
+    now: datetime,
+) -> list[dict]:
     """بطاقاتُ pushed بلا طلبٍ مفتوحٍ أو مدموجٍ بعد المهلة: تُبلَّغ ولا تُحوَّل."""
     last_ts: dict[str, str] = {}
     for ev in events:
@@ -92,7 +135,14 @@ def orphans(states: dict, events: list[dict], open_prs: dict[str, dict[str, dict
         except (KeyError, ValueError):
             continue
         if age >= ORPHAN_AFTER:
-            out.append({"id": cid, "head": head, "hours": int(age.total_seconds() // 3600), "held_by": st.get("held_by") or ""})
+            out.append(
+                {
+                    "id": cid,
+                    "head": head,
+                    "hours": int(age.total_seconds() // 3600),
+                    "held_by": st.get("held_by") or "",
+                }
+            )
     return out
 
 
@@ -101,7 +151,17 @@ def apply_rows(rows: list[dict], prod: str | None, move=None) -> list[str]:
     move = move or ledger.move
     done = []
     for r in rows:
-        why = f"آلياً (ledger_sync) — #{r['pr']} مدموج {r['merge']} في {r['slug']}" + (f" ومنشور {prod[:7]}" if r["target"] == "published" and prod and r["slug"].endswith("shschool_mvp") else "")
+        why = (
+            f"آلياً (ledger_sync) — #{r['pr']} مدموج {r['merge']} في {r['slug']}"
+            + (f" وقتَ دمجِه الفعليّ في GitHub {r['at']}" if r.get("at") else "")
+            + (
+                f" ومنشور {prod[:7]}"
+                if r["target"] == "published"
+                and prod
+                and r["slug"].endswith("shschool_mvp")
+                else ""
+            )
+        )
         try:
             for step in steps(r):
                 kw = {"waive_remote_check": why} if step == "pushed" else {}
@@ -115,9 +175,20 @@ def apply_rows(rows: list[dict], prod: str | None, move=None) -> list[str]:
 def report(rows: list[dict], orph: list[dict]) -> list[str]:
     lines = []
     if rows:
-        lines.append("نُقلت/تُنقل: " + "، ".join(f"{r['id']} ← {r['target']} (#{r['pr']})" for r in rows))
+        lines.append(
+            "نُقلت/تُنقل: "
+            + "، ".join(f"{r['id']} ← {r['target']} (#{r['pr']})" for r in rows)
+        )
     if orph:
-        lines.append("pushed بلا طلب (لم تُحوَّل، افتحوا الطلب أو أعيدوا البطاقة): " + "، ".join(f"{o['id']} ({o['hours']}س" + (f"، {o['held_by']}" if o["held_by"] else "") + ")" for o in orph))
+        lines.append(
+            "pushed بلا طلب (لم تُحوَّل، افتحوا الطلب أو أعيدوا البطاقة): "
+            + "، ".join(
+                f"{o['id']} ({o['hours']}س"
+                + (f"، {o['held_by']}" if o["held_by"] else "")
+                + ")"
+                for o in orph
+            )
+        )
     return lines
 
 
@@ -128,7 +199,10 @@ def cycle(apply: bool, limit: int, commit: str | None = None) -> int:
             try:
                 prod = ps.fetch_health()
             except ps.SyncError as exc:
-                print(f"# غير مقيس (الإنتاج): {exc} — تُنقل بطاقاتُ المستودعات بلا إنتاجٍ وحدَها إلى merged/published", file=sys.stderr)
+                print(
+                    f"# غير مقيس (الإنتاج): {exc} — تُنقل بطاقاتُ المستودعات بلا إنتاجٍ وحدَها إلى merged/published",
+                    file=sys.stderr,
+                )
         merged = {s: fetch_prs(s, "merged", limit) for s, _ in REPOS}
         open_prs = {s: fetch_prs(s, "open", limit) for s, _ in REPOS}
         events = ledger.load_events()
@@ -137,10 +211,16 @@ def cycle(apply: bool, limit: int, commit: str | None = None) -> int:
         print(f"✘ غير مقيس: {exc} — لا نقل", file=sys.stderr)
         return 2
     rows = plan(states, merged, prod)
-    orph = orphans(states, events, open_prs, merged, datetime.now(timezone(timedelta(hours=3))))
-    print(f"الإنتاج {(prod or '—')[:7]} — {len(rows)} بطاقة للنقل، {len(orph)} pushed بلا طلب")
+    orph = orphans(
+        states, events, open_prs, merged, datetime.now(timezone(timedelta(hours=3)))
+    )
+    print(
+        f"الإنتاج {(prod or '—')[:7]} — {len(rows)} بطاقة للنقل، {len(orph)} pushed بلا طلب"
+    )
     for r in rows:
-        print(f"  {r['id']} ({r['state']}→{r['target']}) #{r['pr']} {r['slug'].split('/')[1]} رأس {r['head']}")
+        print(
+            f"  {r['id']} ({r['state']}→{r['target']}) #{r['pr']} {r['slug'].split('/')[1]} رأس {r['head']}"
+        )
     if apply:
         for line in apply_rows(rows, prod):
             print("  " + line)

@@ -38,12 +38,16 @@ def test_pushed_card_skips_nothing_and_does_not_repeat_steps():
 
 
 def test_shschool_merged_but_not_in_production_stops_at_merged():
-    rows = ls.plan({"W-1": st("pushed")}, {SHS: {"aaaaaaaa": pr()}}, "c" * 40, check=never)
+    rows = ls.plan(
+        {"W-1": st("pushed")}, {SHS: {"aaaaaaaa": pr()}}, "c" * 40, check=never
+    )
     assert rows[0]["target"] == "merged" and ls.steps(rows[0]) == ["merged"]
 
 
 def test_shschool_in_production_goes_to_published():
-    rows = ls.plan({"W-1": st("merged")}, {SHS: {"aaaaaaaa": pr()}}, "c" * 40, check=always)
+    rows = ls.plan(
+        {"W-1": st("merged")}, {SHS: {"aaaaaaaa": pr()}}, "c" * 40, check=always
+    )
     assert ls.steps(rows[0]) == ["published"]
 
 
@@ -53,7 +57,11 @@ def test_unknown_production_never_publishes_shschool():
 
 
 def test_card_at_target_or_without_merged_pr_is_untouched():
-    states = {"W-1": st("published"), "W-2": st("merged"), "W-3": st("approved", head="dddddddd")}
+    states = {
+        "W-1": st("published"),
+        "W-2": st("merged"),
+        "W-3": st("approved", head="dddddddd"),
+    }
     rows = ls.plan(states, {SHS: {"aaaaaaaa": pr()}}, "c" * 40, check=never)
     assert rows == []
 
@@ -61,12 +69,24 @@ def test_card_at_target_or_without_merged_pr_is_untouched():
 def test_apply_walks_chain_without_claiming_0601_and_waives_only_pushed():
     calls = []
     rows = ls.plan({"W-1": st("approved")}, {MV2: {"aaaaaaaa": pr()}}, None)
-    done = ls.apply_rows(rows, None, move=lambda cid, step, **kw: calls.append((step, kw)))
+    done = ls.apply_rows(
+        rows, None, move=lambda cid, step, **kw: calls.append((step, kw))
+    )
     assert [c[0] for c in calls] == ["pushed", "merged", "published"]
-    assert "waive_remote_check" in calls[0][1] and "waive_remote_check" not in calls[1][1]
+    assert (
+        "waive_remote_check" in calls[0][1] and "waive_remote_check" not in calls[1][1]
+    )
     assert all("by" not in c[1] for c in calls)
     assert "ledger_sync" in calls[-1][1]["note"]
     assert done == ["W-1 ← published (#7)"]
+
+
+def test_note_carries_the_real_github_merge_time_not_the_registration_time():
+    """أمر المالك 10-20 بند 2: وقتُ الدمج الحقيقيّ يُدوَّن، فلا ينتظر الدفترُ حذفَ الفرع ولا يُنسب الدمجُ إلى وقت التسجيل."""
+    calls = []
+    rows = ls.plan({"W-1": st("pushed")}, {MV2: {"aaaaaaaa": pr()}}, None)
+    ls.apply_rows(rows, None, move=lambda cid, step, **kw: calls.append((step, kw)))
+    assert "2026-10-19T10:00:00Z" in calls[-1][1]["note"]
 
 
 def test_a_failing_card_does_not_stop_the_rest():
@@ -96,10 +116,14 @@ def test_pushed_without_any_pr_is_reported_not_converted():
 def test_recent_pushed_or_with_open_pr_is_not_orphan():
     states = {"W-1": st("pushed")}
     assert ls.orphans(states, events("W-1", 1), {}, {}, NOW) == []
-    assert ls.orphans(states, events("W-1", 9), {MV2: {"aaaaaaaa": pr()}}, {}, NOW) == []
+    assert (
+        ls.orphans(states, events("W-1", 9), {MV2: {"aaaaaaaa": pr()}}, {}, NOW) == []
+    )
 
 
 def test_fetch_prs_parses_gh_json():
     out = '[{"number": 9, "headRefOid": "abcdef1234", "mergeCommit": {"oid": "f00"}, "mergedAt": "2026-10-19T01:00:00Z"}]'
     got = ls.fetch_prs(MV2, "merged", 5, gh=lambda args: out)
-    assert got == {"abcdef12": {"number": 9, "merge": "f00", "at": "2026-10-19T01:00:00Z"}}
+    assert got == {
+        "abcdef12": {"number": 9, "merge": "f00", "at": "2026-10-19T01:00:00Z"}
+    }
