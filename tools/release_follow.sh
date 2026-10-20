@@ -45,6 +45,10 @@ DOW=$(date -u -d "@$QNOW" +%u); HM=$(date -u -d "@$QNOW" +%H%M)
 if [ "$URGENT" != 1 ] && [ "${EMERGENCY:-0}" != 1 ] && [ "$DOW" != 5 ] && [ "$DOW" != 6 ] && [ "$HM" -ge 0700 ] && [ "$HM" -lt 1430 ]; then
   say "وسط الدوام ($HM) والطلب بلا وسم نشر-عاجل ولا EMERGENCY=1 — لا دمج"; exit 4
 fi
+# داخل النافذة بوسم «نشر-عاجل» أو EMERGENCY=1 لا يكفي الوسم وحده: لا بدّ من سطر «أمرُ نافذة» للمالك في owner_confirmations.md للطلب (أو بطاقته)
+if [ "$DOW" != 5 ] && [ "$DOW" != 6 ] && [ "$HM" -ge 0700 ] && [ "$HM" -lt 1430 ]; then
+  python -X utf8 -c 'import sys;sys.path.insert(0,sys.argv[1]);from record_owner_confirmation import window_order_present as w;t=open(sys.argv[2],encoding="utf-8").read();sys.exit(0 if (w(t,"#"+sys.argv[3]) or w(t,sys.argv[4])) else 1)' "$(dirname "$0")" "$OWNER" "$PR" "${CARD:-NONE}"     || { say "داخل نافذة الدوام ($HM) ولا سطرَ «أمرُ نافذة» للمالك في owner_confirmations.md للطلب #$PR — لا دمج (سجِّله: record_owner_confirmation.py --window-order)"; exit 4; }
+fi
 say "نشر-عاجل=$URGENT توقيت الدوحة=$HM"
 
 # 1) انتظارُ اكتمال الفحوص بمهلة
