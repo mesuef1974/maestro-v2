@@ -288,14 +288,27 @@ def backup_age_severity(age_h: float | None, failed: bool, max_age_h: float) -> 
     return None
 
 
+def backup_failure_is_current(failed_mtime: float | None, last_commit_ts: float | None) -> bool:
+    """علامةُ الفشل تُنذر فقط إن كانت **أحدثَ** من آخر نسخةٍ ناجحة (W-20260929-008).
+
+    السكربتُ لا يحذف `BACKUP_FAILED.txt` بعد نجاحٍ لاحق، فكان الإنذارُ الكاذبُ يبقى. فإن لم يُعرف وقتُ آخر نسخةٍ
+    نجحت (لا إيداع) فالعلامةُ سارية؛ وإن لم تُوجد العلامةُ فلا فشل.
+    """
+    if failed_mtime is None:
+        return False
+    return last_commit_ts is None or failed_mtime > last_commit_ts
+
+
 def backup_alerts(cfg: dict | None) -> list[dict]:
     if not cfg:
         return []
     repo = Path(cfg["repo"])
     proc = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%ct", cfg["branch"]],
                           capture_output=True, encoding="utf-8", check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    age_h = (datetime.now(timezone.utc).timestamp() - int(proc.stdout.strip())) / 3600 if proc.returncode == 0 and proc.stdout.strip() else None
-    failed = (repo / "backups" / "BACKUP_FAILED.txt").is_file()
+    commit_ts = int(proc.stdout.strip()) if proc.returncode == 0 and proc.stdout.strip() else None
+    age_h = (datetime.now(timezone.utc).timestamp() - commit_ts) / 3600 if commit_ts is not None else None
+    marker = repo / "backups" / "BACKUP_FAILED.txt"
+    failed = backup_failure_is_current(marker.stat().st_mtime if marker.is_file() else None, commit_ts)
     sev = backup_age_severity(age_h, failed, cfg["max_age_h"])
     if not sev:
         return []
