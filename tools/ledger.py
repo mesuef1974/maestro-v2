@@ -1165,6 +1165,29 @@ def check_patch_id(approved: str, new: str, repo: str | None = None) -> list[str
     return changed
 
 
+REVIEWERS = {"0101"}  # من يفحص الفرق بنفسه لنوع reviewed-diff (أمر المالك 2026-10-20)
+
+
+def check_reviewed_diff(approved: str, new: str, reviewed_by: str | None, repo: str | None = None) -> list[str]:
+    """«اعتماد محتوى الفرق لا الرأس» (أمر المالك 2026-10-20): بعد إصلاح CI أو دمج main، وحتى لو حُلّ تعارضٌ يدوياً،
+    إن فحص 0101 الفرقَ ووثّقه. شروطٌ آليّةٌ: الفاحصُ من REVIEWERS؛ عملُ الفرع عن origin/main (لا الفرقُ بين الرأسين)
+    لا يمسّ ملفّاً حاكماً ولا هجرةً ولا صلاحيّاتٍ/أمناً، ولا يضيف ملفّاً لم يكن في المعتمَد. يعيد ملفّات الفرع الجديد."""
+    if reviewed_by not in REVIEWERS:
+        raise LedgerError(f"فحصُ الفرق يلزمه --reviewed-by من {sorted(REVIEWERS)}")
+    old = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{approved}"], repo).splitlines() if f]
+    changed = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{new}"], repo).splitlines() if f]
+    if not changed:
+        raise LedgerError("عملُ الفرع الجديد فارغٌ عن origin/main (fetch أوّلاً؟)")
+    bad = governing_files(changed) + [f for f in changed if "/migrations/" in f or f.startswith("migrations/")
+                                       or any(k in f.lower() for k in SENSITIVE_PATH_PARTS)]
+    if bad:
+        raise LedgerError(f"ملفّاتٌ حاكمةٌ أو هجراتٌ أو صلاحيّاتٌ/أمنٌ في العمل تُعرض على المالك: {sorted(set(bad))[:5]}")
+    extra = sorted(set(changed) - set(old))
+    if extra:
+        raise LedgerError(f"ملفّاتٌ لم تكن في العمل المعتمَد (نطاقٌ أوسع): {extra[:5]}")
+    return changed
+
+
 CHAIN_MAX = 5  # أقصى طولٍ لسلسلة tests-main-chain؛ ما فوقه يحتاج اعتماداً جديداً (W-20261017-012)
 
 
@@ -1291,7 +1314,8 @@ def check_red_fix(item: dict, approved: str, new: str, repo: str | None = None) 
     return changed
 
 
-def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None) -> None:
+def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None,
+               reviewed_by: str | None = None) -> None:
     """استثناءٌ صريحٌ مسجَّلٌ لا ضمنيّ: تعديلٌ تافهٌ (وثائق أو .md) بعد الاعتماد بتوقيع 0501؛ لا كودَ ولا صلاحيّاتٍ ولا هجرات."""
     if by not in WAIVER_BY:
         raise LedgerError(f"الاستثناءُ لـ{sorted(WAIVER_BY)} وحدَها")
@@ -1322,6 +1346,9 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     elif kind == "tests-only":
         check_tests_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ اختباراتٍ فقط بلا حراسةٍ أمنيّة (تحقّق آليّ) — {reason}"
+    elif kind == "reviewed-diff":
+        check_reviewed_diff(item["approved_head"], new_head, reviewed_by, repo)
+        reason = f"محتوى الفرق بعد فحص {reviewed_by} (تحقّق آليّ: بلا حاكم/هجرات/أمن ولا نطاق أوسع) — {reason}"
     elif kind == "types-only":
         check_types_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ أنواعٍ فقط لفشل mypy بقرار المالك 10-10 (تحقّق آليّ: AST مطابق) — {reason}"
@@ -1339,7 +1366,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge أو tests-only أو tests-main-chain أو types-only أو red-fix أو patch-id أو auto")
+        raise LedgerError("--kind: docs أو reviewed-diff أو main-merge أو tests-only أو tests-main-chain أو types-only أو red-fix أو patch-id أو auto")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -1447,7 +1474,8 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "tests-main-chain", "types-only", "red-fix", "patch-id", "auto"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "tests-main-chain", "types-only", "red-fix", "patch-id", "reviewed-diff", "auto"])
+    wv.add_argument("--reviewed-by"); wv.add_argument("--repo")
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
@@ -1485,7 +1513,7 @@ def main() -> None:
         elif args.cmd == "reapprove":
             reapprove(args.id, args.head, args.by, args.note); print("ok")
         elif args.cmd == "waive-head":
-            waive_head(args.id, args.head, args.by, args.reason, kind=args.kind); print("ok")
+            waive_head(args.id, args.head, args.by, args.reason, kind=args.kind, repo=args.repo, reviewed_by=args.reviewed_by); print("ok")
         elif args.cmd == "tag":
             head, pr = "", None
             if args.branch:
