@@ -825,7 +825,7 @@ def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, 
     return f"إنذار (الظلّ): {problem}"
 
 
-REPEAT_GUARDED = frozenset({"routed", "in_progress", "ready_for_review"})  # pushed/merged/published/approved تحجبها GATES؛ هذه حرّةٌ فيتكرّر حدثُها (أمر المالك 10-20 بند5)
+REPEAT_GUARDED = frozenset({"routed", "in_progress"})  # pushed/merged/published/approved تحجبها GATES؛ هاتان حرّتان فيتكرّر حدثُهما؛ وready_for_review يعلن رأسَه في ملاحظةٍ فيُعاد بالرأس الجديد (أمر المالك 10-20 بند5)
 
 
 def check_not_repeat(item_id: str, current: str, state: str, head: str | None, held_by: str | None, path=None) -> None:
