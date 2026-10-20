@@ -163,3 +163,39 @@ def test_same_event_is_not_woken_twice():
     ev = _burst(1)
     p = wm.plan(ev, CUR, DIR, set(), verify=ok, already=frozenset({("W-20261016-001", "routed")}))
     assert p.wakes == {} and "لا تكرار" in p.skipped[0][1]
+
+
+def test_live_window_is_short_so_idle_sessions_do_not_stall_waking():
+    assert wm.LIVE_WINDOW_MS == 15 * 60 * 1000
+
+
+def test_halt_is_logged_once_per_hour(tmp_path):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    log = tmp_path / "wake_log.jsonl"
+    p = wm.WakePlan()
+    p.halted = "الجلساتُ الحيّةُ تتجاوز 14: لا إيقاظ"
+    t0 = datetime(2026, 10, 20, 16, 0, tzinfo=timezone(timedelta(hours=3)))
+    assert wm.log_halt(p, log, t0) is True
+    assert wm.log_halt(p, log, t0 + timedelta(minutes=30)) is False
+    assert wm.log_halt(p, log, t0 + timedelta(minutes=61)) is True
+    rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2 and rows[0]["halted"] == p.halted and rows[0]["wakes"] == {}
+    assert wm.log_halt(wm.WakePlan(), log, t0) is False
+
+
+def test_stale_wakes_holder_of_card_waiting_past_limit():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    p = wm.stale_plan(ev, DIR, set(), now, verify=ok)
+    assert p.wakes == {"0701": [("W-20261016-001", "approved")]}
+
+
+def test_stale_does_not_rewake_within_an_hour():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    log = [{"ts": "2026-10-16T13:30:00+03:00", "wakes": {"0701": ["W-20261016-001"]}}]
+    assert wm.stale_plan(ev, DIR, set(), now, log=log, verify=ok).wakes == {}

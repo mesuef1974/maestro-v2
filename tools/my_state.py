@@ -167,7 +167,9 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
         lines.append(f"!! تحذير: بطاقات pushed بلا فرع بعيد ({len(warn)}): {'، '.join(warn)}\n")
     lines.append(f"== {session}: {len(mine)} بطاقةً بالمالك المستنتَج")
     if held:
-        lines.append(f"محجوزةٌ باسمكِ (held_by) ({len(held)}): " + "، ".join(i["id"] for i in held))
+        lines.append(f"محجوزةٌ باسمكِ (held_by) ({len(held)}):")
+        lines.extend(f"  {i['id']} [{i.get('state', '?')}] {i.get('priority', '')} {str(i.get('problem', ''))[:60]}"
+                     for i in sorted(held, key=ledger.order_key))
     empty = True
     for key, label in ACTIONS:
         if groups[key]:
