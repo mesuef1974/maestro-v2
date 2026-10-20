@@ -28,6 +28,8 @@ class Hook(unittest.TestCase):
         real = ledger._run_preflight
         ledger._run_preflight = lambda card, repo: (0, "ok")
         self.addCleanup(setattr, ledger, "_run_preflight", real)
+        # هذه الاختباراتُ لا تغطّي بوّابةَ الإيصال: تُبقى إنذاراً هنا (الإلزامُ مُختبَرٌ في test_prepush_receipt)
+        _p = mock.patch.dict(os.environ, {"PREPUSH_RECEIPT_ENFORCE": "0", "PREMERGE_GATE_ENFORCE": "0"}); _p.start(); self.addCleanup(_p.stop)
         self.tmp = tempfile.mkdtemp()
         self.repo = str(Path(self.tmp) / "r")
         Path(self.repo).mkdir()

@@ -54,7 +54,7 @@ def test_missing_origin_main_is_unknown_not_clash(tmp_path):
 def test_receipt_gate_warns_on_clash_in_shadow_and_refuses_enforced(tmp_path, monkeypatch):
     repo = repo_with_feature(tmp_path, clash=True)
     write_receipt(repo)
-    monkeypatch.delenv("PREPUSH_RECEIPT_ENFORCE", raising=False)
+    monkeypatch.setenv("PREPUSH_RECEIPT_ENFORCE", "0")
     assert "تصادمٌ فعليٌّ" in ledger.check_prepush_receipt(str(repo))
     monkeypatch.setenv("PREPUSH_RECEIPT_ENFORCE", "1")
     with pytest.raises(ledger.LedgerError, match="تصادمٌ فعليٌّ"):

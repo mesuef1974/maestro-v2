@@ -816,7 +816,7 @@ def check_prepush_receipt(repo: str, git=None, conflicts=None) -> str | None:
     if not problems:
         return f"قائمة ما قبل جاهز: إيصال prepush للرأس {head} وحداثة main سليمان"
     msg = "؛ ".join(problems)
-    if os.environ.get("PREPUSH_RECEIPT_ENFORCE") == "1":
+    if os.environ.get("PREPUSH_RECEIPT_ENFORCE") != "0":  # الإلزامُ افتراضيّ (قرار المالك 2026-10-20)؛ =0 يعيده إنذاراً
         raise LedgerError(msg)
     return f"إنذار (الظلّ): {msg}"
 
@@ -824,12 +824,14 @@ def check_prepush_receipt(repo: str, git=None, conflicts=None) -> str | None:
 _FINGERPRINT = re.compile(r"^(?:head=)?([0-9a-f]{8})(?:[: ]\s*(?:sha256=)?)([0-9a-f]{16})$")
 
 
-def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, head_now: str | None = None) -> str | None:
+def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, head_now: str | None = None, waived: str | None = None) -> str | None:
     """بصمةُ `make premerge` قبل «جاهزٌ للمعاينة» (W-20261016-021، المكوّن B): `--premerge-sha <head8>:<sha16>` (أو سطر البصمة كما يطبعه الفحص).
     بلا بصمة أو برأسٍ مخالفٍ لرأس الفرع الحاليّ: إنذارٌ في الظلّ، ورفضٌ مع PREMERGE_GATE_ENFORCE=1. نوع docs مستثنىً بنوعه المعلن.
     البصمة تُدوَّن في ملاحظة الحدث؛ وباقي الانتقالات لا تتأثّر."""
     if state != "ready_for_review" or item.get("type") == "docs":
         return None
+    if waived and not fingerprint:  # مستودعٌ بلا make premerge (أدوات الدفتر): الاستثناءُ المسجَّل للفحص المسبق يشمله
+        return f"استثناءُ بصمة premerge مع استثناء الفحص المسبق: {waived}"
     problem = None
     if not fingerprint:
         problem = "لم تُمرَّر بصمةُ make premerge قبل «جاهزٌ للمعاينة» — مرِّر --premerge-sha <head8>:<sha16>"
@@ -841,7 +843,7 @@ def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, 
             problem = f"بصمةُ premerge لرأسٍ مخالف ({m.group(1)}) لرأس الفرع الحاليّ ({head_now[:8]}) — أعِد make premerge"
     if problem is None:
         return f"بصمةُ premerge: {fingerprint.strip()}"
-    if os.environ.get("PREMERGE_GATE_ENFORCE") == "1":
+    if os.environ.get("PREMERGE_GATE_ENFORCE") != "0" and item.get("priority") != "P0":  # الإلزامُ افتراضيّ (قرار المالك 2026-10-20)؛ =0 يعيده إنذاراً؛ P0 معفى
         raise LedgerError(problem)
     return f"إنذار (الظلّ): {problem}"
 
@@ -904,7 +906,7 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if pre_note:
         print(pre_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{pre_note}"
-    fp_note = check_premerge_fingerprint(items[item_id], state, premerge_sha, head_now)
+    fp_note = check_premerge_fingerprint(items[item_id], state, premerge_sha, head_now, waive_preflight)
     if fp_note:
         print(fp_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{fp_note}"

@@ -41,7 +41,15 @@ class Gate(unittest.TestCase):
         self.assertIn("أساسٌ غير مدفوع", str(cm.exception))
 
     def test_pass_is_silent(self):
-        self.assertIn("إنذار (الظلّ)", ledger.check_preflight_ready(CARD, "ready_for_review", "D:/x", None, runner=lambda c, r: (0, "ok")))  # الإيصال غائب في المسار الوهميّ (W-20261017-014)
+        os.environ["PREPUSH_RECEIPT_ENFORCE"] = "0"
+        try:
+            self.assertIn("إنذار (الظلّ)", ledger.check_preflight_ready(CARD, "ready_for_review", "D:/x", None, runner=lambda c, r: (0, "ok")))  # الإيصال غائب في المسار الوهميّ (W-20261017-014)
+        finally:
+            del os.environ["PREPUSH_RECEIPT_ENFORCE"]
+
+    def test_missing_receipt_refuses_by_default(self):  # قرار المالك 2026-10-20: الإلزامُ افتراضيّ
+        with self.assertRaises(LedgerError):
+            ledger.check_preflight_ready(CARD, "ready_for_review", "D:/x", None, runner=lambda c, r: (0, "ok"))
 
     def test_waiver_is_recorded_without_running(self):
         def boom(c, r):
