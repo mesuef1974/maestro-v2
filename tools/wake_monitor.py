@@ -37,7 +37,7 @@ MAX_LIVE = 14
 TEST_CHANNEL = frozenset({"0701", "0702", "0103", "0102"})  # أسبوعُ التجربة (W-20261017-007) قبل تعميم الإرسال
 COUNTER_GUARD = 130  # فوقها (من 150) لا إرسال ويُبلَّغ 0101
 COUNTER = ROOT / "msg_counter.json"
-LIVE_WINDOW_MS = 120 * 60 * 1000  # «حيّة» = نشاطٌ خلال ساعتين
+LIVE_WINDOW_MS = 15 * 60 * 1000  # «حيّة» = نشاطٌ خلال 15 دقيقة (الخاملةُ المنتهيةُ دورتُها لا تستهلك ذاكرةً ولا تُعدّ؛ كانت ساعتين فتجاوزت السقفَ دائماً)
 SESSION_NUM = re.compile(r"^\d{4}")
 PAYLOAD = "{id} {state} — اقرأ: python tools/ledger.py show {id}"
 PAYLOAD_OK = re.compile(r"^W-\d{8}-\d{3} [a-z_]+ — اقرأ: python tools/ledger\.py show W-\d{8}-\d{3}$")
@@ -162,6 +162,25 @@ def woken_history(path: Path = LOG, now: datetime | None = None) -> tuple[frozen
     return frozenset(done), recent
 
 
+def log_halt(p: WakePlan, path: Path = LOG, now: datetime | None = None) -> bool:
+    """يسجّل التوقّفَ في wake_log.jsonl كي لا يكون صامتاً (مرّةً لكلّ نصٍّ في الساعة). يعيد True إن كتب."""
+    if not p.halted:
+        return False
+    now = now or datetime.now(timezone(timedelta(hours=3)))
+    if path.is_file():
+        for line in reversed(path.read_text(encoding="utf-8").splitlines()[-20:]):
+            try:
+                rec = json.loads(line)
+                at = datetime.fromisoformat(rec["ts"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            if rec.get("halted") == p.halted and at.tzinfo and 0 <= (now - at).total_seconds() < 60 * 60:
+                return False
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": now.isoformat(timespec="seconds"), "wakes": {}, "pairs": [], "skipped": [], "halted": p.halted}, ensure_ascii=False) + "\n")
+    return True
+
+
 def live_sessions() -> set[str]:
     import session_directory as sd
 
@@ -233,6 +252,8 @@ def main(argv=None) -> int:
         print(f"تخطٍّ {item_id}: {why}")
     if p.halted:
         print(f"توقّف: {p.halted}")
+        if not a.commit:
+            log_halt(p)
     if not p.wakes and not p.halted and not p.skipped:
         print("لا شيءَ يوقظ أحداً")
     if a.commit:
