@@ -22,8 +22,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -88,12 +91,82 @@ def load_events(path=None) -> list[dict]:
     return out
 
 
+LOCK_TIMEOUT_S = 30.0
+BACKUP_KEEP = 30
+
+
+@contextmanager
+def _file_lock(p: Path, timeout: float = LOCK_TIMEOUT_S):
+    """قفلُ ملفٍ بين العمليّات (الموجة 0.4، D-453م): جلستان تُلحقان معاً لا يتداخل سطراهما ولا يضيع أحدُهما.
+    قفلٌ استشاريٌّ على ملفٍ جانبيّ `<الدفتر>.lock` (msvcrt على ويندوز، fcntl في غيره) يزول بموت العملية فلا قفلَ معلَّقاً."""
+    lock = p.with_name(p.name + ".lock")
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt  # noqa: PLC0415
+
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl  # noqa: PLC0415
+
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise LedgerError(f"تعذّر قفلُ الدفتر خلال {int(timeout)} ث — عمليةٌ أخرى تكتب؛ أعد المحاولة") from None
+                time.sleep(0.02)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def daily_backup(p: Path, today: str | None = None) -> Path | None:
+    """نسخةٌ احتياطيّةٌ واحدةٌ باليوم `backups/<الدفتر>-YYYY-MM-DD.jsonl` قبل أوّل إلحاقٍ فيه؛ تُحتفظ آخرُ BACKUP_KEEP نسخة.
+    تُستعاد بنسخها فوق الدفتر. تُستدعى والقفلُ ممسوك."""
+    if not p.is_file() or p.stat().st_size == 0:
+        return None
+    day = today or datetime.now(DOHA).strftime("%Y-%m-%d")
+    bdir = p.parent / "backups"
+    dest = bdir / f"{p.stem}-{day}{p.suffix}"
+    if dest.exists():
+        return None
+    bdir.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    shutil.copyfile(p, tmp)
+    with tmp.open("r+b") as fh:
+        os.fsync(fh.fileno())
+    os.replace(tmp, dest)
+    for old in sorted(bdir.glob(f"{p.stem}-*{p.suffix}"))[:-BACKUP_KEEP]:
+        old.unlink(missing_ok=True)
+    return dest
+
+
 def append_event(kind: str, item_id: str, data: dict | None = None, path=None) -> dict:
     p = ledger_path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     event = {"ts": now_doha(), "id": item_id, "kind": kind, "data": data or {}}
-    with p.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+    line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+    with _file_lock(p):
+        daily_backup(p)
+        if p.is_file() and p.stat().st_size:
+            with p.open("rb") as rd:
+                rd.seek(-1, os.SEEK_END)
+                if rd.read(1) != b"\n":
+                    line = b"\n" + line  # سطرٌ سابقٌ مبتورٌ (انقطاعٌ في منتصف الكتابة) لا يلتحم بالحدث الجديد
+        with p.open("ab") as fh:
+            fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
     return event
 
 
@@ -779,7 +852,25 @@ def _git_out(repo: str, *args: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def check_prepush_receipt(repo: str, git=None) -> str | None:
+def _merge_conflicts(repo: str) -> list[str] | None:
+    """ملفّاتُ التصادم الفعليّ لو دُمج origin/main في HEAD الآن (`git merge-tree --write-tree`، بلا مساسٍ بالشجرة).
+
+    None إن تعذّر الحساب (git أقدم من 2.38 أو لا origin/main) فلا يُدّعى تصادمٌ بلا دليل؛ قائمةٌ فارغةٌ = لا تصادم."""
+    import subprocess
+    if subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "-q", "origin/main"], capture_output=True).returncode != 0:
+        return None
+    r = subprocess.run(["git", "-C", repo, "merge-tree", "--write-tree", "--name-only", "--no-messages", "HEAD", "origin/main"],
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
+    if r.returncode == 0:
+        return []
+    if r.returncode == 1:
+        names = [ln for ln in r.stdout.splitlines()[1:] if ln.strip()]
+        return names[:20] or ["(ملفّاتٌ غير مسمّاة)"]
+    return None
+
+
+
+def check_prepush_receipt(repo: str, git=None, conflicts=None) -> str | None:
     """قائمةُ ما قبل «جاهز» (W-20261017-014، قرار المالك 10-17): (1) إيصالُ `make prepush` الناجح لرأس الشجرة الحاليّ يكتبه prepush_check
     في مجلّد git للشجرة؛ (2) الرأسُ لا يتأخّر عن origin/main بأكثر من MAIN_LAG_MAX إيداعاً. الظلُّ أوّلاً: إنذارٌ، ورفضٌ مع PREPUSH_RECEIPT_ENFORCE=1."""
     import json as _json
@@ -800,10 +891,13 @@ def check_prepush_receipt(repo: str, git=None) -> str | None:
     lag = g("rev-list", "--count", "HEAD..origin/main")
     if lag.isdigit() and int(lag) > MAIN_LAG_MAX:
         problems.append(f"الرأسُ متأخّرٌ عن origin/main بـ{lag} إيداعاً (الحدُّ {MAIN_LAG_MAX}) — ادمج main أوّلاً")
+    clash = (conflicts or (_merge_conflicts if git is None else (lambda _r: None)))(repo)
+    if clash:
+        problems.append(f"تصادمٌ فعليٌّ مع origin/main في: {', '.join(clash[:5])} — ادمج main وحُلّ التعارض قبل «جاهز» (يبطل الاعتمادُ بعده)")
     if not problems:
         return f"قائمة ما قبل جاهز: إيصال prepush للرأس {head} وحداثة main سليمان"
     msg = "؛ ".join(problems)
-    if os.environ.get("PREPUSH_RECEIPT_ENFORCE") == "1":
+    if os.environ.get("PREPUSH_RECEIPT_ENFORCE") != "0":  # الإلزامُ افتراضيّ (قرار المالك 2026-10-20)؛ =0 يعيده إنذاراً
         raise LedgerError(msg)
     return f"إنذار (الظلّ): {msg}"
 
@@ -811,12 +905,14 @@ def check_prepush_receipt(repo: str, git=None) -> str | None:
 _FINGERPRINT = re.compile(r"^(?:head=)?([0-9a-f]{8})(?:[: ]\s*(?:sha256=)?)([0-9a-f]{16})$")
 
 
-def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, head_now: str | None = None) -> str | None:
+def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, head_now: str | None = None, waived: str | None = None) -> str | None:
     """بصمةُ `make premerge` قبل «جاهزٌ للمعاينة» (W-20261016-021، المكوّن B): `--premerge-sha <head8>:<sha16>` (أو سطر البصمة كما يطبعه الفحص).
     بلا بصمة أو برأسٍ مخالفٍ لرأس الفرع الحاليّ: إنذارٌ في الظلّ، ورفضٌ مع PREMERGE_GATE_ENFORCE=1. نوع docs مستثنىً بنوعه المعلن.
     البصمة تُدوَّن في ملاحظة الحدث؛ وباقي الانتقالات لا تتأثّر."""
     if state != "ready_for_review" or item.get("type") == "docs":
         return None
+    if waived and not fingerprint:  # مستودعٌ بلا make premerge (أدوات الدفتر): الاستثناءُ المسجَّل للفحص المسبق يشمله
+        return f"استثناءُ بصمة premerge مع استثناء الفحص المسبق: {waived}"
     problem = None
     if not fingerprint:
         problem = "لم تُمرَّر بصمةُ make premerge قبل «جاهزٌ للمعاينة» — مرِّر --premerge-sha <head8>:<sha16>"
@@ -828,7 +924,7 @@ def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, 
             problem = f"بصمةُ premerge لرأسٍ مخالف ({m.group(1)}) لرأس الفرع الحاليّ ({head_now[:8]}) — أعِد make premerge"
     if problem is None:
         return f"بصمةُ premerge: {fingerprint.strip()}"
-    if os.environ.get("PREMERGE_GATE_ENFORCE") == "1":
+    if os.environ.get("PREMERGE_GATE_ENFORCE") != "0" and item.get("priority") != "P0":  # الإلزامُ افتراضيّ (قرار المالك 2026-10-20)؛ =0 يعيده إنذاراً؛ P0 معفى
         raise LedgerError(problem)
     return f"إنذار (الظلّ): {problem}"
 
@@ -891,7 +987,7 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if pre_note:
         print(pre_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{pre_note}"
-    fp_note = check_premerge_fingerprint(items[item_id], state, premerge_sha, head_now)
+    fp_note = check_premerge_fingerprint(items[item_id], state, premerge_sha, head_now, waive_preflight)
     if fp_note:
         print(fp_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{fp_note}"

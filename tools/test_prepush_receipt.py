@@ -71,7 +71,13 @@ class Receipt(unittest.TestCase):
         self.assertIn("origin/main", str(cm.exception))
         self.assertIn("سليمان", self.check(lag=str(ledger.MAIN_LAG_MAX)))
 
+    def test_missing_receipt_refuses_by_default(self):  # قرار المالك 2026-10-20: الإلزامُ افتراضيّ
+        with self.assertRaises(LedgerError):
+            self.check()
+
     def test_shadow_warns_without_refusing(self):
+        os.environ["PREPUSH_RECEIPT_ENFORCE"] = "0"
+        self.addCleanup(os.environ.pop, "PREPUSH_RECEIPT_ENFORCE", None)
         self.assertIn("إنذار (الظلّ)", self.check())
 
     def test_waiver_and_p0_unchanged(self):

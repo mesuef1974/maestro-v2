@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 ledger/events.jsonl
+ledger/events.jsonl.lock
+ledger/backups/
 ledger/windows/
 *.tmp
 ledger/spawn_reservations.json
@@ -15,3 +17,7 @@ local_preview_pw.txt
 
 # أدلّة البوّابة البصريّة (لقطات PNG) — لا تُتبَّع (W-20261009-007)
 evidence/
+
+# حالةُ عدّاد الرسائل (تشغيليّة تتغيّر مع كلّ إرسال) — الأداةُ tools/msg_counter.py متتبَّعة وحالتُها لا
+msg_counter.json
+msg_counter.tmp

@@ -1,5 +1,6 @@
 """تفكيك أرضيّة «أوّل طلب»: توزيعها، وارتباطها برسالة المستخدم الأولى، ووسيطها لكل مجلّد مشروع (أداة 0102).
 الاستعمال: python tools/floor_decomp.py [--days 7]"""
+import sys
 import argparse, json, statistics, time
 from collections import defaultdict
 from pathlib import Path
@@ -53,4 +54,6 @@ def main():
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     main()

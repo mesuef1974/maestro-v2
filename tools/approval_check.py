@@ -45,13 +45,71 @@ HEAD_IN_LINE = re.compile(r"(?:الرأس|@)\s*([0-9a-f]{7,40})")
 
 
 def head_status(approved: str | None, pr_head: str | None, today: date | None = None) -> str:
-    """ok: متطابقان أو لا رأسَ للمقارنة؛ stale: اختلفا؛ legacy: اعتمادٌ بلا رأس؛ expired: بلا رأسٍ وبعد المهلة."""
+    """ok: متطابقان أو لا رأسَ للمقارنة؛ stale: اختلفا؛ legacy: اعتمادٌ بلا رأس؛ expired: بلا رأسٍ وبعد المهلة.
+
+    (rejected لا تصدر هنا بل من `quote_status`: اتجاهُ القول لا الرأس.)"""
     today = today or date.today()
     if not approved:
         return "legacy" if today <= LEGACY_DEADLINE else "expired"
     if pr_head and approved[:8] != pr_head[:8]:
         return "stale"
     return "ok"
+
+
+#: (الموجة 0.2، D-453م) اتجاهُ القول: سطرٌ نصُّه رفضٌ («لا، ارفضه ولا تدمج») لا يُحسب اعتماداً ولو حمل البطاقةَ والرأس.
+#: الفحصُ مغلقٌ عند الشكّ: كلُّ علامة رفضٍ تُسقط الاعتماد، ويُستثنى فقط «لا» الابتدائيةُ في تعابير القبول («لا مانع»، «لا اعتراض»…).
+_AR_MARKS = re.compile("[\u0640\u064b-\u065f]")  # تطويل وتشكيل
+_PAREN = re.compile(r"\([^()]*\)")
+#: قوسٌ يبدأ بـ«ردّاً على/جواباً على» هو سياقُ السؤال المنقول فيُهمل؛ وأيُّ قوسٍ آخر جزءٌ من القول («نعم (لكن لا تدمج…)»)
+_QUESTION_CTX = re.compile(r"^\s*(?:ردا|رد|جوابا|جواب)\s+علي")
+_AR = "\u0621-\u064a"
+#: «لا» أو «لن» في أوّل القول (بعد علامات الترقيم) رفضٌ، إلا في تعابير القبول أدناه
+_NEG_LEAD = re.compile(rf"^[\s\W_]*(?:لا|لن)(?![{_AR}])")
+#: فعلُ قبولٍ صريحٌ يُبطل أثرَ «لا» الابتدائية وحدَها، وبشرط فاصلٍ صريحٍ (، . ؛ : — - سطر) بين «لا» وفعل القبول
+_APPROVE_WORD = re.compile(rf"(?<![{_AR}])(?:اعتمد|ادفع|ادمج|وافق|موافق|نعم|هيا)")
+_SEPARATOR = re.compile(r"[،,.؛;:!؟?—–\-/\n]")
+_NEG_OK = re.compile(r"^[\s\W_]*لا\s*(?:مانع|اعتراض|بأس|مشكله|ملاحظات|تحفظ|تعديل|تغيير)")
+#: رفضٌ صريحٌ بعد توحيد الهمزات: كلماتُ الرفض، و«لا/لن» + فعل (اعتمد/دمج/دفع/نشر/وافق/قبل/مرر) بأيّ بادئة، و«ولا» ملتصقةً، و«ليس الآن/بعد»
+_REFUSAL = re.compile(
+    rf"(?<![{_AR}])(?:ارفض|رفض|مرفوض|ممنوع|غير\s+موافق|ليس\s+(?:الان|بعد))"
+    r"|(?:لا|لن)\s+[اتني]?(?:عتمد|دمج|دفع|نشر|وافق|قبل|مرر)"
+)
+
+
+def _norm_quote(q: str) -> str:
+    q = _AR_MARKS.sub("", q)
+    for a in "أإآ":
+        q = q.replace(a, "ا")
+    return q.replace("ى", "ي").replace("ة", "ه")
+
+
+def _strip_question_context(q: str) -> str:
+    """يزيل أقواسَ سياق السؤال (من الداخل للخارج) ويُبقي مضمونَ كلّ قوسٍ آخر في القول."""
+    while True:
+        m = _PAREN.search(q)
+        if not m:
+            return q
+        inner = m.group(0)[1:-1]
+        q = q[: m.start()] + " " + ("" if _QUESTION_CTX.match(_norm_quote(inner)) else inner) + " " + q[m.end():]
+
+
+def quote_refusal(quote: str) -> bool:
+    """هل نصُّ المالك رفضٌ لا قبول؟ مغلقٌ عند الشكّ؛ يُهمل سياقَ السؤال المنقول فقط («ردّاً على: هل ترفض…»)."""
+    q = _strip_question_context(quote)
+    q = _norm_quote(q.replace("«", " ").replace("»", " ")) + " "
+    if _REFUSAL.search(q):
+        return True
+    lead = _NEG_LEAD.match(q)
+    if not lead or _NEG_OK.match(q):
+        return False
+    rest = q[lead.end():]
+    approve = _APPROVE_WORD.search(rest)
+    return not (approve and _SEPARATOR.search(rest[: approve.start()]))
+
+
+def quote_status(ln: str, status: str) -> str:
+    """حالةُ السطر بعد اتجاه القول: رفضٌ على رأسٍ سارٍ (ok/legacy) يصير rejected؛ والباقي (stale…) كما هو."""
+    return "rejected" if status in ("ok", "legacy") and quote_refusal(row_quote(ln)) else status
 
 
 #: (W-20261016-018) السطرُ المؤرَّخ من هذا اليوم يجب أن يحمل رمزَ البطاقة نفسَها؛ الأقدمُ يبقى كما كان.
@@ -124,6 +182,8 @@ def pr_evidence(num: str) -> tuple[list[tuple[str, str]], str | None, str | None
     for m in APPROVAL_LINE.findall(d.get("body") or "")[:1]:
         h = HEAD_IN_LINE.search(m)
         status = head_status(h.group(1) if h else None, pr_head)
+        if status in ("ok", "legacy") and quote_refusal(m):
+            status = "rejected"
         problem = line_card_problem(m, card_id)
         if problem:
             status = "stale"
@@ -191,7 +251,9 @@ def _confirmation_rows(key: str, pr_head: str | None = None, enforce: bool | Non
         if _has_key(key, ln):
             h = HEAD_IN_LINE.search(ln)
             tail = " ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else ""
-            st = head_status(h.group(1) if h else None, pr_head)
+            st = quote_status(ln, head_status(h.group(1) if h else None, pr_head))
+            if st == "rejected":
+                tail += " ✘ نصُّ القول رفضٌ لا قبول"
             kind, _, hearer = line_source(ln)
             if kind == "relayed" and hearer not in direct:
                 tail += f" ⚠ منقولٌ عن {hearer} بلا تأكيد «مباشر» منها لهذا الهدف" + ("" if enforce else " (إنذار)")
@@ -508,16 +570,41 @@ def label_delegation(text: str) -> str:
     return text
 
 
+def ready_problem(repo: str) -> str | None:
+    """(W-20261020-013) شرطُ قبول «جاهزٌ للمعاينة»: إيصالُ prepush ناجحٌ للرأس نفسه، والرأسُ غيرُ متأخّرٍ ولا متصادمٍ مع main.
+    يُشغَّل بالصرامة الكاملة دائماً (هذا الأمرُ لـ0501؛ الظلُّ للانتقال في الدفتر وحدَه)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import ledger
+
+    old = os.environ.get("PREPUSH_RECEIPT_ENFORCE")
+    os.environ["PREPUSH_RECEIPT_ENFORCE"] = "1"
+    try:
+        ledger.check_prepush_receipt(repo)
+        return None
+    except ledger.LedgerError as exc:
+        return str(exc)
+    finally:
+        if old is None:
+            os.environ.pop("PREPUSH_RECEIPT_ENFORCE", None)
+        else:
+            os.environ["PREPUSH_RECEIPT_ENFORCE"] = old
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("kind", choices=["card", "pr", "visual"])
+    ap.add_argument("kind", choices=["card", "pr", "visual", "ready"])
     ap.add_argument("target")
     ap.add_argument("--head", help="للبطاقة: رأسُ الإيداع الحاليّ للمقارنة (sha8)")
+    ap.add_argument("--repo", default=".", help="ready: شجرةُ عملِ الجلسة المراد قبولُ «جاهزٌ للمعاينة» منها")
     a = ap.parse_args()
     print(source_line())
     ev: list[tuple[str, str]] = []
     pr_head = a.head
+    if a.kind == "ready":
+        problem = ready_problem(a.repo)
+        print(("✘ " + problem) if problem else "✔ إيصالُ prepush للرأس نفسه وحداثةُ main بلا تصادم — تُقبل الثلاثيّة")
+        return 4 if problem else 0
     info: list[str] = []
     if a.kind == "visual":
         problem = visual_problem(a.target, a.head, info=info)
@@ -535,6 +622,12 @@ def main() -> int:
             ev += confirmations_evidence(card, pr_head)  # أسطرُ المالك المسجَّلة باسم البطاقة
     ev += confirmations_evidence(a.target, pr_head)
     ev += waiver_carry(card if a.kind == "pr" else a.target, pr_head, a.target)
+    rejected = [e for e in ev if e[1] == "rejected"]
+    if rejected:
+        print("✘ رفضٌ مسجَّلٌ من المالك على هذا الهدف/الرأس — لا يُعدّ اعتماداً (لا تدمجي ولا تدفعي):")
+        for t, _ in rejected:
+            print(f"  - {t}")
+        return 3
     conflicts = [e for e in ev if e[1] == "conflict"]
     if conflicts:
         for t, _ in conflicts:

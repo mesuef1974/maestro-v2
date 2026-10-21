@@ -97,6 +97,7 @@ class Main(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         with (
             mock.patch.object(fp, "LOCK", tmp / "p.lock"),
+            mock.patch.object(fp, "OFF", tmp / "p.off"),
             mock.patch.object(fp, "LOG", tmp / "p.log"),
             mock.patch.object(fp.ledger, "load_events", return_value=[]),
             mock.patch.object(fp.ledger, "reduce_state", return_value=fake_states),
@@ -124,6 +125,7 @@ class Lock(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.patches = [
             mock.patch.object(fp, "LOCK", self.tmp / "p.lock"),
+            mock.patch.object(fp, "OFF", self.tmp / "p.off"),
             mock.patch.object(fp, "LOG", self.tmp / "p.log"),
         ]
         for p in self.patches:
@@ -154,10 +156,56 @@ class Lock(unittest.TestCase):
         self.assertFalse(fp.LOCK.exists())
 
 
+class OffSwitch(unittest.TestCase):
+    """(الموجة 0.3، D-453م) مفتاحُ الإيقاف ledger/flow_pump.off تفحصه المضخّةُ نفسُها لا الخطّافُ وحده."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        for name, rel in (("LOCK", "p.lock"), ("LOG", "p.log"), ("OFF", "p.off")):
+            p = mock.patch.object(fp, name, self.tmp / rel)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_the_default_path_is_the_one_the_hook_checks(self):
+        import flow_pump_hook as hook
+
+        self.assertEqual(Path(hook.__file__).resolve().parent.parent / "ledger" / "flow_pump.off", hook.OFF)
+        self.assertEqual(fp.HERE.parent / "ledger" / "flow_pump.off", hook.OFF)
+
+    def test_apply_does_not_run_while_the_switch_exists(self):
+        fp.OFF.write_text("")
+        with mock.patch.object(fp, "_run") as run:
+            out = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+            with mock.patch("sys.stdout", out):
+                self.assertEqual(fp.main(["--apply"]), 0)
+            out.flush()
+            printed = out.buffer.getvalue().decode("utf-8")
+        run.assert_not_called()
+        self.assertIn("مفتاحُ الإيقاف", printed)
+        self.assertFalse(fp.LOCK.exists())  # لم تأخذ القفلَ ولا كتبت شيئاً
+
+    def test_a_dry_run_is_also_refused_so_no_trigger_can_spin_the_pump(self):
+        fp.OFF.write_text("")
+        with mock.patch.object(fp, "_run") as run:
+            self.assertEqual(fp.main([]), 0)
+        run.assert_not_called()
+
+    def test_without_the_switch_the_cycle_runs(self):
+        with mock.patch.object(fp, "_run", return_value=0) as run:
+            self.assertEqual(fp.main(["--apply"]), 0)
+        run.assert_called_once()
+
+    def test_the_switch_is_not_removed_or_written_by_the_pump(self):
+        fp.OFF.write_text("حرجٌ")
+        with mock.patch.object(fp, "_run"):
+            fp.main(["--apply"])
+        self.assertEqual(fp.OFF.read_text(), "حرجٌ")
+
+
 class PublishStage(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
-        for name in ("LOCK", "LOG"):
+        for name in ("LOCK", "LOG", "OFF"):
             p = mock.patch.object(fp, name, tmp / name)
             p.start()
             self.addCleanup(p.stop)
@@ -498,7 +546,7 @@ class PushPass(unittest.TestCase):
 class Stages(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
-        for name in ("LOCK", "LOG"):
+        for name in ("LOCK", "LOG", "OFF"):
             p = mock.patch.object(fp, name, tmp / name)
             p.start()
             self.addCleanup(p.stop)
