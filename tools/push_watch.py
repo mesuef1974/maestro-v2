@@ -51,8 +51,9 @@ def worktrees(repo: str, git=push_approved._git) -> list[dict]:
     return entries
 
 
-def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git) -> tuple[dict | None, str]:
-    """(الشجرة، سبب الغياب): واحدةٌ فقط تطابق الرأسَ والفرعَ claude/* ورمزَ البطاقة؛ وإلا None."""
+def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git,
+              branch_re=push_approved.BRANCH_RE) -> tuple[dict | None, str]:
+    """(الشجرة، سبب الغياب): واحدةٌ فقط تطابق الرأسَ والفرعَ (claude/* افتراضاً، أو branch_re) ورمزَ البطاقة؛ وإلا None."""
     seen: set[str] = set()
     found: list[dict] = []
     for repo in repos:
@@ -62,7 +63,7 @@ def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git) -
                 continue
             seen.add(key)
             branch = w.get("branch") or ""
-            if not push_approved.BRANCH_RE.match(branch) or not push_approved.same_head(w.get("head", ""), want8):
+            if not branch_re.match(branch) or not push_approved.same_head(w.get("head", ""), want8):
                 continue
             rc, log = git(w["path"], "log", "-1", "--format=%H", f"--grep={card}", w["head"], "^origin/main")
             if not rc and log.strip():
@@ -75,8 +76,10 @@ def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git) -
 
 
 def scan(items: dict, repos: list[str], apply: bool = True, path=None, git=push_approved._git,
-         approved=push_approved.approval_ok, by: str = "0702") -> list[dict]:
-    """نتيجةُ كلّ بطاقةٍ approved: {card, status: pushed|dry|refused|skipped, branch, head, reason, holder}."""
+         approved=push_approved.approval_ok, by: str = "0702", branch_re=push_approved.BRANCH_RE,
+         require_receipt: bool = False) -> list[dict]:
+    """نتيجةُ كلّ بطاقةٍ approved: {card, status: pushed|dry|refused|skipped, branch, head, reason, holder}.
+    branch_re وrequire_receipt تمرَّران للحارس (المضخّة: فروع claude/* أو w* وإيصالُ prepush للرأس، D-450م)."""
     out = []
     for card in sorted(items):
         item = items[card]
@@ -87,13 +90,14 @@ def scan(items: dict, repos: list[str], apply: bool = True, path=None, git=push_
         if not want:
             out.append({**base, "status": "skipped", "reason": "لا رأسَ اعتمادٍ في الدفتر"})
             continue
-        tree, why = find_tree(card, want, repos, git)
+        tree, why = find_tree(card, want, repos, git, branch_re)
         if tree is None:
             out.append({**base, "status": "skipped", "reason": why})
             continue
         base["branch"] = tree["branch"]
         try:
-            msg = push_approved.push(card, tree["branch"], tree["path"], apply, path=path, git=git, approved=approved, by=by)
+            msg = push_approved.push(card, tree["branch"], tree["path"], apply, path=path, git=git, approved=approved, by=by,
+                                     branch_re=branch_re, require_receipt=require_receipt)
         except (push_approved.PushRefused, ledger.LedgerError) as exc:
             out.append({**base, "status": "refused", "reason": str(exc)})
         else:
