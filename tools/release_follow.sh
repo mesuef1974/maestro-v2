@@ -103,6 +103,9 @@ cp -rn "$DM/evidence/." "$(dirname "$(dirname "$AC")")/evidence/" 2>/dev/null
 if LEDGER_PATH="$DM/ledger/events.jsonl" python -X utf8 "$AC" pr "$PR" --head "$S" 2>&1 | approval_passed; then LINE=1; else LINE=0; fi
 if [ "$MIG" = 1 ]; then LINE=$(( LINE + $(grep -c "$S.*مباشر\|مباشر.*$S" "$OWNER") )); [ "$(grep -c "$S.*مباشر\|مباشر.*$S" "$OWNER")" -ge 1 ] || LINE=0; fi
 say "pr=$PR head=$S migrations_in_pr=$MIGN pending_on_prod=$PEND approval_ok=$LINE"
+# ظلُّ الدمج الآليّ (W-20261020-020، بلا تفعيل): يطبع حكمَ مصنِّف شروط التوقف ولا يغيّر شيئاً ممّا بعده — يُستعمل لقياس أخطاء التصنيف أسبوعاً قبل عرض التفعيل على المالك
+CLS="$(python -X utf8 "$(dirname "$0")/merge_stop_classifier.py" "$PR" --repo $R 2>&1 | head -8)"
+say "[ظلّ] حكم الدمج الآليّ: $(echo "$CLS" | head -1) (لا أثر على هذا الدمج)"; echo "$CLS" | tail -n +2
 if [ "$MIGN" != 0 ] && [ "$MIG" != 1 ]; then say "في الطلب هجرة ولم تُمرَّر --mig"; exit 4; fi
 if [ "$PEND" != 0 ] || [ "$LINE" -lt 1 ]; then say "شرطٌ لم يتحقق (هجراتٌ معلّقة على الإنتاج أو لا سطرَ مالك)"; exit 4; fi
 
