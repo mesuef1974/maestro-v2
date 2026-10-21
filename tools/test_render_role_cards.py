@@ -66,10 +66,15 @@ def test_round2_texts_live_in_the_source():
     assert "حدُّ الرسائل لكلّ جلسة: 300 رسالة" in text["COMMON.md"] and "حدُّ الرسائل 300" in r.COMMON_DIGEST and "150 لكلّ جلسة" not in r.COMMON_DIGEST + r.GOVERNING
 
 
-def test_merged_charters_live_in_details_and_the_nucleus_points_there():
-    """إشارةُ «مدمَج من» خرجت من نواة 0101 (حدُّ 4096 بايت) إلى details/0101.md، والنواةُ تحيل إليه (ملاحظة 0301، الجولة 2)."""
+def test_gate_and_advisor_charters_split_out_of_0101_into_0106_and_0107():
+    """ميثاقا البوابة والمستشار خرجا من 0101 إلى جلستين عند الطلب 0106 و0107 (أمر المالك 2026-10-21، D-455م)،
+    فلا «مدمَج من» في تفاصيل 0101 وتحمل بطاقتا الجديدتين نصَّيهما، والنواةُ ≤ 4096 بايت."""
     core = (CARDS / "0101.md").read_text(encoding="utf-8")
     details = (CARDS / "details" / "0101.md").read_text(encoding="utf-8")
-    assert "## مدمَج من 0201 ·" in details and "## مدمَج من 0301 ·" in details
+    assert "## مدمَج من 0201 ·" not in details and "## مدمَج من 0301 ·" not in details
     assert "role_cards/details/0101.md" in core
     assert len(core.encode("utf-8")) <= 4096
+    gate = (CARDS / "0106.md").read_text(encoding="utf-8")
+    advisor = (CARDS / "0107.md").read_text(encoding="utf-8")
+    assert "البلاغات" in gate and "تسليمُ رأسه إلى 0107" in gate
+    assert "بوّابةَ المواصفة الكاملة" in advisor and "الفاصل مع 0301 الحوكمة" in advisor

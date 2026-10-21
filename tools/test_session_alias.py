@@ -45,7 +45,7 @@ def test_real_registry_resolves_phase2_merged_numbers():
     reused = sa._load(None)["session_policy"]["aliases"]["_reused"]
     assert "0702" not in reused and "0201" not in m and "0301" not in m
     assert sa.resolve("0201").startswith("0201 · المايسترو") and sa.resolve("0301").startswith("0301 · الحوكمة")
-    assert sa.resolve("0201", legacy=True).startswith("0101") and sa.resolve("0301", legacy=True).startswith("0101")
+    assert sa.resolve("0201", legacy=True).startswith("0106") and sa.resolve("0301", legacy=True).startswith("0107")  # D-455م
 
 
 def test_number_map_skips_meta_keys_and_tolerates_missing_file(tmp_path, monkeypatch):
