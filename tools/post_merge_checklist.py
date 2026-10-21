@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None, fetch=fetch_pr, queue_path: Path | None 
     hits = sensitive_hits([f["path"] for f in pr.get("files", [])], globs)
     print("الخطواتُ الستّ بعد كلّ اندماج منشور (تُنفَّذ معاً): تحقّقٌ، دفتر، 0701 (الخارطة والقياس)، 0104، **الجلسةُ المنفِّذة**، **0101 لقرار الأرشفة**")
     print("  ١) تحقّقُ النشر الفعليّ (verify_deploy / health)")
-    print(f"  ٢) python C:/Users/mesue/delivery_manager_work/tools/ledger.py move {a.card or '<رمز البطاقة>'} published --note \"اندمج #{pr['number']}\"")
+    print(f"  ٢) python C:/Users/mesue/delivery_manager_work/tools/ledger.py move {a.card or '<رمز البطاقة>'} published --by 0601 --note \"اندمج #{pr['number']}\"")
     session = session_for_branch(pr.get("headRefName", ""))
     for who, text in build(pr, a.card, hits, session).items():
         print(f"\n  إلى {who}:\n    " + text.replace("\n", "\n    "))

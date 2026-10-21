@@ -3,9 +3,11 @@
 
     python dead_refs.py [--memory <MEMORY.md>] [--limit 60]
 
-- «ميّت»: رقمٌ لا يعود لجلسة (0203 و0801 و0105 و0204 و0702) — أيُّ ذكرٍ له خارج سياق الإحالة خطأ.
-- «مُعاد»: رقمٌ قديمٌ صار لجلسةٍ أخرى (0104 و0201 و0701 و04xx) — يُراجَع المعنى: القديم أم الجديد؟
-الخرجُ مرتّبٌ: ميّتٌ نشطٌ ← مُعادٌ ← ما في سياق إحالة (كانت/دُمجت/→). لا يعدّل شيئاً.
+- «ميّت»: رقمٌ لا يعود لجلسة (0203 و0801 و0105 و0204) — أيُّ ذكرٍ له خارج سياق الإحالة خطأ.
+- «مدمَج»: رقمٌ دُمج ميثاقُه في جلسةٍ أخرى (مفتاحٌ في session_policy.aliases بـtabs.json، مثل 0702 ← 0701 بأمر المالك
+  2026-10-21) — ذكرُه خارج سياق الإحالة يُحال إلى المستقبِلة؛ وأقسامُ «## مدمَج من …» في البطاقات نصٌّ تاريخيٌّ فتُعدّ إحالة.
+- «مُعاد»: رقمٌ قديمٌ صار لجلسةٍ أخرى (0104 و0201 و0301 و0701 و04xx) — يُراجَع المعنى: القديم أم الجديد؟
+الخرجُ مرتّبٌ: ميّتٌ نشطٌ ← مدمَجٌ ← مُعادٌ ← ما في سياق إحالة (كانت/دُمجت/مدمَج/→). لا يعدّل شيئاً.
 """
 
 from __future__ import annotations
@@ -15,28 +17,39 @@ import re
 import sys
 from pathlib import Path
 
+import session_alias
 from validate_registry import DEAD_NUMBERS
 
 ROOT = Path(__file__).resolve().parent.parent
 MEMORY = Path("C:/Users/mesue/.claude/projects/D--shschool-mvp/memory/MEMORY.md")
-REUSED_NUMBERS = ("0104", "0201", "0701", "0402", "0403", "0404", "0405", "0406", "0407", "0408")
-REFERRAL_CUES = ("كانت", "كان ", "دُمجت", "دمجت", "القديم", "ميّت", "ميتة", "→", "سابقاً", "لا تُعاد", "لا يُعاد")
+# 0702 خرجت من «المُعاد» إلى «المدمَج» (aliases) بالمرحلة 2 من الدمج (2026-10-21)؛ و0201 و0301 مُعادان لجلستين حيّتين
+# بترقيم المجموعة 01 بالترتيب (أمر المالك 2026-10-21 14:02): الرصدُ والتقييم والحوكمة، وميثاقاهما القديمان مدمَجان في 0101
+REUSED_NUMBERS = ("0104", "0201", "0301", "0701", "0402", "0403", "0404", "0405", "0406", "0407", "0408")
+REFERRAL_CUES = ("كانت", "كان ", "دُمج", "دمجت", "مدمَج", "مدمج", "القديم", "ميّت", "ميتة", "→", "سابقاً", "لا تُعاد", "لا يُعاد")
+MERGED_SECTION = "## مدمَج من "
+_KIND_RANK = {"ميّت": 0, "مدمَج": 1, "مُعاد": 2}
 _NUM = re.compile(r"(?<!\d)(\d{4})(?!\d)")
 
 
-def scan_text(text: str, source: str) -> list[dict]:
+def scan_text(text: str, source: str, merged: dict[str, str] | None = None) -> list[dict]:
+    """merged: الأرقامُ المدمَجة (session_alias.number_map)؛ None = تُقرأ من tabs.json. والميّتُ يغلب المدمَج."""
+    merged = session_alias.number_map() if merged is None else merged
     hits = []
+    in_merged = False
     for i, line in enumerate(text.splitlines(), 1):
+        if line.startswith("## "):
+            in_merged = line.startswith(MERGED_SECTION)  # نصُّ ميثاقٍ مدمَجٍ كما كان: إحالةٌ تاريخيّة
         for n in dict.fromkeys(m.group(1) for m in _NUM.finditer(line)):  # رقمٌ واحد لكلّ سطر
-            kind = "ميّت" if n in DEAD_NUMBERS else "مُعاد" if n in REUSED_NUMBERS else None
+            kind = ("ميّت" if n in DEAD_NUMBERS else "مدمَج" if n in merged
+                    else "مُعاد" if n in REUSED_NUMBERS else None)
             if kind:
                 hits.append({"source": source, "line": i, "number": n, "kind": kind,
-                             "referral": any(c in line for c in REFERRAL_CUES), "text": line.strip()[:90]})
+                             "referral": in_merged or any(c in line for c in REFERRAL_CUES), "text": line.strip()[:90]})
     return hits
 
 
 def sort_hits(hits: list[dict]) -> list[dict]:
-    rank = lambda h: (h["referral"], h["kind"] != "ميّت", h["number"], h["source"], h["line"])  # noqa: E731
+    rank = lambda h: (h["referral"], _KIND_RANK.get(h["kind"], 9), h["number"], h["source"], h["line"])  # noqa: E731
     return sorted(hits, key=rank)
 
 
@@ -44,9 +57,10 @@ def collect(memory: Path = MEMORY, root: Path = ROOT) -> list[dict]:
     files = [memory] + sorted(p for p in (root / "role_cards").glob("*.md") if p.name != "INDEX.md")
     files += sorted((root / "skills").rglob("*.md"))
     hits: list[dict] = []
+    merged = session_alias.number_map()
     for f in files:
         if f.exists():
-            hits += scan_text(f.read_text(encoding="utf-8", errors="replace"), str(f))
+            hits += scan_text(f.read_text(encoding="utf-8", errors="replace"), str(f), merged)
     return sort_hits(hits)
 
 
@@ -58,7 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     hits = collect(Path(a.memory))
     live = [h for h in hits if not h["referral"]]
-    print(f"أرقامٌ ميّتةٌ/مُعادة: {len(hits)} ذكراً ({len([h for h in live if h['kind'] == 'ميّت'])} ميّتٌ نشط، {len(live)} خارج سياق الإحالة)")
+    print(f"أرقامٌ ميّتةٌ/مدمَجةٌ/مُعادة: {len(hits)} ذكراً ({len([h for h in live if h['kind'] == 'ميّت'])} ميّتٌ نشط، "
+          f"{len([h for h in live if h['kind'] == 'مدمَج'])} مدمَجٌ نشط، {len(live)} خارج سياق الإحالة)")
     for h in hits[: a.limit]:
         print(f"  [{h['kind']}{'/إحالة' if h['referral'] else ''}] {h['number']}  {Path(h['source']).name}:{h['line']}  {h['text']}")
     return 0

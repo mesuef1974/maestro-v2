@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MODE_FILE = ROOT / "memory_index_guard.mode"
 NAMES = ROOT / "projects" / "schoolos" / "session_names.json"
-ALLOWED_ROLE = "0103"
+ALLOWED_ROLE = "0301"  # الحوكمة (كانت 0103؛ ترقيمُ 01 بالترتيب، أمر المالك 2026-10-21) — والرقمُ القديمُ يُحلّ بالاسم المستعار
 TARGET = re.compile(r"projects[/\\]+D--shschool-mvp[/\\]+memory[/\\]+MEMORY\.md", re.I)
 #: أوامرُ Bash التي تكتب (لا القراءة): إعادة توجيه، sed -i، tee، نقل/نسخ/حذف، أدوات كتابة PowerShell وبايثون.
 WRITE_HINT = re.compile(
@@ -31,9 +31,9 @@ WRITE_HINT = re.compile(
     re.I,
 )
 MESSAGE = (
-    "فهرس الذاكرة MEMORY.md يعدّله 0103 وحدها مرّةً يوميّاً (W-20261013-030): كلُّ تعديلٍ يعيد حقنه كاملاً "
+    "فهرس الذاكرة MEMORY.md يعدّله 0301 وحدها (الحوكمة، كانت 0103) مرّةً يوميّاً (W-20261013-030): كلُّ تعديلٍ يعيد حقنه كاملاً "
     "في كلّ جلسةٍ حيّة. اكتبي ذاكرتَك في memory/on_demand/<النوع>_<الاسم>.md وأضيفي سطرَها إلى "
-    "memory/on_demand/INDEX_violations_pending.md، ولا تمسّي الفهرس؛ فتدخله 0103 بالتنقيح اليوميّ. "
+    "memory/on_demand/INDEX_violations_pending.md، ولا تمسّي الفهرس؛ فتدخله 0301 بالتنقيح اليوميّ. "
     "المخالفةُ العاجلة تُسجَّل في الملفّين فوراً ولا تضيع."
 )
 
@@ -61,6 +61,17 @@ def role_of(cwd: str) -> str | None:
         return None
     m = re.match(r"\s*(\d{2,4})", title or "")
     return m.group(1) if m else None
+
+
+def _canonical(role: str) -> str:
+    """الرقمُ الحاليّ عبر session_policy.aliases (0103 ← 0301)؛ وأيُّ عطلٍ يُرجع الرقمَ كما هو."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import session_alias
+
+        return session_alias.canonical(role, session_alias.number_map())
+    except Exception:  # noqa: BLE001 — الحارسُ لا يسقط
+        return role
 
 
 def touches_index(tool: str, tool_in: dict) -> bool:
@@ -91,7 +102,7 @@ def decide(payload: dict) -> tuple[str, str]:
     if not touches_index(tool, payload.get("tool_input") or {}):
         return "allow", ""
     role = role_of(payload.get("cwd", ""))
-    if role is None or role == ALLOWED_ROLE:
+    if role is None or _canonical(role) == ALLOWED_ROLE:
         return "allow", ""
     return ("deny" if mode() == "block" else "warn"), MESSAGE
 

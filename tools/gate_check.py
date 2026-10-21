@@ -32,7 +32,7 @@ def save(s):
 
 
 def now():
-    return datetime.datetime.now().strftime("%m-%d %H:%M")
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=3))).strftime("%m-%d %H:%M")
 
 
 def verdict(s):

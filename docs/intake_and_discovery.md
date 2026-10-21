@@ -35,4 +35,4 @@
 قبل أيّ بطاقة: قارنْ بالطلبات المفتوحة (`gh pr list`) وبنود الخارطة وبطاقات السجلّ المفتوحة؛ التطابقُ ← ضمٌّ لا بطاقةٌ جديدة.
 
 ## أمثلة (بلا بيانات شخصيّة)
-`python ledger.py add --source owner --type ui --problem "بطاقة رصد الغياب فيها فراغٌ أبيض" --impact "مشرفو الأجنحة على نافذتين" --accept "تنكمش البطاقةُ إلى محتواها" --files templates/wings/record.html`
+`python ledger.py add --source owner --type ui --problem "بطاقة رصد الغياب فيها فراغٌ أبيض" --impact "مشرفو الأجنحة على نافذتين" --accept "تنكمش البطاقةُ إلى محتواها" --files templates/wings/record.html --start 2026-10-12T20:00 --priority P2 --origin owner-order --owner-order "«نصُّ أمره الحرفيّ»"` (الأصلُ إلزاميّ — D-422م)

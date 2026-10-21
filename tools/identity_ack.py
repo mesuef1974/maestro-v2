@@ -16,7 +16,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -54,7 +54,7 @@ def main() -> int:
         return 1
     ap_.write_text(json.dumps({
         "sha256": hashlib.sha256(data).hexdigest(),
-        "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "time": datetime.now(timezone(timedelta(hours=3))).isoformat(timespec="seconds"),
         "tree": top.name,
         "head": current_head(top),
     }, ensure_ascii=False), encoding="utf-8")

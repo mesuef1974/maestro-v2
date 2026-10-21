@@ -26,3 +26,16 @@ def test_clean_log_has_no_notes():
 
 def test_since_skips_old_entries():
     assert dl.lint(dl.parse(SAMPLE), since=5) == []
+
+
+def test_suffix_allows_same_number_and_event_time_marks_late_stamp():
+    log = (
+        "- D-1م | 10-01 10:00 | أ | أثر | م\n"
+        "- D-1م-ب | 10-01 11:00 | ب | أثر | م\n"
+        "- D-2م | 10-01 09:00 وقتُ الحدث | ج | أثر | م\n"
+    )
+    assert dl.lint(dl.parse(log)) == []
+    dup = log.replace("D-1م-ب", "D-1م")
+    assert "رقمٌ مكرَّر" in "\n".join(dl.lint(dl.parse(dup)))
+
+

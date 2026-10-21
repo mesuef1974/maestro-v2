@@ -12,7 +12,7 @@ import render_role_cards as r  # noqa: E402
 
 CARDS = ROOT / "role_cards"
 #: عباراتٌ مفتاحيّةٌ لكلّ قاعدةٍ حاكمةٍ يجب أن تبقى في كلّ نواة.
-MUST = ["العربيّةُ وحدَها", "سيدي", "D-88م", "D-381م", "D-421م", "D-130م", "D-414م", "msg_counter", "ground_truth", "اعتماد المالك"]
+MUST = ["العربيّةُ وحدَها", "سيدي", "D-88م", "D-381م", "D-421م", "D-130م", "D-414م", "D-447م", "msg_counter", "ground_truth", "اعتماد المالك"]
 
 
 @pytest.mark.parametrize("sid", r.NUCLEUS_ROLES)
@@ -35,3 +35,41 @@ def test_details_and_common_keep_full_text(sid):
 def test_governing_constant_covers_must():
     for m in MUST:
         assert m in r.GOVERNING, m
+
+
+def test_cards_on_disk_equal_a_fresh_generator_run(tmp_path, monkeypatch):
+    """لا نصَّ يدويّاً في البطاقات (الجولة 2 من الدمج، 2026-10-21): التوليدُ المباشرُ من tabs.json يعيد كلَّ ملفٍّ كما هو."""
+    (tmp_path / "projects" / "schoolos").mkdir(parents=True)
+    (tmp_path / "projects" / "schoolos" / "tabs.json").write_bytes((ROOT / "projects" / "schoolos" / "tabs.json").read_bytes())
+    monkeypatch.setattr(r, "ROOT", tmp_path)
+    monkeypatch.setattr(r, "COMMON", r.COMMON)  # main() يُلحق الأدواتِ بالثابت؛ يُستعاد بعد الاختبار
+    monkeypatch.setattr(sys, "argv", ["render_role_cards.py"])
+    assert r.main() == 0
+    fresh = {p.relative_to(tmp_path / "role_cards").as_posix(): p for p in (tmp_path / "role_cards").rglob("*.md")}
+    disk = {p.relative_to(CARDS).as_posix(): p for p in CARDS.rglob("*.md") if not p.relative_to(CARDS).as_posix().startswith("_retired/")}
+    assert set(fresh) == set(disk)
+    differ = [k for k in fresh if fresh[k].read_text(encoding="utf-8") != disk[k].read_text(encoding="utf-8")]
+    assert not differ, f"بطاقاتٌ تختلف عن التوليد المباشر (نصٌّ يدويٌّ أو توليدٌ قديم): {differ}"
+
+
+def test_round2_texts_live_in_the_source():
+    """نصوصٌ كانت يدويّةً أو أُمر بها في الجولة 2 تُولَّد من المصدر."""
+    text = {n: (CARDS / n).read_text(encoding="utf-8") for n in ("0301.md", "0601.md", "0701.md", "COMMON.md", "INDEX.md")}
+    assert "## ختم مصدر الحقيقة (W-20261020-003، ظلّ)" in text["0301.md"]
+    assert "بعد 14:30 وبعد 19:00 (D-429م)" in text["0601.md"] and "(D-429م)" in text["INDEX.md"]
+    assert "## إذا توقّف إرسالُك بين الجلسات (قرارُ المالك 2026-10-18)" in text["COMMON.md"]
+    assert "## اعتمادُ الرأس لا يُسأل عنه المالك (أمر المالك 2026-10-18)" in text["COMMON.md"]
+    assert "ترث 0701 كلَّ صلاحيّات التبويب 07 بعد خروج 0702" in text["0701.md"]
+    assert "(0701 وحدَها (المستقبِلة))" in text["0701.md"]
+    assert "«القراءة لـ0701»" in text["0701.md"] and "brainstorm_log.py due" in text["0701.md"]
+    assert "ولا تقيّم أثرَ عصفٍ كتبته" in text["0301.md"]
+    assert "حدُّ الرسائل لكلّ جلسة: 300 رسالة" in text["COMMON.md"] and "حدُّ الرسائل 300" in r.COMMON_DIGEST and "150 لكلّ جلسة" not in r.COMMON_DIGEST + r.GOVERNING
+
+
+def test_merged_charters_live_in_details_and_the_nucleus_points_there():
+    """إشارةُ «مدمَج من» خرجت من نواة 0101 (حدُّ 4096 بايت) إلى details/0101.md، والنواةُ تحيل إليه (ملاحظة 0301، الجولة 2)."""
+    core = (CARDS / "0101.md").read_text(encoding="utf-8")
+    details = (CARDS / "details" / "0101.md").read_text(encoding="utf-8")
+    assert "## مدمَج من 0201 ·" in details and "## مدمَج من 0301 ·" in details
+    assert "role_cards/details/0101.md" in core
+    assert len(core.encode("utf-8")) <= 4096

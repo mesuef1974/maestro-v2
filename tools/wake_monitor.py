@@ -31,6 +31,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 
 import ledger  # noqa: E402  (قراءةٌ فقط)
+import session_alias as sa  # noqa: E402  (الأسماءُ المستعارة من tabs.json)
 
 EVENTS = ROOT / "ledger" / "events.jsonl"
 CURSOR = ROOT / "wake_cursor.json"
@@ -38,8 +39,8 @@ LOG = ROOT / "wake_log.jsonl"
 MAX_BATCH = 20
 MAX_PER_MINUTE = 3  # أقصى جلساتٍ تُوقَظ (تبدأ عملاً) في الدقيقة؛ الزائدُ يُؤجَّل لا يُسقط (أمر المالك 10-20 بند5)
 MAX_LIVE = 14
-TEST_CHANNEL = frozenset({"0701", "0702", "0103", "0102"})  # أسبوعُ التجربة (W-20261017-007) قبل تعميم الإرسال
-COUNTER_GUARD = 130  # فوقها (من 150) لا إرسال ويُبلَّغ 0101
+TEST_CHANNEL = frozenset({"0701", "0301"})  # أسبوعُ التجربة (W-20261017-007) قبل تعميم الإرسال؛ خرجت 0702 و0102 بدمجهما في 0701 و0103 (أمر المالك 2026-10-21)، ثمّ صارت 0103 ← 0301 بترقيم 01 (14:02)
+COUNTER_GUARD = 260  # فوقها (من 300) لا إرسال ويُبلَّغ 0101
 COUNTER = ROOT / "msg_counter.json"
 LIVE_WINDOW_MS = 15 * 60 * 1000  # «حيّة» = نشاطٌ خلال 15 دقيقة (الخاملةُ المنتهيةُ دورتُها لا تستهلك ذاكرةً ولا تُعدّ؛ كانت ساعتين فتجاوزت السقفَ دائماً)
 SESSION_NUM = re.compile(r"^\d{4}")
@@ -52,7 +53,7 @@ STALE_RULES = {
     "pushed": ("0601", 2),
     "merged": ("0601", 3),
 }
-REWAKE_MIN = 60  # جلسةٌ أُوقظت للتوّ لا تُوقَظ ثانيةً قبل مرور ساعة
+REWAKE_MIN = 10  # جلسةٌ أُوقظت للتوّ لا تُوقَظ ثانيةً قبل 10 دقائق (قرار المالك 2026-10-21؛ كان 60)
 DAILY_CAP = 60  # أقصى رسائل إيقاظٍ في 24 ساعة (حدُّ التراسل 150 لكلّ جلسة)
 MAX_SESSIONS_PER_RUN = 5  # لا انفجارَ رسائل: أقدمُ خمسِ جلساتٍ في الدورة والباقي في الساعة التالية
 STALE_PER_MSG = 5  # أقدمُ خمس بطاقاتٍ لكلّ رسالة
@@ -116,8 +117,10 @@ def sender_count(sender: str, path: Path = COUNTER) -> int:
         return COUNTER_GUARD
 
 
-def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, sent=0, already=frozenset(), recent=0) -> WakePlan:
+def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, sent=0, already=frozenset(), recent=0,
+         aliases=None) -> WakePlan:
     """directory: رقم←معرّف؛ live: أرقامُ الجلسات الحيّة؛ channel: الحاملون المسموح إيقاظُهم (None = الكلّ)؛
+    aliases: رقمٌ مدمَج ← مستقبِلته (session_alias.number_map) يُحلّ به الحاملُ قبل القناة والدليل (None = بلا إحالة)؛
     sent: ما أرسله المرسِلُ حتى الآن؛ already: أزواجُ (بطاقة، حالة) أُيقظ لها من قبلُ فلا تتكرّر؛
     recent: ما أُيقظ في الدقيقة الأخيرة (سقفُ MAX_PER_MINUTE). دالّةٌ نقيّةٌ إلّا ما يفعله verify."""
     p = WakePlan()
@@ -133,6 +136,7 @@ def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, 
         if not holder or not SESSION_NUM.match(holder) or it.get("state") != state:
             p.skipped.append((item_id, "لا حاملَ فعليّاً أو الحالةُ تغيّرت بعدُ"))
             continue
+        holder = sa.canonical(holder, aliases)  # بطاقةٌ تاريخيّةٌ بحاملٍ مدمَج تُوقظ مستقبِلتَه
         if channel is not None and holder not in channel:
             p.skipped.append((item_id, f"{holder} خارج قناة التجربة"))
             continue
@@ -215,8 +219,9 @@ def read_log(path: Path = LOG) -> list[dict]:
     return out
 
 
-def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0) -> WakePlan:
+def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
+    aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
     دالّةٌ نقيّةٌ إلّا ما يفعله verify. الحالةُ هي المُطلِق لا الحدث."""
     p = WakePlan()
     p.cursor = ""
@@ -247,6 +252,7 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         if not target or not SESSION_NUM.match(target):
             p.skipped.append((item_id, f"{st} منذ {int(age.total_seconds() // 3600)}س بلا مسؤولٍ يُوقَظ"))
             continue
+        target = sa.canonical(target, aliases)
         cands.setdefault(target, []).append((since[item_id], item_id, st))
     for num in sorted(cands):
         if channel is not None and num not in channel:
@@ -308,11 +314,14 @@ def watch_lines(p: WakePlan, directory: dict[str, str], seen: set) -> list[str]:
 
 def make_plan(a, events, cursor, directory) -> WakePlan:
     channel = None if a.all else TEST_CHANNEL
+    aliases = sa.number_map()
     if a.stale:
         now = datetime.now().astimezone()
-        return stale_plan(events, directory, live_sessions(), now, log=read_log(), channel=channel, sent=sender_count(a.sender))
+        return stale_plan(events, directory, live_sessions(), now, log=read_log(), channel=channel, sent=sender_count(a.sender),
+                          aliases=aliases)
     hist = woken_history()
-    return plan(events, cursor, directory, live_sessions(), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1])
+    return plan(events, cursor, directory, live_sessions(), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
+                aliases=aliases)
 
 
 def main(argv=None) -> int:

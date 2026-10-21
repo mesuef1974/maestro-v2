@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>تدقيق بقايا نقاط السلوك في المنصة</title>
+<style>
+body{font-family:Tahoma,Arial,sans-serif;max-width:980px;margin:24px auto;padding:0 16px;line-height:1.8;color:#111827;background:#fff}
+h1{color:#8A1538}h2{color:#8A1538;border-bottom:2px solid #D4A843;padding-bottom:4px;margin-top:32px}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:.92rem}th,td{border:1px solid #d1d5db;padding:6px 8px;text-align:start;vertical-align:top}th{background:#f4f0e7}
+code{direction:ltr;unicode-bidi:embed;background:#f3f4f6;padding:1px 4px;border-radius:4px}
+.a{background:#fef2f2}.b{background:#fef3c7}.c{background:#eff6ff}.d{background:#f3f4f6}
+.box{border:1px solid #D4A843;background:#fdf9ee;padding:10px 14px;border-radius:8px}
+</style></head><body>
+<h1>تدقيق بقايا «نقاط السلوك» والمجموع والاتجاه في المنصة</h1>
+<p>الجلسة 0102 — 2026-10-19 — قراءةٌ فقط: لم يُعدَّل شيءٌ في المنصة. الفحصُ بالبحث النصّيّ في شجرة <code>claude/identity-refs-w001</code> (بايثون وقوالب وJS وهجرات واختبارات ووثائق) وقراءة المواضع الحرجة.</p>
+
+<h2>الخلاصة</h2>
+<div class="box">
+<p>نظام النقاط (الخصم والاسترداد) <b>ملغى في السلوك المعروض</b>: لا يُخصم شيءٌ، وكلُّ موضعٍ يمرّر <code>points_deducted=0</code>. لكنّ <b>أربعة أمور حيّة</b> لا تزال تعرض أو تحسب «نقاطاً» أو «مؤشراً من 100»، وأمورٌ ميتةٌ كثيرةٌ في النماذج والبيانات والوثائق.</p>
+<ol>
+<li><b>مؤشّر سلوك مشتقّ (حيّ):</b> <code>net_score = 100 − min(30, L1×2 + L2×5 + L3×10 + L4×25)</code> في <code>behavior/services.py:157</code>. ليس نقاطاً مخصومة بل رقمٌ يُحسب من أعداد المخالفات، لكنّه يظهر للمستخدم بصيغة «من 100».</li>
+<li><b>نصٌّ مضلِّل في بريد وليّ الأمر (حيّ):</b> <code>behavior/services.py:511</code> يرسل «نقاط السلوك: X/100» — والمصطلح «نقاط» هو الملغى بعينه.</li>
+<li><b>صفحة استدعاء الوليّ:</b> <code>templates/behavior/summon_parent.html:24</code> «مؤشر السلوك … من 100» (بتلميح «لا نقاط مخصومة»).</li>
+<li><b>خانة <code>data-points</code> في نموذجَي التسجيل</b> (<code>quick_log_form.html:34</code> و<code>report_form.html:40</code>): تُكتب في الصفحة ولم أجد أيَّ مستهلكٍ لها في ملفات JS.</li>
+</ol>
+<p>لا وجودَ لـ«مجموع نقاط» ولا «اتجاه نقاط» كحقلٍ أو عمود في أيّ قالب لوحة معلّم أو مدير تحققتُ منه (<code>templates/dashboard/roles/teacher.html</code> بلا أيٍّ منهما).</p>
+</div>
+
+<h2>١) حيّ — يُحسب أو يُعرض الآن</h2>
+<table><tr><th>الموضع</th><th>ما فيه</th><th>الحكم</th></tr>
+<tr class="a"><td><code>behavior/services.py:130-166</code> <code>get_student_score</code></td><td>صيغة net_score وتقييمٌ لوني <code>NET_SCORE_RATING</code></td><td>مؤشرٌ مشتقّ حيّ؛ التعليق عند 138 يقرّ بإلغاء النقاط</td></tr>
+<tr class="a"><td><code>behavior/services.py:207-208</code></td><td>لون حالة الطالب في الملفّ من net_score</td><td>حيّ</td></tr>
+<tr class="a"><td><code>behavior/services.py:511</code></td><td>بريد التقرير السلوكي: «نقاط السلوك: X/100»</td><td>نصٌّ يناقض الإلغاء</td></tr>
+<tr class="a"><td><code>behavior/views.py:1001-1025</code></td><td><code>behavior_score</code> و<code>behavior_score_tone</code> (SHARE_KPI) إلى قالب الاستدعاء</td><td>حيّ</td></tr>
+<tr class="a"><td><code>templates/behavior/summon_parent.html:24</code></td><td>«مؤشر السلوك {{ behavior_score }} من 100»</td><td>حيّ</td></tr>
+<tr class="b"><td><code>behavior/constants.py:17</code> <code>POINTS_BY_LEVEL</code> (5/15/25/40) و103-163</td><td>نقاطٌ لكلّ بند في الفهرس</td><td>بيانات ثابتة تغذّي <code>data-points</code></td></tr>
+<tr class="b"><td>قالبا التسجيل (أعلاه)</td><td><code>data-points="{{ vc.points }}"</code></td><td>يُكتب ولا يُقرأ (بحسب بحث JS)</td></tr>
+</table>
+
+<h2>٢) مُعطَّل أو ميّت في الشيفرة</h2>
+<table><tr><th>الموضع</th><th>ما فيه</th></tr>
+<tr><td><code>behavior/models.py:90</code> <code>ViolationCategory.points</code></td><td>عمودٌ باقٍ</td></tr>
+<tr><td><code>behavior/models.py:350</code> <code>points_deducted</code></td><td>عمودٌ يُملأ بصفر دائماً: <code>views.py:319-327</code> و<code>459-467</code></td></tr>
+<tr><td><code>behavior/models.py:511-541</code> <code>BehaviorPointRecovery.points_restored</code> + <code>core/models/__init__.py:92</code></td><td>جدول استرداد نقاط؛ <code>committee_services.py:165</code> يمرّر <code>restore_pts=0</code></td></tr>
+<tr><td><code>behavior/querysets.py:4,66,98</code></td><td>معلَّمة DEPRECATED</td></tr>
+<tr><td><code>behavior/forms.py:22</code></td><td>حقل نقاط</td></tr>
+<tr><td><code>behavior/services.py:662, 863-912</code></td><td>حسابات <code>points_deducted</code> ما زالت تُجمَع</td></tr>
+<tr><td><code>behavior/views.py:36</code> <code>_MAX_POINTS = 100</code>، و551 (docstring: «نقاطه المخصومة والمستعادة»)</td><td>ثابتٌ ووصفٌ قديمان</td></tr>
+<tr><td>تعليقات الإلغاء: <code>student_affairs/views.py:846,1569,1871,2523</code>، <code>reports/services.py:719</code>، <code>parents/views.py:309</code></td><td>تأكيدٌ أنّ الإلغاء مقصود</td></tr>
+</table>
+
+<h2>٣) أُزيل صراحةً (دليلٌ على الإلغاء)</h2>
+<p><code>parents/services.py:246,257,357</code>: «درجة السلوك» حُذفت من بطاقة الابن لأنّها كانت تُعرض 100 خضراء دائماً؛ واختبارٌ يحرسها: <code>tests/test_parents.py:177</code>. هذا هو المبدأ الذي أقترح تعميمه: رقمٌ لا يُقاس لا يُعرض.</p>
+
+<h2>٤) هجرات (تاريخٌ فقط)</h2>
+<p>behavior: 0001, 0002, 0004, 0011 (تطبيع نقاط البنود)، 0015, 0019؛ core: 0003, 0008. لا تُمسّ.</p>
+
+<h2>٥) وثائق ومهارات تذكر النموذج القديم</h2>
+<p><code>.claude/skills/schoolos-platform/references/00-apps-map.md</code> و<code>03-attendance-behavior-notifications.md</code> و<code>docs/callout_placement_study_2026-09.md</code> (موضع واحد). والقوالب التي فيها ملاحظةُ إلغاءٍ فقط: <code>dashboard.html:17</code>، <code>behavior_report.html:22</code>، <code>student_profile.html:19</code>، <code>pdf/student_report.html:85</code>.</p>
+
+<h2>٦) الاختبارات</h2>
+<p>تطابقات: <code>test_behavior_views2.py</code> (22)، <code>test_views_behavior.py</code> (12؛ منها <code>net_score == 95</code> عند 135-151)، <code>test_domain_rules.py</code> (8)، <code>test_models.py</code> (8)، <code>test_monthly_ba_excel_rows.py</code> (3)، <code>test_notifications.py</code> (3)، <code>test_v54_services.py</code> (2)، وواحدٌ في كلٍّ من <code>conftest.py</code> و<code>test_behavior_email_html.py</code> و<code>test_business_notification_boundaries.py</code> و<code>test_parents.py</code>. أيُّ تنظيفٍ للشيفرة سيمسّها.</p>
+
+<h2>٧) ما لم أجده</h2>
+<ul>
+<li>لا استهلاكَ لـ<code>data-points</code> في JS، ولا أثرَ لحقل النقاط في admin أو serializers أو ملفات تصدير (بحث <code>admin*.py</code> و<code>serializers*.py</code> و<code>api*.py</code> و<code>exports*.py</code> و<code>*excel*.py</code>).</li>
+<li>لا «مجموع نقاط» ولا «اتجاه نقاط» في لوحة المعلّم.</li>
+</ul>
+
+<h2>٨) حدود هذا التدقيق</h2>
+<ul>
+<li>بحثٌ نصّيّ، لا تشغيل: لم أتحقق في الإنتاج من القيم الفعلية لعمودَي <code>points_deducted</code> و<code>points_restored</code> (قد تحوي صفوفاً تاريخية غير صفرية).</li>
+<li>لم أفتح كلَّ قالبٍ يطبع <code>net_score</code> من سياقٍ غير مباشر؛ البحث التقط الأسماء الحرفية فقط (<code>net_score</code>، <code>behavior_score</code>، <code>points</code>).</li>
+<li>لم أفحص قوالب البريد/الإشعارات خارج <code>behavior/services.py</code>.</li>
+</ul>
+
+<h2>٩) التوصية (للقرار، لا تنفيذ)</h2>
+<ol>
+<li><b>قرارٌ سياسيٌّ للمالك:</b> هل «مؤشر السلوك من 100» المشتقّ مقبول، أم يُلغى مع النقاط؟ إن بقي فليُسمَّ «مؤشراً» في كلّ مكان (يشمل البريد 511).</li>
+<li>تصحيح نصّ البريد (511) من «نقاط السلوك» إلى المسمّى المعتمد — إصلاحٌ صغير.</li>
+<li>حذف <code>data-points</code> من القالبين ما دام بلا مستهلك، ثم تقرير مصير <code>POINTS_BY_LEVEL</code> و<code>ViolationCategory.points</code>.</li>
+<li>الأعمدة الميتة (<code>points_deducted</code> و<code>BehaviorPointRecovery</code>) تُزال بهجرة «توسيع ثم تقليص» بعد قياس القيم في الإنتاج، وتُحدَّث الاختبارات والوثائق معها.</li>
+<li>تصحيح وثائق المهارات (القسم ٥).</li>
+<li>تصحيح تقريري السابق عن لوحة المعلّم: اقتراح «مجموع النقاط والاتجاه» يُستبدل بعدد المخالفات واتجاهها، مع تحذير من إحياء النقاط أو «من 100».</li>
+</ol>
+<p>لا أنشئ بطاقاتٍ دون أمر المالك الحرفيّ؛ هذه توصياتٌ فقط.</p>
+</body></html>

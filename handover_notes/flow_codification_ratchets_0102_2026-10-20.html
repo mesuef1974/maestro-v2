@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>تقييم سقّاطات تكويد الفلو</title>
+<style>body{font-family:Tahoma,Arial,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;line-height:1.8;color:#111827}h1,h2{color:#8A1538}h2{border-bottom:2px solid #D4A843;padding-bottom:4px;margin-top:28px}table{border-collapse:collapse;width:100%;margin:10px 0;font-size:.9rem}th,td{border:1px solid #d1d5db;padding:6px 8px;text-align:start;vertical-align:top}th{background:#f4f0e7}code{direction:ltr;unicode-bidi:embed;background:#f3f4f6;padding:1px 4px}.b{border:1px solid #D4A843;background:#fdf9ee;padding:10px 14px;border-radius:8px}.g{background:#ecfdf5}.y{background:#fef3c7}.r{background:#fef2f2}</style></head><body>
+<h1>تقييم سقّاطات تكويد الفلو: أين نحن</h1>
+<p>0102 — 2026-10-20 — بأمر المالك. «التكويد» هنا: تحويل قاعدة الفلو من التزام تذكره الجلسات إلى أداة تفشل أو تمنع. المصادر: قراءة المنصة (سير عمل CI والسكربتات وحماية الفرع بـ<code>gh api</code> قراءةً فقط) وقراءة أدوات المايسترو (<code>tools/</code> و<code>decisions.md</code> وسجل الدفتر) بوكيلين للقراءة فقط، وتحققتُ بنفسي من نقاط أربع مذكورة أدناه.</p>
+
+<div class="b"><b>الحكم في خمسة أسطر:</b>
+<ol><li>الجزء <b>المُكوَّد وصلب</b>: مسار الدفتر من الاعتماد إلى النشر (لا قفز إلى pushed/merged/published، واعتماد بالرأس، مسجِّلون محدَّدون، إبطال الاعتماد بإيداع جديد)، وفي المنصة: الطابور وسياقان مطلوبان، ونافذة النشر على الطابور، ومحلّل الهجرات، وحارس البيانات الشخصية.</li>
+<li>الجزء <b>المكوَّد لكن «في الظل»</b>: عدة سقّاطات مكتوبة وتعمل إنذاراً فقط لأن مفتاح الفرض مطفأ بالقيمة الافتراضية: <code>PREMERGE_GATE_ENFORCE</code> و<code>OPEN_PR_ENFORCE</code> و<code>ROLE_WIP_ENFORCE</code> و<code>PREPUSH_RECEIPT_ENFORCE</code>. أي أنها تُسجَّل ولا تمنع.</li>
+<li>الجزء <b>غير مُكوَّد إطلاقاً</b>: من يفتح الطلب ويدمج (0601 وحدها)، وسطر الاعتماد المطابق للرأس في وصف الطلب، وتشغيل <code>make prepush</code> قبل الدفع، واسم فرع الدفع، ومن يضيف وسم «نشر-عاجل»، وأسئلة المالك بـ<code>AskUserQuestion</code>، وإبلاغ ما بعد النشر.</li>
+<li>التنازلات كثيرة: في 7 أيام نحو 60 <code>waive-remote</code> (معظمها آلي)، و34 <code>waive-head</code>، و49 إعادة اعتماد، و26 <code>waive-preflight</code>، و48 إنذار ظل للـpremerge.</li>
+<li>الأولوية: لا تُكتب حرّاس جديدة قبل <b>تفعيل ما كُتب</b> وقياس أثره؛ ثم سدّ ثلاث ثغرات عالية الأثر في المنصة نفسها لا في الجلسات.</li></ol></div>
+
+<h2>١) ما هو مُكوَّد ويعمل فعلاً (يمنع)</h2>
+<table><tr><th>القاعدة</th><th>الآلية</th><th>الموضع</th></tr>
+<tr class="g"><td>لا دمج بلا سياقَي «ملخص بوابة الجودة» و«Security Summary»، وتخطّي المهام يُعدّ فشلاً</td><td>حماية <code>main</code> + <code>merge-queue-main</code> بلا bypass، <code>enforce_admins:true</code>، ومنع force-push</td><td><code>ci_needs_gate.py:20-60</code>، <code>quality-gate.yml:779-810</code></td></tr>
+<tr class="g"><td>نافذة النشر الأحد–الخميس 07:00–14:00 إلا بوسم «نشر-عاجل»</td><td><code>deploy_window.py</code> على حدث <code>merge_group</code></td><td><code>quality-gate.yml:683-702</code></td></tr>
+<tr class="g"><td>هجرات توسيع (لا عملية هدّامة)</td><td><code>lintmigrations</code> في needs</td><td><code>quality-gate.yml:305-369</code></td></tr>
+<tr class="g"><td>لا بيانات شخصية في الشيفرة</td><td><code>check_personal_data.py</code> يعود بـ1</td><td><code>quality-gate.yml:440-444</code></td></tr>
+<tr class="g"><td>الحرّاس تحرس نفسها</td><td><code>test_ci_gates_are_honest.py</code> (لا <code>continue-on-error</code> ولا <code>|| true</code> على الملخص)</td><td><code>tests/test_ci_gates_are_honest.py:99-130</code></td></tr>
+<tr class="g"><td>الدفتر: لا قفز إلى pushed/merged/published؛ اعتماد مكرر مرفوض؛ <code>approved</code> يلزمه <code>--head</code> و<code>--note</code></td><td>آلة الحالات</td><td><code>ledger.py:280-316</code></td></tr>
+<tr class="g"><td>مسجِّلو الاعتماد والدمج والنشر محدَّدون</td><td><code>RECORDERS</code></td><td><code>ledger.py:289</code></td></tr>
+<tr class="g"><td>إيداع بعد الاعتماد يُبطله إلا ما وقّعته 0501</td><td><code>waive_head</code> بأنواع، والملفات الحاكمة تُرفض</td><td><code>ledger.py:1210-1252</code></td></tr>
+<tr class="g"><td>لا بطاقة من نقاش بلا أمر مالك حرفي (D-422م)</td><td><code>check_origin</code>، 7 أيام</td><td><code>ledger.py:137-183</code></td></tr>
+<tr class="g"><td>الاعتماد يثبت من قول المالك المسجَّل أو تفويض مسجَّل</td><td><code>approval_check.py</code></td><td><code>approval_check.py:420-440</code></td></tr>
+<tr class="g"><td>الدفع: فرع <code>claude/*</code> فقط وبالرأس المعتمد ودون تعديل غير مودَع</td><td><code>push_approved.py</code></td><td><code>:59-78</code> (لكن استدعاؤه اختياري)</td></tr>
+<tr class="g"><td>الدمج بالرأس وتغيّر الرأس يوقف المتابعة</td><td><code>release_follow.sh</code></td><td><code>:36-70</code></td></tr>
+<tr class="g"><td>لا <code>add -A</code> ولا stash ولا force ولا <code>--no-verify</code> داخل جلسات Claude</td><td>حارس الغيت (PreToolUse)</td><td><code>guard_git.py:7-52</code> (ويتجاوزه <code>GUARD_GIT_ALLOW</code>)</td></tr></table>
+
+<h2>٢) مُكوَّد لكنه «في الظل» (يُنذر ولا يمنع)</h2>
+<table><tr><th>السقّاطة</th><th>مفتاح الفرض</th><th>الحال</th></tr>
+<tr class="y"><td>بصمة <code>make premerge</code> قبل «جاهز»</td><td><code>PREMERGE_GATE_ENFORCE=1</code></td><td>مطفأ افتراضياً؛ 48 إنذار ظل في 7 أيام. (وهي نفسها الفكرة رقم 1 في عصف الأزمنة)</td></tr>
+<tr class="y"><td>إيصال prepush</td><td><code>PREPUSH_RECEIPT_ENFORCE=1</code></td><td>مطفأ افتراضياً (<code>ledger.py:724</code>)</td></tr>
+<tr class="y"><td>فتح الطلب آلياً</td><td><code>OPEN_PR_ENFORCE=1</code> + <code>--execute</code></td><td>مطفأ؛ <code>open_pr.py</code> ظل (<code>:7,124</code>)، فيبقى الفتح يدوياً من 0601</td></tr>
+<tr class="y"><td>حدّ العمل غير المنشور للدور</td><td><code>ROLE_WIP_ENFORCE=1</code></td><td>إنذار فقط (<code>ledger.py:630-647</code>)؛ إنذاران في 7 أيام</td></tr>
+<tr class="y"><td>الفحص المسبق قبل ready_for_review</td><td><code>PREFLIGHT_ENFORCE=0</code> يطفئه</td><td>مُفعَّل افتراضياً لكن 26 <code>waive-preflight</code> في 7 أيام</td></tr>
+<tr class="y"><td>رسائل طويلة</td><td>وضع <code>message_length_guard</code></td><td>ملف الوضع غير موجود فالافتراضي تحذير (<code>:11</code>)</td></tr></table>
+<p>تحققتُ بنفسي من أن أسماء المفاتيح موجودة في <code>ledger.py</code> و<code>open_pr.py</code> وأن شرط الفرض فيها <code>== "1"</code> (أي مطفأ ما لم يُضبط). لم أتحقق إن كانت بيئة تشغيل الجلسات تضبط أياً منها.</p>
+
+<h2>٣) غير مُكوَّد (التزام يدوي)</h2>
+<table><tr><th>قاعدة الفلو</th><th>الثغرة</th><th>الخطر</th></tr>
+<tr class="r"><td>«0601 وحدها تفتح الطلب وتدمج وتنشر»</td><td>لا <code>CODEOWNERS</code>، المراجعات المطلوبة 0، ولا قيد على هوية الدامج؛ وفي الدفتر <code>--by</code> نصٌّ حر لا يُتحقق منه</td><td>أي حساب بصلاحية كتابة يدمج عبر الطابور؛ ويمكن لجلسة أن تسجّل <code>--by 0601</code></td></tr>
+<tr class="r"><td>«اعتُمد من المالك على 8500 — التاريخ — الرأس sha8» ومطابقة الرأس</td><td><code>auto_merge_gate.py</code> يتحقق من الشكل والتاريخ فقط ولا يطابق sha8 مع رأس الطلب؛ وتستدعيه 0601 يدوياً ولا يشغّله workflow</td><td>طلب بلا اعتماد حقيقي قد يمرّ إن دمجه من لا يلتزم؛ والحارس الفعلي هو <code>release_follow.sh</code> داخل أداة 0601</td></tr>
+<tr class="r"><td>«<code>make prepush</code> قبل الدفع»</td><td>لا خطاف <code>pre-push</code> ولا CI يتحقق من تشغيله؛ و<code>--allow-missing</code> يحوّل الأداة الغائبة إلى نجاح</td><td>هذا سبب الحمرة النصية بعد الدفع (#1176 #1178 #1180 #1182)</td></tr>
+<tr class="r"><td>«الدفع إلى <code>claude/*</code> فقط»</td><td>لا قاعدة على أسماء الفروع في GitHub؛ المانع حارس الغيت المحلي لـ<code>main</code> فقط ويتجاوزه <code>GUARD_GIT_ALLOW</code></td><td>دفع إلى فرع بغير الاسم المعتمد، وحارس الغيت لا يرى طرفية المالك ولا السكربتات</td></tr>
+<tr class="r"><td>وسم «نشر-عاجل» بإذن المالك اليوم</td><td>لا قيد على من يضيف الوسم، وأداة تسجيل الأمر تشترط <code>--head</code> لبطاقة فلا تسجَّل أوامر النافذة (ثغرة أكدتها 0101)</td><td>الوسم يتجاوز النافذة كلياً؛ وإذن اليوم لا يُربط آلياً</td></tr>
+<tr class="r"><td>نافذة النشر على الطلب قبل الطابور</td><td>على <code>pull_request</code> تمرّ بنجاح (<code>deploy_window.py:52-56</code>)</td><td>طلب أخضر يبدو جاهزاً ثم يقف في الطابور؛ ضجيج لا خطر أمني</td></tr>
+<tr class="r"><td>أسئلة المالك بـ<code>AskUserQuestion</code> حصراً (تعميم اليوم)</td><td>لا شيء يمنع كتابة سؤال نصاً؛ <code>owner_asks_audit.py</code> تدقيق لاحق</td><td>التزام سلوكي</td></tr>
+<tr class="r"><td>الإبلاغ بعد النشر (D-137م)</td><td><code>flow_unannounced.py</code> يعدّ ولا يمنع</td><td>تأخر الإبلاغ</td></tr>
+<tr class="r"><td>حصة الرسائل 150</td><td><code>msg_counter.py</code> طوعي بنص رأسه (<code>:5-8</code>)</td><td>التحديث يدوي من الجلسة</td></tr>
+<tr class="r"><td>عامل الخدمة بإصدار مرقَّم عند تغيير منطقه</td><td>اختبارات تحرس سياسة التخزين لا الترقيم؛ لم يجد الوكيل اختباراً يفرضه (لم يفحص كل الاختبارات)</td><td>مستخدمون يبقون على نسخة قديمة</td></tr>
+<tr class="r"><td>توسيع ثم تقليص عبر إصدارين</td><td>الفحص يرى عملية هدّامة فقط ولا يرى ترتيب النشر</td><td>تقليص قبل انتشار التوسيع</td></tr>
+<tr class="r"><td>أداة اعتماد جماعي D-445م</td><td><code>tools/batch_approve.py</code> مذكورة في القرار وغير موجودة (تحققتُ: الملف غير موجود)</td><td>قرار معتمد بلا تنفيذ</td></tr></table>
+
+<h2>٤) قياس التنازلات (آخر 7 أيام من الدفتر، 1233 تغيير حالة)</h2>
+<table><tr><th>النوع</th><th>7 أيام</th><th>الإجمالي</th><th>تفسير</th></tr>
+<tr><td><code>waive-remote</code></td><td>60</td><td>186</td><td>معظمها آلي من <code>release_follow.sh:145-147</code> (الفرع يُحذف بعد الدمج)؛ هو ضجيج بنيوي لا تحايل</td></tr>
+<tr><td>إعادة اعتماد</td><td>49</td><td>133</td><td>رؤوس تغيّرت بعد الاعتماد (إصلاح CI، دمج main)</td></tr>
+<tr><td>إنذار ظل premerge</td><td>48</td><td>48</td><td>سقّاطة كُتبت ولم تُفرض</td></tr>
+<tr><td><code>waive-head</code></td><td>34</td><td>76</td><td>توقيع 0501 فقط</td></tr>
+<tr><td><code>waive-preflight</code></td><td>26</td><td>26</td><td>تنازل عن فحص يُفترض مفعّلاً</td></tr>
+<tr><td><code>waive-wip</code></td><td>6</td><td>8</td><td></td></tr>
+<tr><td><code>waive-spec</code></td><td>4</td><td>7</td><td></td></tr></table>
+<p>بحث الوكيل بمطابقة نص الملاحظات بصيغ عربية، فقد يفوته ما كُتب بصيغة أخرى. وعدّ <code>by="غير مُعلَن"</code> 208 حدثاً في 7 أيام لم يفصل أحداث ما قبل إلزام <code>--by</code>.</p>
+
+<h2>٥) تصنيف القرارات الحديثة (عينة D-414م إلى D-445م، 32 قراراً)</h2>
+<p>التصنيف من العناوين لا من النصوص الكاملة، فقد يتغير: <b>مُكوَّد 4</b> (D-422 وD-429 وD-436 وD-437)، <b>جزئي 5</b> (D-414 وD-421 وD-427 وD-445 وD-416/419)، <b>التزام يدوي فقط 23</b> (معظمها تفويضات زمنية وقرارات سلوك وسياسات جلسات). أي أن نحو 72% من القرارات الحديثة لا أثر آلياً لها. لم أقرأ نص القرارات نفسها لأحكم إن كان بعضها لا يصلح للتكويد أصلاً (سياسة سلوك مثلاً).</p>
+
+<h2>٦) ما يحتاج تكويداً الآن (مرتَّب بالأثر والجهد)</h2>
+<table><tr><th>#</th><th>المطلوب</th><th>لماذا الآن</th><th>الجهد</th><th>قرار المالك؟</th></tr>
+<tr><td>1</td><td><b>تفعيل ما كُتب</b>: ضبط <code>PREMERGE_GATE_ENFORCE=1</code> بعد مراجعة 48 إنذار الظل، ثم <code>PREPUSH_RECEIPT_ENFORCE=1</code></td><td>سقّاطات مكتوبة ومقيسة بالظل، وتكلفتها فرض فقط. تعالج حمرة الحرّاس النصية بعد الدفع</td><td>صغير</td><td>لا، تشغيلي (0103/0501)</td></tr>
+<tr><td>2</td><td><b>خطاف <code>pre-push</code></b> يشغّل <code>make prepush</code> أو يتحقق من إيصاله على الرأس نفسه</td><td>قاعدة بلا أي إنفاذ، وسبب حمرة اليوم</td><td>صغير–متوسط</td><td>لا</td></tr>
+<tr><td>3</td><td><b>مطابقة sha8 مع رأس الطلب</b> داخل <code>auto_merge_gate.py</code>، وتشغيله كمهمة CI مطلوبة على <code>merge_group</code></td><td>لا يوجد مانع آلي لدمج بلا اعتماد حقيقي</td><td>متوسط</td><td>نعم: يغيّر شرطاً مطلوباً في حماية الفرع</td></tr>
+<tr><td>4</td><td><b>قيد على هوية الدامج والوسم العاجل</b>: <code>CODEOWNERS</code> أو قاعدة في الطابور، ومن يضيف «نشر-عاجل»</td><td>الفلو يقول «0601 وحدها» ولا شيء يفرضه</td><td>متوسط</td><td>نعم (صلاحيات)</td></tr>
+<tr><td>5</td><td><b>إصلاح أداة تسجيل أمر النافذة</b> (<code>record_owner_confirmation.py</code> بلا <code>--head</code>) وربط الوسم العاجل بسطر إذن اليوم في CI</td><td>ثغرة أكدتها 0101 اليوم</td><td>صغير</td><td>لا للأداة؛ نعم لربط الوسم</td></tr>
+<tr><td>6</td><td><b>تفعيل <code>open_pr.py</code></b> بعد أسبوع الظل (قرار مؤجَّل أصلاً)، أو حسمه</td><td>سقّاطة D-429م معطلة، والفتح اليدوي يكلف 10–40 دقيقة</td><td>صغير</td><td>نعم: قراره عند 0101/المالك</td></tr>
+<tr><td>7</td><td><b>إنشاء <code>batch_approve.py</code> أو تعديل D-445م</b></td><td>قرار مالك معتمد بلا أداة</td><td>متوسط</td><td>لا</td></tr>
+<tr><td>8</td><td><b>اختبار ترقيم عامل الخدمة</b> (يقارن بصمة منطق <code>sw.js</code> بـ<code>CACHE_NAME</code>)</td><td>قاعدة بلا أثر مؤكد</td><td>صغير</td><td>لا</td></tr>
+<tr><td>9</td><td><b>التحقق من هوية <code>--by</code></b> في الدفتر (ربطه بمعرّف الجلسة)</td><td>RECORDERS تُغني عن شيء إن كان الاسم يُنتحل بنص حر</td><td>متوسط</td><td>لا، لكن يحتاج تصميماً</td></tr>
+<tr><td>10</td><td>حرّاس السلوك (أسئلة المالك، الإبلاغ، حصة الرسائل): تبقى سلوكية، <b>لا أوصي بتكويدها الآن</b></td><td>كلفتها عالية وأثرها ضئيل أمام 1–9</td><td>—</td><td>—</td></tr></table>
+
+<h2>٧) ملاحظات صدق وحدود</h2>
+<ul>
+<li>الجرد قراءة شيفرة وإعدادات؛ لم أشغّل أي أداة تكتب، ولم أُجرِ اختبار التفاف على أي سقّاطة.</li>
+<li>تحققتُ بنفسي من أربع نقاط فقط: غياب <code>batch_approve.py</code>، وأسماء مفاتيح الفرض وقيمها الافتراضية، وأرقام الأحداث من الدفتر (من الوكيل بعد اطلاعي على تصنيفه). والباقي من تقريرَي الوكيلين، فالسطور المذكورة لم أفتحها كلها.</li>
+<li>لم أقرأ نص <code>regression_guards.md</code> صفاً صفاً (نحو 105 صفوف) ولا فصلتُ ما يفرضه CI فعلاً منها عمّا هو وصف.</li>
+<li>لم أتحقق من إعدادات وسوم GitHub (من يملك صلاحية إضافة الوسم) ولا من إعداد Railway الفعلي.</li>
+<li>قد تضبط بيئات الجلسات مفاتيح الفرض خارج ما رأيته؛ هذا غير مفحوص.</li>
+<li>أرقام التنازلات من مطابقة نصية قد تفوّت صيغاً.</li></ul>
+</body></html>

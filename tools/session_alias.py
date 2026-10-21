@@ -31,6 +31,50 @@ def _titles(tabs: dict) -> dict[str, str]:
     return out
 
 
+def number_map(tabs: dict | None = None) -> dict[str, str]:
+    """رقمٌ قديمٌ أو مدمَج ← رقمٌ حاليّ، من session_policy.aliases وحدَه (بلا «_reused» ولا «_note»).
+
+    يُقرأ TABS عند النداء؛ وملفٌّ مفقودٌ أو تالفٌ يُرجع {} (لا إحالة) ولا يُسقط الأداة التي تستعمله.
+    """
+    try:
+        tabs = _load(tabs)
+    except (OSError, ValueError):
+        return {}
+    aliases = tabs.get("session_policy", {}).get("aliases", {})
+    return {k: v for k, v in aliases.items()
+            if re.fullmatch(r"\d{4}", k) and isinstance(v, str) and re.fullmatch(r"\d{4}", v)}
+
+
+def _tree(path: str) -> str:
+    return str(path or "").replace("\\", "/").rstrip("/").lower()
+
+
+def directory_trees(tabs: dict | None = None) -> dict[str, set[str]]:
+    """مجلّدٌ خارج أشجار المنصّة ← الأرقامُ المقبولةُ منه (session_policy.directory_trees؛ بلا «_note»).
+
+    المفتاحُ مطبَّعٌ (/ وحروفٌ صغيرة بلا شرطةٍ ختاميّة) ليطابق cwd كما يكتبه التطبيق. ملفٌّ مفقودٌ أو تالفٌ يُرجع {}.
+    """
+    try:
+        tabs = _load(tabs)
+    except (OSError, ValueError):
+        return {}
+    raw = tabs.get("session_policy", {}).get("directory_trees", {}) or {}
+    return {_tree(k): {n for n in v if re.fullmatch(r"\d{4}", str(n))}
+            for k, v in raw.items() if not k.startswith("_") and isinstance(v, list)}
+
+
+def canonical(num: str, mapping: dict[str, str] | None) -> str:
+    """يتبع سلسلةَ الإحالة (0204 ← 0201 ← 0101) حتى رقمٍ غير مُحال؛ وعند الدوران يُرجع الرقمَ كما هو."""
+    seen = {num}
+    cur = num
+    while mapping and cur in mapping:
+        cur = mapping[cur]
+        if cur in seen:
+            return num
+        seen.add(cur)
+    return cur
+
+
 def resolve(name_or_number: str, tabs: dict | None = None, legacy: bool = False) -> str | None:
     """يُرجع الاسمَ الكاملَ الحاليّ إن عُرف، وإلّا الرقمَ الحاليّ؛ و None إن لم يُعرف شيء.
 
