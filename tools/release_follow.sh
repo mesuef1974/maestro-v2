@@ -3,7 +3,7 @@
 #
 #   release_follow.sh <PR> <رأس8> [--mig] [--apply-cards]
 #
-# الخطوات: انتظارُ خضرة الفحوص (بمهلةٍ) ← عند الأحمر يُطبع سببُه ويُخرج 2 ← فحصُ الشروط ← دمجٌ بالرأس ←
+# الخطوات: انتظارُ خضرة الفحصين المطلوبين فقط (بمهلةٍ؛ الاستشاريّ لا يوقف) ← عند الأحمر يُطبع سببُه ويُخرج 2 ← فحصُ الشروط ← دمجٌ بالرأس ←
 # انتظارُ الهبوط ← انتظارُ نشرٍ جديد ← أسطرُ الهجرات والصحّةُ ← عرضُ البطاقات (وبـ--apply-cards تُنقل).
 # تغيّر الرأس: يُطبع ويُخرج 3 (طلبُ هجرةٍ لا يُكمل أبداً؛ غيرُه يُكمل فقط إن كان approval_check ✔ على الرأس الجديد).
 # --mig: يسمح بوجود هجرةٍ في الطلب، وبشرط أن تكون كلمةُ المالك المباشرةُ على الرأس مسجَّلةً في owner_confirmations.md.
@@ -12,6 +12,9 @@
 set -u
 # approval_check يطبع قبل حكمه أسطرَ سياقٍ («المصدر المقروء: …» بعد #56) فلا يُقرأ السطرُ الأوّل؛ الحكمُ سطرٌ يبدأ بـ✔ في أيّ موضعٍ من المخرج.
 approval_passed() { grep -q '^✔'; }
+# الفحصان المطلوبان للدمج فقط («ملخص بوابة الجودة» و«Security Summary»)؛ ما عداهما استشاريّ لا يحجب الدمج ولا يُنتظر.
+# مخرجُ `gh pr checks` (اسم⇥حالة⇥…) ← FAIL إن أخفق أحدُهما، وPENDING إن غاب أو لم يكتمل، وإلا PASS.
+required_verdict() { awk -F'\t' '$1=="ملخص بوابة الجودة"||$1=="Security Summary"{n++; if($2=="fail")f=1; else if($2!="pass"&&$2!="skipping")p=1} END{if(f)print "FAIL"; else if(n<2||p)print "PENDING"; else print "PASS"}'; }
 PR="${1:?رقم الطلب}"; S="${2:?رأس 8 خانات}"; shift 2
 MIG=0; APPLY=0
 for a in "$@"; do case "$a" in --mig) MIG=1;; --apply-cards) APPLY=1;; esac; done
@@ -55,9 +58,10 @@ say "نشر-عاجل=$URGENT توقيت الدوحة=$HM"
 t0=$(date +%s); backoff=30
 while :; do
   out="$(gh pr checks "$PR" --repo $R 2>/dev/null)"
-  if [ -n "$out" ] && ! echo "$out" | grep -Eq 'pending|queued|in_progress'; then break; fi
-  # الأحمر المبكّر: لا داعي لانتظار بقيّة الفحوص
-  if echo "$out" | awk -F'\t' '$2=="fail"{f=1} END{exit !f}'; then break; fi
+  # الحكمُ على الفحصين المطلوبين وحدَهما: أحمرٌ استشاريّ أو فحصٌ استشاريٌّ معلَّق لا يوقف المتابعة
+  verdict="$(echo "$out" | required_verdict)"
+  [ "$verdict" = PASS ] && break
+  [ "$verdict" = FAIL ] && break
   [ $(( $(date +%s) - t0 )) -gt "$CHECK_TIMEOUT" ] && { say "انتهت مهلة الفحوص"; exit 5; }
   sleep "$backoff"; [ "$backoff" -lt 120 ] && backoff=$(( backoff + 15 ))
 done
@@ -75,7 +79,9 @@ if [ "${H:0:8}" != "$S" ]; then
 fi
 
 # 3) الأحمر: اطبع سببه
-BAD=$(echo "$out" | awk -F'\t' '$2!="pass" && $2!="skipping"{print $1"\t"$2"\t"$4}')
+ADVISORY=$(echo "$out" | awk -F'\t' '$1!="ملخص بوابة الجودة" && $1!="Security Summary" && $2=="fail"{print $1}')
+[ -n "$ADVISORY" ] && say "فحوصٌ استشاريّةٌ حمراء (لا تحجب الدمج): $(echo "$ADVISORY" | paste -sd, -)"
+BAD=$(echo "$out" | awk -F'\t' '($1=="ملخص بوابة الجودة" || $1=="Security Summary") && $2!="pass" && $2!="skipping"{print $1"\t"$2"\t"$4}')
 if [ -n "$BAD" ]; then
   say "فحوصٌ غير ناجحة:"; echo "$BAD"
   echo "$BAD" | while IFS=$'\t' read -r name st url; do
