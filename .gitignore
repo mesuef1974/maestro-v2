@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 ledger/events.jsonl
+ledger/events.jsonl.lock
+ledger/backups/
 ledger/windows/
 *.tmp
 ledger/spawn_reservations.json
