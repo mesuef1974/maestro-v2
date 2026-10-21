@@ -346,6 +346,8 @@ def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -
 
 LOCK = HERE.parent / "ledger" / "flow_pump.lock"
 LOG = HERE.parent / "ledger" / "flow_pump.log"
+#: مفتاحُ الإيقاف (الموجة 0.3، D-453م): وجودُ الملف يمنع الدورة من أيّ مشغِّل (الخطّاف، مهمّةٌ مجدولة، يدويّاً) لا الخطّافَ وحده
+OFF = HERE.parent / "ledger" / "flow_pump.off"
 STALE_LOCK_S = 900
 
 
@@ -364,6 +366,9 @@ def _lock() -> bool:
 
 def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
+    if OFF.exists():
+        print(f"مفتاحُ الإيقاف قائم ({OFF.name}) — لا دورة")
+        return 0
     if not _lock():
         print("دورةٌ أخرى تعمل — تخطٍّ")
         return 0
