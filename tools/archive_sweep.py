@@ -19,7 +19,7 @@ import re
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -180,7 +180,7 @@ def main() -> int:
     ap.add_argument("--project", default="schoolos")
     args = ap.parse_args()
     tabs_path = ROOT / "projects" / args.project / "tabs.json"
-    now = datetime.now()
+    now = datetime.now(timezone(timedelta(hours=3)))
     if args.record_archived:
         done = record_archived(args.record_archived, tabs_path, now)
         print("سُجّلت في archived_log:", "؛ ".join(done) or "لا شيء (عناوينُ غيرُ موجودةٍ في members)")

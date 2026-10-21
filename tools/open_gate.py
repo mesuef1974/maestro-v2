@@ -97,6 +97,14 @@ def _titles_for(item: dict) -> list[str]:
     return [m for m in members if re.search(rf"W-{tail}|/{tail}", m)]
 
 
+def only_alive(members: set[str], alive_numbers: set[str]) -> set[str]:
+    """تُبقي من أعضاء 04 المسجَّلين ما رقمُه حيٌّ في دليل الجلسات (0103، 2026-10-10): السجلُّ المخزَّن قد يحمل جلسةً أُرشفت
+    فيُحكم بالإسناد إليها خطأً. دليلٌ فارغ (القرصُ غيرُ متاح) = لا تصفية، فنعود إلى السجلّ كما كان."""
+    if not alive_numbers:
+        return members
+    return {m for m in members if m.strip()[:4] in alive_numbers}
+
+
 def load_sessions() -> list[dict]:
     proc = subprocess.run([sys.executable, str(MAESTRO / "tools" / "session_load_v2.py"), "--json", "--no-fetch"],
                           capture_output=True, encoding="utf-8", errors="replace", check=False)
@@ -123,6 +131,11 @@ def main() -> None:
     pre = sp.preflight(None, args.tag, args.task, args.code, "", tabs, th, free, reserved)
     band = pre["memory"]["band"] if pre["memory"] else None
     live = set(next(t for t in tabs["tabs"] if t.get("number") == "04")["members"])
+    try:
+        import session_directory as sd
+        live = only_alive(live, set(sd.entries()))
+    except Exception:  # noqa: BLE001 — الدليلُ مساعدٌ؛ فشلُه لا يوقف البوّابة
+        pass
     live = live - busy_titles()
     dec = MAESTRO / "decisions.md"
     pending = pending_decisions(pre["next_serial_04"], dec.read_text(encoding="utf-8")) if dec.is_file() else []

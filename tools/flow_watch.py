@@ -68,6 +68,9 @@ SEVERITY_AR = {"red": "أحمر", "yellow": "أصفر", "unmeasured": UNMEASURED
 @dataclass(frozen=True)
 class Thresholds:
     approved_min: int = 30
+    approved_reason_min: int = (
+        60  # بعدها بلا ملاحظةِ سببٍ ← 0501، وبعد ضِعفها ← 0601 (أمر المالك 2026-10-20)
+    )
     pushed_min: int = 120
     pr_min: int = 60
     routed_hours: int = 24
@@ -118,18 +121,34 @@ def approved_not_pushed(items: dict, now: datetime, th: Thresholds) -> list[Row]
             continue
         age = _age_min(it["state_ts"], now)
         if age > th.approved_min:
+            owner, action, subject = (
+                _holder(it),
+                "ادفعي الآن (بعد approval_check)",
+                "معتمدٌ لم يُدفع",
+            )
+            if age >= th.approved_reason_min and not _reason_noted(it):
+                # ساعةٌ بين approved وpushed بلا ملاحظةِ سببٍ: ينتقل التنبيهُ من الحامل إلى 0501 ثمّ 0601
+                owner = "0501" if age < 2 * th.approved_reason_min else "0601"
+                subject = f"معتمدٌ لم يُدفع بلا سببٍ مدوَّن (الحامل {_holder(it)})"
+                action = "ادفع الآن أو دوِّن سببَ التأخير بملاحظةٍ على البطاقة"
             rows.append(
                 Row(
                     _severity(age, th.approved_min),
                     1,
-                    "معتمدٌ لم يُدفع",
+                    subject,
                     age,
-                    _holder(it),
-                    "ادفعي الآن (بعد approval_check)",
+                    owner,
+                    action,
                     it["id"],
                 )
             )
     return rows
+
+
+def _reason_noted(item: dict) -> bool:
+    """هل دُوِّنت ملاحظةٌ على البطاقة بعد اعتمادها (سببُ تأخّر الدفع)."""
+    since = item["state_ts"]
+    return any((n.get("ts") or "") > since for n in item.get("notes", []))
 
 
 def pushed_not_merged(
@@ -421,17 +440,35 @@ def ledger_vs_github(items: dict, recon_prs: list[dict] | None) -> list[Row]:
     return rows
 
 
+def in_work_window(now: datetime) -> bool:
+    """أحد–خميس 07:00–14:30 بتوقيت الدوحة (UTC+3): نافذةُ منع الدمج (CLAUDE.md)."""
+    q = now.astimezone(timezone(timedelta(hours=3)))
+    return q.isoweekday() not in (5, 6) and (7, 0) <= (q.hour, q.minute) < (14, 30)
+
+
+def _only_awaiting_merge(rollup: list[dict] | None) -> bool:
+    """كلُّ المعلَّق في الفحوص بحالة EXPECTED (ينتظر الدمج/الطابور) ولا شيءَ يعمل أو يفشل."""
+    import pr_red
+
+    cls = pr_red.classify(rollup)
+    return bool(cls["pending"]) and not cls["failed"] and all(
+        (c.get("state") or "").upper() == "EXPECTED" and not c.get("status") for c in cls["pending"]
+    )
+
+
 def merge_queue_stalled(
     prs: list[dict] | None, now: datetime, th: Thresholds
 ) -> list[Row]:
     """الحالة 9: طابورُ الدمج متوقف — طلبٌ أخضرُ الفحوص بسطر اعتمادٍ ينتظر الدمج أكثر من العتبة."""
-    if prs is None:
-        return []
+    if prs is None or in_work_window(now):
+        return []  # داخل الدوام الدمجُ ممنوعٌ بالقاعدة: انتظارُ الأخضر المعتمَد متوقَّعٌ لا عَطَل (أمر المالك 10-20 بند4)
     rows = []
     for raw in prs:
         if raw["state"] != "OPEN" or raw.get("isDraft"):
             continue
         p = pr_watch.normalize(raw)
+        if p["checks"] == "pending" and _only_awaiting_merge(raw.get("statusCheckRollup")):
+            p["checks"] = "green"  # فحصُ أداةِ CI المعلَّق (EXPECTED) لا يبدأ إلا عند الدمج: ليس عائقاً
         age = int(pr_watch._age(p["created"], now))
         if p["checks"] == "green" and p["approval"] and age > th.merge_wait_min:
             cids = CARD_RE.findall(p["text"])
@@ -653,7 +690,9 @@ def load_events_counting(path=None) -> tuple[list[dict], int]:
 
 
 REPEAT_MIN = 360  # التنبيهُ نفسُه لا يُعاد قبل ست ساعات؛ يعود فوراً إن اختفى ثمّ ظهر
-FLOW_STATE = HERE.parent / "flow_watch_state.json"  # خارج مجلد الدفتر: الملفُّ الوحيدُ الذي تكتبه المتابعة
+FLOW_STATE = (
+    HERE.parent / "flow_watch_state.json"
+)  # خارج مجلد الدفتر: الملفُّ الوحيدُ الذي تكتبه المتابعة
 
 
 def _row_key(r: Row) -> str:
@@ -670,7 +709,9 @@ def dedupe(rows: list[Row], now: datetime, path: Path) -> tuple[list[Row], int]:
     for r in rows:
         k = _row_key(r)
         last = alerted.get(k)
-        if last and (now - datetime.fromisoformat(last)) < timedelta(minutes=REPEAT_MIN):
+        if last and (now - datetime.fromisoformat(last)) < timedelta(
+            minutes=REPEAT_MIN
+        ):
             held += 1
             continue
         fresh.append(r)
@@ -740,14 +781,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--now", help="لحظةٌ ISO للاختبار")
     ap.add_argument("--preview-sh", type=Path)
-    ap.add_argument("--state-file", type=Path, default=FLOW_STATE, help="ملفُّ حالة الكبح (خارج الدفتر)")
+    ap.add_argument(
+        "--state-file",
+        type=Path,
+        default=FLOW_STATE,
+        help="ملفُّ حالة الكبح (خارج الدفتر)",
+    )
     ap.add_argument("--no-dedupe", action="store_true", help="لا كبحَ ولا حفظَ حالة")
-    ap.add_argument("--changes-only", action="store_true", help="للمراقبة (Monitor): لا يطبع شيئاً إن لم يكن صفٌّ جديدٌ بعد الكبح")
-    ap.add_argument("--loop", action="store_true", help="يكرّر الدورة (يلزمه --changes-only) كل --interval ثانية")
+    ap.add_argument(
+        "--changes-only",
+        action="store_true",
+        help="للمراقبة (Monitor): لا يطبع شيئاً إن لم يكن صفٌّ جديدٌ بعد الكبح",
+    )
+    ap.add_argument(
+        "--loop",
+        action="store_true",
+        help="يكرّر الدورة (يلزمه --changes-only) كل --interval ثانية",
+    )
     ap.add_argument("--interval", type=int, default=300)
     d = Thresholds()
     for name in (
         "approved_min",
+        "approved_reason_min",
         "pushed_min",
         "pr_min",
         "routed_hours",

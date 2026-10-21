@@ -288,14 +288,27 @@ def backup_age_severity(age_h: float | None, failed: bool, max_age_h: float) -> 
     return None
 
 
+def backup_failure_is_current(failed_mtime: float | None, last_commit_ts: float | None) -> bool:
+    """علامةُ الفشل تُنذر فقط إن كانت **أحدثَ** من آخر نسخةٍ ناجحة (W-20260929-008).
+
+    السكربتُ لا يحذف `BACKUP_FAILED.txt` بعد نجاحٍ لاحق، فكان الإنذارُ الكاذبُ يبقى. فإن لم يُعرف وقتُ آخر نسخةٍ
+    نجحت (لا إيداع) فالعلامةُ سارية؛ وإن لم تُوجد العلامةُ فلا فشل.
+    """
+    if failed_mtime is None:
+        return False
+    return last_commit_ts is None or failed_mtime > last_commit_ts
+
+
 def backup_alerts(cfg: dict | None) -> list[dict]:
     if not cfg:
         return []
     repo = Path(cfg["repo"])
     proc = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%ct", cfg["branch"]],
                           capture_output=True, encoding="utf-8", check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    age_h = (datetime.now(timezone.utc).timestamp() - int(proc.stdout.strip())) / 3600 if proc.returncode == 0 and proc.stdout.strip() else None
-    failed = (repo / "backups" / "BACKUP_FAILED.txt").is_file()
+    commit_ts = int(proc.stdout.strip()) if proc.returncode == 0 and proc.stdout.strip() else None
+    age_h = (datetime.now(timezone.utc).timestamp() - commit_ts) / 3600 if commit_ts is not None else None
+    marker = repo / "backups" / "BACKUP_FAILED.txt"
+    failed = backup_failure_is_current(marker.stat().st_mtime if marker.is_file() else None, commit_ts)
     sev = backup_age_severity(age_h, failed, cfg["max_age_h"])
     if not sev:
         return []
@@ -431,6 +444,7 @@ def orphan_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp"
     names = sl.load_json("session_names.json", project)
     ignored = set(sl.DEFAULT_IGNORED) | set(sl.load_json("ignored_trees.json", project).get("trees", []))
     contains = bs.git_contains(repo)
+    content = bs.git_content_merged(repo)
     merged = [p for rows in by_branch.values() for p in rows if p["state"] == "MERGED"]
     out = []
     for wt in sl.worktrees(repo, warn):
@@ -440,10 +454,11 @@ def orphan_alerts(project: str = "schoolos", repo: Path = Path("D:/shschool_mvp"
         ahead = len(sl.run("git", "rev-list", f"origin/main..{wt['HEAD']}", cwd=repo).split())
         dirty = len(sl.run("git", "--no-optional-locks", "-C", wt["worktree"], "status", "--porcelain").splitlines())
         own = by_branch.get(bs.branch_of(wt), [])
-        result = bs.classify_tree(wt["HEAD"], bs.branch_of(wt), ahead, dirty, own, contains)
+        result = bs.classify_tree(wt["HEAD"], bs.branch_of(wt), ahead, dirty, own, contains, content_merged=content)
         if result["status"] == bs.NO_PR and ahead:  # قد يكون عملُها اندمج عبر طلب فرعٍ آخر
             result = bs.classify_tree(wt["HEAD"], bs.branch_of(wt), ahead, dirty, own, contains,
-                                      elsewhere=bs.merged_elsewhere(repo, wt["HEAD"], merged, contains))
+                                      elsewhere=bs.merged_elsewhere(repo, wt["HEAD"], merged, contains, content),
+                                      content_merged=content)
         if result["status"] in bs.PENDING:
             same, total = bs.overlap(repo, wt["HEAD"])
             left = f" · {total - same} من {total} ملفّاً ما زال مختلفاً عن main" if total else ""

@@ -77,9 +77,9 @@ def _routed(holder, n=1):
     return ev
 
 
-def test_test_channel_wakes_only_the_four_sessions():
+def test_test_channel_wakes_only_the_two_receivers():
     ch = wm.TEST_CHANNEL
-    assert ch == {"0701", "0702", "0103", "0102"}
+    assert ch == {"0701", "0301"}  # 0702 و0102 دُمجتا في 0701 و0103 (2026-10-21)، ثمّ 0103 ← 0301 بترقيم 01
     dirs = {**DIR, "0701": "local_a", "0403": "local_b"}
     ok_plan = wm.plan(_routed("0701"), CUR, dirs, set(), verify=ok, channel=ch)
     assert list(ok_plan.wakes) == ["0701"]
@@ -87,16 +87,16 @@ def test_test_channel_wakes_only_the_four_sessions():
     assert out.wakes == {} and "خارج قناة التجربة" in out.skipped[0][1]
 
 
-def test_counter_guard_blocks_above_130():
+def test_counter_guard_blocks_above_260():
     dirs = {"0701": "local_a", "0702": "local_b"}
     ev = _routed("0701") + [
         created("W-20261016-009"),
         state("W-20261016-009", "routed", NEW, held_by="0702"),
     ]
-    assert wm.plan(ev, CUR, dirs, set(), verify=ok, sent=128).wakes  # 128 + 2 = 130 مسموح
-    p = wm.plan(ev, CUR, dirs, set(), verify=ok, sent=129)  # 129 + 2 = 131
+    assert wm.plan(ev, CUR, dirs, set(), verify=ok, sent=258).wakes  # 258 + 2 = 260 مسموح
+    p = wm.plan(ev, CUR, dirs, set(), verify=ok, sent=259)  # 259 + 2 = 261
     assert p.wakes == {} and "msg_counter" in p.halted
-    assert wm.plan(_routed("0701"), CUR, dirs, set(), verify=ok, sent=130).halted
+    assert wm.plan(_routed("0701"), CUR, dirs, set(), verify=ok, sent=260).halted
 
 
 def test_sender_count_reads_file_and_missing_file_closes_the_guard(tmp_path):
@@ -139,3 +139,113 @@ def test_watch_mode_does_not_write_cursor_or_log(tmp_path, monkeypatch, capsys):
     wm.main(["--watch", "--once"])
     assert sorted(p.name for p in tmp_path.iterdir()) == []
     assert capsys.readouterr().out == ""
+
+
+def _burst(n):
+    ev = []
+    for k in range(1, n + 1):
+        i = f"W-20261016-00{k}"
+        ev += [created(i, held=f"0{k}01"), state(i, "routed", NEW, held_by=f"0{k}01")]
+    return ev
+
+
+def test_per_minute_cap_defers_the_excess_and_holds_the_cursor():
+    p = wm.plan(_burst(6), CUR, DIR, set(), verify=ok)
+    assert len(p.wakes) == wm.MAX_PER_MINUTE and p.deferred
+    assert sum("تأجيل" in why for _, why in p.skipped) == 6 - wm.MAX_PER_MINUTE
+
+
+def test_recent_wakes_use_up_the_minute_allowance():
+    assert wm.plan(_burst(2), CUR, DIR, set(), verify=ok, recent=wm.MAX_PER_MINUTE).wakes == {}
+
+
+def test_same_event_is_not_woken_twice():
+    ev = _burst(1)
+    p = wm.plan(ev, CUR, DIR, set(), verify=ok, already=frozenset({("W-20261016-001", "routed")}))
+    assert p.wakes == {} and "لا تكرار" in p.skipped[0][1]
+
+
+def test_live_window_is_short_so_idle_sessions_do_not_stall_waking():
+    assert wm.LIVE_WINDOW_MS == 15 * 60 * 1000
+
+
+def test_halt_is_logged_once_per_hour(tmp_path):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    log = tmp_path / "wake_log.jsonl"
+    p = wm.WakePlan()
+    p.halted = "الجلساتُ الحيّةُ تتجاوز 14: لا إيقاظ"
+    t0 = datetime(2026, 10, 20, 16, 0, tzinfo=timezone(timedelta(hours=3)))
+    assert wm.log_halt(p, log, t0) is True
+    assert wm.log_halt(p, log, t0 + timedelta(minutes=30)) is False
+    assert wm.log_halt(p, log, t0 + timedelta(minutes=61)) is True
+    rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2 and rows[0]["halted"] == p.halted and rows[0]["wakes"] == {}
+    assert wm.log_halt(wm.WakePlan(), log, t0) is False
+
+
+def test_stale_wakes_holder_of_card_waiting_past_limit():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    p = wm.stale_plan(ev, DIR, set(), now, verify=ok)
+    assert p.wakes == {"0701": [("W-20261016-001", "approved")]}
+
+
+def test_stale_does_not_rewake_within_rewake_window():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    log = [{"ts": "2026-10-16T13:55:00+03:00", "wakes": {"0701": ["W-20261016-001"]}}]
+    assert wm.stale_plan(ev, DIR, set(), now, log=log, verify=ok).wakes == {}
+
+
+MERGED = {"0702": "0701", "0102": "0301", "0103": "0301", "0204": "0202", "0202": "0101"}
+
+
+def test_merged_holder_wakes_its_receiver_inside_the_channel():
+    dirs = {"0701": "local_a", "0301": "local_c"}
+    p = wm.plan(_routed("0702"), CUR, dirs, set(), verify=ok, channel=wm.TEST_CHANNEL, aliases=MERGED)
+    assert p.wakes == {"0701": [("W-20261016-001", "routed")]}
+    q = wm.plan(_routed("0102"), CUR, dirs, set(), verify=ok, channel=wm.TEST_CHANNEL, aliases=MERGED)
+    assert list(q.wakes) == ["0301"], "الإحالةُ تسبق فحصَ القناة"
+    r = wm.plan(_routed("0103"), CUR, dirs, set(), verify=ok, channel=wm.TEST_CHANNEL, aliases=MERGED)
+    assert list(r.wakes) == ["0301"], "الرقمُ القديمُ للحوكمة يوقظ 0301"
+
+
+def test_without_aliases_merged_holder_is_outside_channel_and_never_woken():
+    dirs = {"0701": "local_a", "0702": "local_b"}
+    p = wm.plan(_routed("0702"), CUR, dirs, set(), verify=ok, channel=wm.TEST_CHANNEL)
+    assert p.wakes == {} and "خارج قناة التجربة" in p.skipped[0][1]
+
+
+def test_alias_chain_resolves_before_directory_lookup():
+    p = wm.plan(_routed("0204"), CUR, {"0101": "local_m"}, set(), verify=ok, aliases=MERGED)
+    assert p.wakes == {"0101": [("W-20261016-001", "routed")]}
+
+
+def test_stale_wakes_receiver_of_merged_holder():
+    from datetime import datetime
+    # 0202 ← 0101 (طلباتُ المالك القديمة)؛ و0301 لم يعد مستعاراً بعد ترقيم 01 بالترتيب (2026-10-21)
+    ev = [created("W-20261016-001", held="0202"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0202")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    assert wm.stale_plan(ev, DIR, set(), now, verify=ok, aliases=MERGED).wakes == {"0101": [("W-20261016-001", "approved")]}
+    assert wm.stale_plan(ev, {"0701": "x"}, set(), now, verify=ok, aliases=MERGED).wakes == {}
+
+
+def test_make_plan_passes_registry_aliases(monkeypatch):
+    import argparse
+
+    seen = {}
+    monkeypatch.setattr(wm.sa, "number_map", lambda tabs=None: {"0702": "0701"})
+    monkeypatch.setattr(wm, "live_sessions", lambda: set())
+    monkeypatch.setattr(wm, "sender_count", lambda s: 0)
+    monkeypatch.setattr(wm, "woken_history", lambda: (frozenset(), 0))
+    monkeypatch.setattr(wm, "read_log", lambda: [])
+    monkeypatch.setattr(wm, "plan", lambda *a, **k: seen.setdefault("plan", k))
+    monkeypatch.setattr(wm, "stale_plan", lambda *a, **k: seen.setdefault("stale", k))
+    wm.make_plan(argparse.Namespace(all=False, stale=False, sender="0701"), [], "", {})
+    wm.make_plan(argparse.Namespace(all=True, stale=True, sender="0701"), [], "", {})
+    assert seen["plan"]["aliases"] == {"0702": "0701"} and seen["plan"]["channel"] == wm.TEST_CHANNEL
+    assert seen["stale"]["aliases"] == {"0702": "0701"} and seen["stale"]["channel"] is None

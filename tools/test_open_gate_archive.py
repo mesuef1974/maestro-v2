@@ -9,6 +9,11 @@ OK = {"ok": True, "blockers": []}
 
 
 class Gate(unittest.TestCase):
+    def test_only_alive_drops_archived_members_and_keeps_all_when_directory_empty(self):
+        m = {"0401 · جدول: أ (W-1)", "0404 · إدارة: ب (W-2)"}
+        self.assertEqual(og.only_alive(m, {"0401"}), {"0401 · جدول: أ (W-1)"})
+        self.assertEqual(og.only_alive(m, set()), m)
+
     def test_blockers_stop_everything(self):
         self.assertEqual(og.decide({"ok": False, "blockers": ["x"]}, [], "green", "P0")["verdict"], "لا تفتح")
 

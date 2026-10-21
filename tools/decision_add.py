@@ -17,7 +17,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,7 +28,7 @@ REVIEW_DAYS = {"تشغيلي": 90, "بصري": 60}
 
 def now_doha() -> datetime:
     """وقتُ الجهاز لحظةَ الاستدعاء — لا يُقدَّر ولا يُمرَّر يدويّاً."""
-    return datetime.now()
+    return datetime.now(timezone(timedelta(hours=3)))
 
 
 def next_id() -> str:
@@ -96,6 +96,12 @@ def cmd_non_automatable(args: argparse.Namespace) -> int:
     return 0
 
 
+def _doha(text: str) -> datetime:
+    """يقرأ طابعاً مخزَّناً؛ غيرُ الواعي بالمنطقة (سجلاتٌ قديمة) يُعدّ توقيتَ الدوحة."""
+    d = datetime.fromisoformat(text)
+    return d if d.tzinfo else d.replace(tzinfo=timezone(timedelta(hours=3)))
+
+
 def cmd_coverage(_: argparse.Namespace) -> int:
     """ملخّصٌ رقميٌّ فقط — بلا نصّ قرارٍ واحد، ليصلح لعرضٍ في مركز قيادة الجودة (0701)."""
     if not META.is_file():
@@ -105,9 +111,9 @@ def cmd_coverage(_: argparse.Namespace) -> int:
     now = now_doha()
     rows = [json.loads(line) for line in META.read_text(encoding="utf-8").splitlines() if line.strip()]
     na = [r for r in rows if r["type"] == "non_automatable"]
-    overdue = [r for r in na if not r.get("reviewed") and datetime.fromisoformat(r["review_due"]) < now]
+    overdue = [r for r in na if not r.get("reviewed") and _doha(r["review_due"]) < now]
     missing_reason = [r for r in na if not r.get("reason", "").strip()]
-    oldest = min((datetime.fromisoformat(r["ts"]) for r in na), default=now)
+    oldest = min((_doha(r["ts"]) for r in na), default=now)
     print(json.dumps({
         "non_automatable_count": len(na),
         "overdue_review_count": len(overdue),

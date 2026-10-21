@@ -92,6 +92,10 @@ class MyStateWarning(unittest.TestCase):
         self.assertIn("W-1", out.splitlines()[0])
         self.assertIn("محجوزةٌ باسمكِ", out)
 
+    def test_held_cards_show_their_state_one_per_line(self):
+        out = my_state.report("0402", self.EVENTS)
+        self.assertIn("W-1 [pushed] P2 م", out)
+
     def test_no_warning_by_default_or_when_present(self):
         self.assertNotIn("تحذير", my_state.report("0402", self.EVENTS))
         self.assertNotIn("تحذير", my_state.report("0402", self.EVENTS, remote_lookup=lambda b: "abc"))

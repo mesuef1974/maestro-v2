@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ENTRY = re.compile(r"^- D-(\d+)م \| ([^|]*)\| (.*)$")
+ENTRY = re.compile(r"^- D-(\d+)م(-[ء-ي])? \| ([^|]*)\| (.*)$")
 STAMP = re.compile(r"(\d{2})-(\d{2})(?:\s+(?:~|≈)?(\d{1,2}):(\d{2}))?")
 
 
@@ -24,12 +24,13 @@ def parse(text: str) -> list[dict]:
         m = ENTRY.match(line)
         if not m:
             continue
-        s = STAMP.search(m.group(2))
+        s = STAMP.search(m.group(3))
         stamp = None
         if s and s.group(3):
             stamp = (int(s.group(1)), int(s.group(2)), int(s.group(3)), int(s.group(4)))
-        body = re.sub(r"[\W_]+", "", m.group(3).split("|")[0])[:140]
-        out.append({"num": int(m.group(1)), "line": n, "stamp": stamp, "key": body})
+        body = re.sub(r"[\W_]+", "", m.group(4).split("|")[0])[:140]
+        out.append({"num": int(m.group(1)), "suffix": m.group(2), "line": n, "stamp": stamp, "key": body,
+                    "event_time": "وقتُ الحدث" in m.group(3)})
     return out
 
 
@@ -42,13 +43,13 @@ def lint(entries: list[dict], since: int = 0) -> list[str]:
         if e["num"] < since:
             prev = e if e["stamp"] else prev
             continue
-        if e["num"] in seen_nums:
+        if e["num"] in seen_nums and not e["suffix"]:
             notes.append(f"D-{e['num']}م: رقمٌ مكرَّر (السطر {seen_nums[e['num']]} و{e['line']})")
-        seen_nums[e["num"]] = e["line"]
+        seen_nums.setdefault(e["num"], e["line"])
         if e["key"] and e["key"] in seen_keys:
             notes.append(f"D-{e['num']}م: نصٌّ مكرَّرٌ لقرارٍ سابق (السطر {seen_keys[e['key']]} و{e['line']})")
         seen_keys.setdefault(e["key"], e["line"])
-        if prev and e["stamp"] and prev["stamp"] and e["stamp"] < prev["stamp"]:
+        if prev and e["stamp"] and prev["stamp"] and e["stamp"] < prev["stamp"] and not e["event_time"]:
             notes.append(f"D-{e['num']}م: طابعُ زمنٍ أسبقُ من D-{prev['num']}م الذي قبلَه (السطر {e['line']})")
         if e["stamp"]:
             prev = e
