@@ -110,6 +110,12 @@ def reduce_state(events: list[dict]) -> dict[str, dict]:
         if ev["kind"] == "state":
             if data.get("head"):
                 item["approved_head"] = data["head"]  # رأسُ الإيداع الذي رآه المالكُ وقتَ الاعتماد (v2.23)
+            if data.get("ready_head"):
+                item["ready_head"] = data["ready_head"]  # الرأسُ المعلَن «جاهزاً» حقلاً مهيكلاً (D-452م) — ليس اعتماداً
+            elif data["state"] in PRE_REVIEW_STATES and "ready_head" in item:
+                item["ready_head"] = ""  # عودةُ العمل تسحب الإعلانَ؛ ويبقى بعد الاعتماد شاهداً على ما أُعلن
+            elif data["state"] == "ready_for_review" and item.get("state") != "ready_for_review":
+                item.pop("ready_head", None)  # دخولٌ إلى «جاهز» بلا حقلٍ مهيكل (ملاحظةٌ وحدَها): تُقرأ الملاحظةُ لا إعلانٌ مسحوب
             if data.get("branch"):
                 item["branch"] = data["branch"]  # الفرعُ الذي تحقّق منه الدفع على البعيد
             if "held_by" in data:
@@ -244,6 +250,8 @@ def add_item(source: str, problem_type: str, problem: str, impact: str, accept: 
 
 #: حالاتٌ تفكّ حجزَ الجلسة للبطاقة تلقائياً
 RELEASING_STATES = {"closed", "published", "deferred"}
+#: حالاتُ ما قبل المعاينة: النقلُ إليها يمحو ready_head (العملُ عاد فلا رأسَ معلَناً جاهزاً)
+PRE_REVIEW_STATES = {"captured", "verified", "routed", "in_progress", "notes"}
 SESSION_RE = re.compile(r"^\d{4}$")
 
 
@@ -922,6 +930,8 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
             extra["branch"] = check_remote_push(branch or items[item_id].get("branch"), push_head, remote_lookup)
     if held_by is not None:
         extra["held_by"] = "" if held_by == "-" else held_by
+    if state == "ready_for_review" and head_now and HEAD_RE.match(head_now):
+        extra["ready_head"] = head_now[:8]  # D-452م: الرأسُ المعلَن حقلٌ مهيكلٌ تقرؤه المضخّة، لا «head» الذي يُقرأ اعتماداً
     append_event("state", item_id, {"state": state, "by": by or "غير مُعلَن", **({"head": head} if head else {}), **extra}, path)
     if note:
         append_event("note", item_id, {"text": check_text("note", note)}, path)
@@ -1268,6 +1278,12 @@ def check_tests_main_chain(approved: str, new: str, repo: str | None = None) -> 
 
 
 WAIVER_BY = {"0501"}
+#: توقيعٌ آليّ (مضخّة التدفّق، قرار المالك 2026-10-20 «الحل الجذري» وD-451م): الأنواعُ التي يثبتها الكودُ من الشجرة وحدَها
+#: (دمجُ main نظيف، إضافاتُ اختبارٍ لا تُضعف تأكيداً، وسلسلتُهما)؛ ما سواها لـ0501.
+PUMP_WAIVER_BY = {"0101"}
+PUMP_WAIVER_KINDS = {"main-merge", "tests-only", "tests-main-chain", "auto"}
+#: ما يجرّبه --kind auto بالترتيب (D-451م): لا صنفَ رابعَ بلا قرار
+AUTO_KINDS = ("main-merge", "tests-only", "tests-main-chain")
 
 #: ملفّاتٌ حاكمةٌ لا يُستثنى تعديلُها بـwaive-head «وثائق» (W-20261003-040، مواصفة 0103): تُحمَّل في كلّ جلسةٍ أو بالمسار فتوجّه السلوك.
 #: تُطابَق بعد التطبيع (`\` ← `/`، حذفُ `./`، حروفٌ صغيرة).
@@ -1356,15 +1372,16 @@ def check_red_fix(item: dict, approved: str, new: str, repo: str | None = None) 
 def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None,
                reviewed_by: str | None = None) -> None:
     """استثناءٌ صريحٌ مسجَّلٌ لا ضمنيّ: تعديلٌ تافهٌ (وثائق أو .md) بعد الاعتماد بتوقيع 0501؛ لا كودَ ولا صلاحيّاتٍ ولا هجرات."""
-    if by not in WAIVER_BY:
-        raise LedgerError(f"الاستثناءُ لـ{sorted(WAIVER_BY)} وحدَها")
+    if by not in WAIVER_BY and not (by in PUMP_WAIVER_BY and kind in PUMP_WAIVER_KINDS):
+        raise LedgerError(f"الاستثناءُ لـ{sorted(WAIVER_BY)} وحدَها (و{sorted(PUMP_WAIVER_BY)} لنوع {sorted(PUMP_WAIVER_KINDS)} فقط)")
     if not HEAD_RE.match(new_head):
         raise LedgerError("--head غيرُ صالح")
     item = reduce_state(load_events(path)).get(item_id)
     if not item or not item.get("approved_head"):
         raise LedgerError("لا اعتمادَ مربوطاً برأسٍ لهذه البطاقة")
-    if kind == "auto":  # (W-20261016-018) يجرّب النوعين المأذونين وحدَهما بفحص الشجرة؛ لا توسيعَ لصنفٍ ثالث
-        for cand, check in (("main-merge", check_main_merge), ("tests-only", check_tests_only)):
+    if kind == "auto":  # (W-20261016-018، D-451م) يجرّب أنواع AUTO_KINDS وحدَها بفحص الشجرة
+        checks = {"main-merge": check_main_merge, "tests-only": check_tests_only, "tests-main-chain": check_tests_main_chain}
+        for cand, check in ((k, checks[k]) for k in AUTO_KINDS):
             try:
                 check(item["approved_head"], new_head, repo)
             except LedgerError:
@@ -1372,7 +1389,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
             kind = cand
             break
         else:
-            raise LedgerError("لا إعفاءَ آليّاً: الفرقُ ليس دمجَ main خالصاً ولا إصلاحَ اختباراتٍ فقط (الباقي يحتاج اعتماداً جديداً بالرأس)")
+            raise LedgerError("لا إعفاءَ آليّاً: الفرقُ ليس دمجَ main خالصاً ولا إصلاحَ اختباراتٍ فقط ولا سلسلتَهما (الباقي يحتاج اعتماداً جديداً بالرأس)")
     if kind == "main-merge":
         check_main_merge(item["approved_head"], new_head, repo)
         reason = f"دمجُ main فقط (تحقّق آليّ) — {reason}"

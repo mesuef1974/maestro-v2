@@ -68,7 +68,7 @@ def line_card_problem(line: str, card: str | None, cutoff: str | None = None) ->
         return None
     codes = set(_CARD_IN_LINE.findall(line))
     if not codes:
-        return "سطرُ الاعتماد لا يحمل رمزَ البطاقة (القالبُ: اعتُمد من المالك على 8500 — <التاريخ> — <رمز البطاقة> — الرأس <sha8>)"
+        return "سطرُ الاعتماد لا يحمل رمزَ البطاقة (القالبُ: اعتُمد من المالك على 8500 — <التاريخ> — الرأس <sha8> — <رمز البطاقة>)"
     if card and card not in codes:
         return f"رمزُ البطاقة في السطر {sorted(codes)} لا يطابق {card}"
     return None
@@ -169,7 +169,9 @@ def source_line() -> str:
     return f"المصدر المقروء: {f} — آخر تعديل {datetime.datetime.fromtimestamp(f.stat().st_mtime):%Y-%m-%d %H:%M}"
 
 
-def confirmations_evidence(key: str, pr_head: str | None = None, enforce: bool | None = None, path: Path | None = None) -> list[tuple[str, str]]:
+def _confirmation_rows(key: str, pr_head: str | None = None, enforce: bool | None = None,
+                       path: Path | None = None) -> list[tuple[str, str, str]]:
+    """(السطرُ الخامّ، الحالة، الذيل) لأسطر owner_confirmations.md الحيّة التي تذكر الهدف — مصدرُ الدليل والحمل معاً."""
     f = path or ROOT / "owner_confirmations.md"
     if not f.exists():
         return []
@@ -195,8 +197,12 @@ def confirmations_evidence(key: str, pr_head: str | None = None, enforce: bool |
                 tail += f" ⚠ منقولٌ عن {hearer} بلا تأكيد «مباشر» منها لهذا الهدف" + ("" if enforce else " (إنذار)")
                 if enforce:
                     st = "unverified"
-            out.append((f"owner_confirmations.md: {ln.strip()[:120]}{tail}", st))
+            out.append((ln, st, tail))
     return out
+
+
+def confirmations_evidence(key: str, pr_head: str | None = None, enforce: bool | None = None, path: Path | None = None) -> list[tuple[str, str]]:
+    return [(f"owner_confirmations.md: {ln.strip()[:120]}{tail}", st) for ln, st, tail in _confirmation_rows(key, pr_head, enforce, path)]
 
 
 #: تفعيلُ الحجب في `card`/`pr`: فارغٌ = مُعطَّل (مرجع 55 ينتظر اعتمادَ المالك، قرار 0101)؛ وبعد الاعتماد يُضبط تاريخاً
@@ -302,14 +308,21 @@ def visual_waived(card: dict, head: str) -> bool:
 
 
 
-def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) -> str | None:
-    """رسالةُ الفشل إن كانت البطاقةُ واجهةً بلا أدلّتها البصريّة السليمةِ للرأس؛ وإلّا `None`."""
-    code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
+def _show(card: str) -> dict | None:
+    """بطاقةُ الدفتر من `ledger.py show`؛ None إن لم تُقرأ أو لم توجد (show يطبع null لبطاقةٍ غيرِ موجودة)."""
+    _code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
     try:
         d, _ = json.JSONDecoder().raw_decode(out.lstrip())
     except ValueError:
         return None
-    if not isinstance(d, dict):  # بطاقةٌ غيرُ موجودة: show يطبع null
+    return d if isinstance(d, dict) else None
+
+
+def visual_problem(card: str, head: str | None, respect_cutoff: bool = False, info: list[str] | None = None) -> str | None:
+    """رسالةُ الفشل إن كانت البطاقةُ واجهةً بلا أدلّتها البصريّة السليمةِ للرأس؛ وإلّا `None`.
+    الأدلّةُ الموروثةُ من سلفٍ (D-451م) تُضاف نصّاً إلى info إن مُرِّرت."""
+    d = _show(card)
+    if d is None:
         return None
     if respect_cutoff and (not VISUAL_GATE_FROM or str(d.get("created", ""))[:10] < VISUAL_GATE_FROM):
         return None
@@ -323,59 +336,156 @@ def visual_problem(card: str, head: str | None, respect_cutoff: bool = False) ->
     import visual_gate
 
     ok, msg = visual_gate.evidence_status(card, head)
-    return None if ok else msg
+    if ok:
+        return None
+    inherited = visual_inherited(card, d, head)
+    if inherited:
+        if info is not None:
+            info.append(inherited)
+        return None
+    return msg
 
 
-def _waiver_checker(txt: str):
-    """اسمُ فاحصِ ledger للإعفاء حسب نصّ ملاحظته؛ None إن لم يكن من الأنواع المحمولة."""
-    if "دمجُ main فقط (تحقّق آليّ)" in txt:
-        return "check_main_merge"
-    if "سلسلةُ إصلاح tests/ ودمج main فقط (تحقّق آليّ" in txt:
-        return "check_tests_main_chain"
+def visual_inherited(card: str, d: dict, head: str) -> str | None:
+    """(D-451م) أدلّةُ سلفٍ مُثبَتةٌ تُحمل إلى الرأس عبر تنازلاتٍ مُعاد تحقّقُها، بشرط ألّا تمسّ حلقةُ اختبارٍ أو سلسلةٍ
+    templates/ ولا static/ (دمجُ main مسموح). يعيد نصَّ البيان («موروثةٌ من الرأس <القديم>») أو None."""
+    import visual_gate
+
+    for base, hops in carried_heads(d, head, ui_safe=True):
+        ok, _msg = visual_gate.evidence_status(card, base)
+        if ok:
+            return f"الأدلّةُ البصريّةُ موروثةٌ من الرأس {base} عبر تنازلاتٍ مُعاد تحقّقُها ({' ، '.join(reversed(hops))}) — D-451م"
     return None
 
 
+#: (D-154م، W-20261017-012، D-451م) تنازلاتُ الرأس المحمولة: يوقّعها 0501 يدوياً أو 0101 (المضخّة)، وكلُّ حلقةٍ يُعاد تحقّقُها.
+WAIVER_SIGNERS = ("0501", "0101")
+_WAIVER_NOTE = re.compile(r"^استثناءُ رأسٍ تافه بتوقيع (" + "|".join(WAIVER_SIGNERS) + r"): ([0-9a-f]{7,40})→([0-9a-f]{7,40}) — ")
+#: بادئةُ نوع التنازل كما تكتبها ledger.waive_head ← (فاحصُ ledger، النوع)
+WAIVER_KINDS = (
+    ("دمجُ main فقط (تحقّق آليّ)", "check_main_merge", "main-merge"),
+    ("سلسلةُ إصلاح tests/ ودمج main فقط (تحقّق آليّ", "check_tests_main_chain", "tests-main-chain"),
+    ("إصلاحُ اختباراتٍ فقط بلا حراسةٍ أمنيّة (تحقّق آليّ)", "check_tests_only", "tests-only"),
+)
+
+
+def _same_head(a: str, b: str) -> bool:
+    """بادئةٌ مشتركةٌ بطول الأقصر (7 أحرف فأكثر): الدفترُ يحمل 7 أو 8."""
+    n = min(len(a), len(b))
+    return n >= 7 and a[:n].lower() == b[:n].lower()
+
+
+def waiver_hops(card: dict) -> list[tuple[str, str, str, str]]:
+    """حلقاتُ التنازل المحمولة في دفتر البطاقة نفسها: (القديم، الجديد، فاحصُ ledger، النوع)."""
+    hops = []
+    for n in card.get("notes", []):
+        txt = _AUTHOR_PREFIX.sub("", str(n.get("note", n.get("text", ""))), count=1)
+        m = _WAIVER_NOTE.match(txt)
+        if not m:
+            continue
+        rest = txt[m.end():]
+        kind = next(((checker, k) for mark, checker, k in WAIVER_KINDS if rest.startswith(mark)), None)
+        if kind:
+            hops.append((m.group(2)[:8], m.group(3)[:8], *kind))
+    return hops
+
+
+def carried_heads(card: dict, head: str, depth: int = 6, ui_safe: bool = False):
+    """يمشي من الرأس رجوعاً عبر تنازلاتٍ مسجَّلة يُعاد تحقّقُ كلٍّ منها بفاحص ledger المطابق لنوعه (tests-only منها)،
+    فيُنتج (الرأسُ السابق، الحلقاتُ حتى الآن). أوّلُ رأسٍ بلا تنازلٍ أو بتحقّقٍ فاشل يوقف المشي (حتى depth).
+    ui_safe (للأدلّة البصريّة): حلقةُ tests-only أو السلسلة لا تمسّ templates/ ولا static/؛ ودمجُ main مسموح."""
+    import ledger  # noqa: PLC0415 — الوحدةُ في tools/ ومُضافةٌ إلى sys.path أعلاه
+
+    hops = waiver_hops(card)
+    cur, done = head[:8], []
+    for _ in range(depth):
+        step = next((h for h in hops if _same_head(h[1], cur)), None)
+        if step is None:
+            return
+        base, _new, checker, kind = step
+        try:
+            getattr(ledger, checker)(base, cur, REPO_DIR)
+        except Exception:  # noqa: BLE001 — أيُّ فشلٍ في إعادة التحقّق يقطع الحمل
+            return
+        if ui_safe and kind != "main-merge":
+            paths = _diff_paths(base, cur)
+            if paths is None or any(p.startswith(WAIVER_UI_PREFIXES) for p in paths):
+                return
+        done.append(f"{base}→{cur}")
+        yield base, list(done)
+        cur = base
+
+
 def waiver_carry(card: str | None, pr_head: str | None, target: str, depth: int = 6) -> list[tuple[str, str]]:
-    """D-154م وقرار المالك 2026-10-17 (W-20261017-012): يحمل اعتمادَ المالك المباشر على رأسٍ معتمَدٍ سابقٍ إلى رأسٍ لاحقٍ
-    بتنازلٍ من 0501 في دفتر البطاقة (`waive-head --kind main-merge` أو `tests-main-chain`) على الرأس نفسه، مع إعادة تحقّقٍ
-    آليّةٍ من الفرق بفاحص ledger المطابق؛ وتُتتبَّع حلقاتُ التنازلات المتتالية (حتى depth) إلى رأسٍ له اعتمادٌ مباشر.
+    """D-154م وقرار المالك 2026-10-17 (W-20261017-012) وD-451م: يحمل اعتمادَ المالك المباشر على رأسٍ سابقٍ إلى رأسٍ لاحقٍ
+    بتنازلٍ من 0501 أو 0101 في دفتر البطاقة (`waive-head --kind main-merge|tests-only|tests-main-chain`) على الرأس نفسه،
+    مع إعادة تحقّقٍ آليّةٍ لكلّ حلقةٍ بفاحص ledger المطابق؛ وتُتتبَّع الحلقاتُ المتتالية (حتى depth) إلى رأسٍ له اعتمادٌ مباشر.
     لا يثبت شيئاً وحده؛ وأيُّ فشلٍ يُرجع قائمةً فارغة فيبقى الحكمُ كما كان."""
     if not card or not pr_head:
         return []
-    code, out = run([sys.executable, str(ROOT / "tools" / "ledger.py"), "show", card])
-    try:
-        d, _ = json.JSONDecoder().raw_decode(out.lstrip())
-    except ValueError:
+    d = _show(card)
+    if d is None:
         return []
-    if not isinstance(d, dict):  # بطاقةٌ غيرُ موجودة: show يطبع null
-        return []
-    waivers = []
-    for n in d.get("notes", []):
-        txt = re.sub(r"^\(\d{4}\)\s*", "", str(n.get("note", n.get("text", ""))))
-        if not txt.startswith("استثناءُ رأسٍ تافه بتوقيع 0501:"):
-            continue
-        m = re.search(r"([0-9a-f]{8})→([0-9a-f]{8})", txt)
-        checker = _waiver_checker(txt)
-        if m and checker:
-            waivers.append((m.group(1), m.group(2), checker))
-    import ledger  # noqa: PLC0415 — الوحدةُ في tools/ ومُضافةٌ إلى sys.path أعلاه
-
-    head, hops = pr_head[:8], []
-    for _ in range(depth):
-        step = next((w for w in waivers if w[1] == head), None)
-        if step is None:
-            return []
-        base, _new, checker = step
-        try:
-            getattr(ledger, checker)(base, head, REPO_DIR)
-        except Exception:
-            return []
-        hops.append(f"{base}→{head}")
+    for base, hops in carried_heads(d, pr_head, depth):
         direct = [(t, st) for t, st in confirmations_evidence(target, base) if st == "ok"]
         if direct:
-            return [(f"{t} ← محمولٌ بتنازلات ({' ، '.join(reversed(hops))}) تحقّقٌ آليّ (D-154م/12)", "ok") for t, _st in direct]
-        head = base
+            return [(f"{t} ← محمولٌ بتنازلات ({' ، '.join(reversed(hops))}) تحقّقٌ آليّ (D-154م/12، D-451م)", "ok") for t, _st in direct]
     return []
+
+
+#: (D-443م) قولُ المالك الدائم بتكليف 0101 باعتماد الرؤوس بعد مراجعة الفرق؛ أسطرُه تفويضٌ لا قولٌ مباشرٌ على الرأس.
+D443_QUOTE = "اعتماد الراس عندك الا المستثنى يعرض على المالك فقط"
+#: علاماتُ التفويض في نصّ القول (السطرُ الذي فيها لا يُكتب له «اعتُمد من المالك مباشرةً»)؛ وذكرُ D-443م في السطر علامةٌ كذلك.
+DELEGATION_QUOTES = (D443_QUOTE, "اعتماد الراس عندك", "دائم يغني")
+SECURITY_QUOTE = "أقرّ أمنياً"
+
+
+def row_quote(ln: str) -> str:
+    """نصُّ القول (العمودُ قبل الأخير) من سطر جدول owner_confirmations.md، بلا «» ولا تطويل."""
+    cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+    if len(cells) < 2:
+        return ""
+    return re.sub(r"\s+", " ", cells[-2].replace("«", "").replace("»", "").replace("ـ", "")).strip()
+
+
+def row_delegated(ln: str) -> bool:
+    return any(q in row_quote(ln) for q in DELEGATION_QUOTES) or "D-443م" in ln
+
+
+def _approving_rows(card: str, head: str) -> list[str]:
+    """أسطرُ المالك الحيّة (قولاً مباشراً أو تفويضاً مسجَّلاً) لهذه البطاقة على هذا الرأس بالضبط، بلا منقولٍ غيرِ مؤكَّد."""
+    return [ln for ln, st, tail in _confirmation_rows(card, head) if st == "ok" and "منقولٌ عن" not in tail]
+
+
+def approval_base(card: str, head: str) -> tuple[str, list[str]] | None:
+    """(D-450م) الرأسُ الذي عليه قولُ المالك أو تفويضُه لهذه البطاقة — الرأسُ نفسُه أو سلفٌ يُحمل منه بتنازلاتٍ مُعاد
+    تحقّقُها — مع أسطره الخامّ؛ None إن لا أصل."""
+    rows = _approving_rows(card, head)
+    if rows:
+        return head[:8], rows
+    d = _show(card)
+    for base, _hops in carried_heads(d, head) if d else ():
+        rows = _approving_rows(card, base)
+        if rows:
+            return base, rows
+    return None
+
+
+def owner_direct(rows: list[str]) -> bool:
+    """قولُ المالك المباشر في سطرٍ واحدٍ على الأقلّ (لا تفويضاً)."""
+    return any(not row_delegated(ln) for ln in rows)
+
+
+def security_approved(card: str, head: str) -> str | None:
+    """(D-451م) الرأسُ — هو أو سلفٌ يُحمل منه بتنازلاتٍ مُعاد تحقّقُها — الذي عليه «أقرّ أمنياً» من المالك لهذه البطاقة؛ وإلا None."""
+    heads = [head[:8]]
+    d = _show(card)
+    if d:
+        heads += [base for base, _hops in carried_heads(d, head)]
+    for h in heads:
+        if any(SECURITY_QUOTE in row_quote(ln) for ln in _approving_rows(card, h)):
+            return h
+    return None
 
 
 def main_merge_carry(card: str | None, pr_head: str | None, target: str) -> list[tuple[str, str]]:
@@ -433,9 +543,12 @@ def main() -> int:
         problem = ready_problem(a.repo)
         print(("✘ " + problem) if problem else "✔ إيصالُ prepush للرأس نفسه وحداثةُ main بلا تصادم — تُقبل الثلاثيّة")
         return 4 if problem else 0
+    info: list[str] = []
     if a.kind == "visual":
-        problem = visual_problem(a.target, a.head)
+        problem = visual_problem(a.target, a.head, info=info)
         print(("✘ " + problem) if problem else "✔ لا أدلةَ بصريّةً مطلوبة أو هي سليمة للرأس")
+        for t in info:
+            print(f"  - {t}")
         return 4 if problem else 0
     if a.kind == "card":
         ev += card_evidence(a.target, pr_head)
@@ -460,13 +573,15 @@ def main() -> int:
     stale = [e for e in ev if e[1] == "stale"]
     if good:
         card_key = a.target if a.kind == "card" else (card if a.kind == "pr" and card else None)
-        problem = (visual_problem(card_key, pr_head, respect_cutoff=True) or card_identity_problem(card_key, pr_head)) if card_key else None
+        problem = (visual_problem(card_key, pr_head, respect_cutoff=True, info=info) or card_identity_problem(card_key, pr_head)) if card_key else None
         if problem:
             print("✘ " + problem)
             return 4
         print("✔ الاعتمادُ ثابتٌ من المصدر — لا تسألي المالكَ:")
         for t, st in good:
             print(f"  - {t}" + ("  ⚠ بلا رأسٍ (مقبولٌ حتى 2026-10-09 ثمّ يُرفض)" if st == "legacy" else ""))
+        for t in info:
+            print(f"  - {t}")
         if stale:
             print("  (تجاهلتُ اعتماداتٍ على رأسٍ مختلف:)")
             for t, _ in stale:

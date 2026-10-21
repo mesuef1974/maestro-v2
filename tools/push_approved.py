@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -24,6 +25,8 @@ sys.path.insert(0, str(HERE))
 import ledger  # noqa: E402
 
 BRANCH_RE = re.compile(r"^claude/[A-Za-z0-9._/-]+$")
+#: (D-450م) فروعُ الدفع الآليّ من المضخّة: claude/* أو w* (فروعُ البطاقات)؛ لا main ولا غيره
+PUMP_BRANCH_RE = re.compile(r"^(?:claude/|w)[A-Za-z0-9._/-]+$")
 
 
 class PushRefused(RuntimeError):
@@ -53,10 +56,28 @@ def approval_ok(card: str, head: str) -> bool:
     return p.returncode == 0
 
 
-def guard(card: str, branch: str, repo: str, items: dict, git=_git, approved=approval_ok) -> str:
-    """يعيد رأسَ الشجرة الكامل إن اجتاز كلُّ الحرّاس، وإلا يرفع PushRefused بالسبب."""
-    if not BRANCH_RE.match(branch) or ".." in branch:
-        raise PushRefused(f"الفرعُ «{branch}» ليس claude/<اسم>: تدفع هذه الأداةُ فروعَ البطاقات فقط (لا main)")
+def receipt_problem(repo: str, head: str, git=_git) -> str | None:
+    """(D-450م) إيصالُ prepush الناجح للرأس نفسه في مجلّد git للشجرة (ledger.RECEIPT_NAME)؛ None إن سليم وإلا السبب."""
+    rc, gitdir = git(repo, "rev-parse", "--absolute-git-dir")
+    receipt = None
+    if not rc and gitdir.strip():
+        f = Path(gitdir.strip()) / ledger.RECEIPT_NAME
+        try:
+            receipt = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
+        except (OSError, ValueError):
+            receipt = None
+    if not isinstance(receipt, dict) or receipt.get("ok") is not True or not same_head(str(receipt.get("head") or ""), head):
+        return f"لا إيصالَ prepush ناجحاً للرأس {head[:8]} في الشجرة: make prepush على هذا الرأس قبل الدفع الآليّ"
+    return None
+
+
+def guard(card: str, branch: str, repo: str, items: dict, git=_git, approved=approval_ok,
+          branch_re: re.Pattern = BRANCH_RE, require_receipt: bool = False) -> str:
+    """يعيد رأسَ الشجرة الكامل إن اجتاز كلُّ الحرّاس، وإلا يرفع PushRefused بالسبب.
+    require_receipt (المضخّة، D-450م): إيصالُ prepush الناجح للرأس نفسه شرطٌ إضافيّ."""
+    if not branch_re.match(branch) or ".." in branch:
+        label = "claude/<اسم>" if branch_re is BRANCH_RE else branch_re.pattern
+        raise PushRefused(f"الفرعُ «{branch}» ليس {label}: تدفع هذه الأداةُ فروعَ البطاقات فقط (لا main)")
     item = items.get(card)
     if not item:
         raise PushRefused(f"بطاقةٌ غيرُ موجودة: {card}")
@@ -74,14 +95,19 @@ def guard(card: str, branch: str, repo: str, items: dict, git=_git, approved=app
     rc, dirty = git(repo, "status", "--porcelain", "--untracked-files=no")
     if rc or dirty.strip():
         raise PushRefused("في الشجرة تعديلٌ غيرُ مودَع لملفٍّ متتبَّع: الملفّاتُ تغيّرت بعد الاعتماد")
+    if require_receipt:
+        problem = receipt_problem(repo, head, git)
+        if problem:
+            raise PushRefused(problem)
     if not approved(card, want):
         raise PushRefused("approval_check لم يخرج بـ✔ على هذا الرأس")
     return head
 
 
-def push(card: str, branch: str, repo: str, apply: bool = False, path=None, git=_git, approved=approval_ok, by: str | None = None) -> str:
+def push(card: str, branch: str, repo: str, apply: bool = False, path=None, git=_git, approved=approval_ok, by: str | None = None,
+         branch_re: re.Pattern = BRANCH_RE, require_receipt: bool = False) -> str:
     items = ledger.reduce_state(ledger.load_events(path))
-    head = guard(card, branch, repo, items, git, approved)
+    head = guard(card, branch, repo, items, git, approved, branch_re, require_receipt)
     if not apply:
         return f"عرض: يُدفع {head[:8]} إلى origin/{branch} (HEAD:refs/heads/{branch}) ثمّ يُدوَّن pushed — أضف --apply"
     rc, out = git(repo, "push", "origin", f"HEAD:refs/heads/{branch}")

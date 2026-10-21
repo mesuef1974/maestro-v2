@@ -126,6 +126,51 @@ def test_guard_accepts_seven_char_ledger_head_and_passes_it_unchanged_to_approva
     assert seen == ["aaaaaaa"], "approval_check يتلقّى الرأس كما سُجّل في الدفتر لا مقتطعاً"
 
 
+def test_pump_branches_are_claude_or_w_and_never_main():
+    for b in ("claude/x", "w20261020-001-x", "w0702-chart"):
+        assert pa.PUMP_BRANCH_RE.match(b), b
+    for b in ("main", "master", "feature/x", "claude/", "W/x"):
+        assert not pa.PUMP_BRANCH_RE.match(b), b
+    assert pa.guard("W-1", "w0702-chart", ".", ITEMS, fake_git(), ok, branch_re=pa.PUMP_BRANCH_RE) == HEAD
+    try:
+        pa.guard("W-1", "w0702-chart", ".", ITEMS, fake_git(), ok)
+    except pa.PushRefused:
+        pass
+    else:
+        raise AssertionError("الافتراضُ claude/* وحدَه")
+
+
+def receipt_git(gitdir):
+    base = fake_git()
+
+    def git(repo, *args):
+        if args[:2] == ("rev-parse", "--absolute-git-dir"):
+            return 0, f"{gitdir}\n"
+        return base(repo, *args)
+
+    return git
+
+
+def test_the_receipt_must_be_ok_and_for_the_same_head(tmp_path):
+    import json
+
+    f = tmp_path / pa.ledger.RECEIPT_NAME
+    assert "prepush" in pa.receipt_problem(".", HEAD, receipt_git(tmp_path))
+    for bad in ({"head": "bbbbbbbb", "ok": True}, {"head": "aaaaaaaa", "ok": False}):
+        f.write_text(json.dumps(bad), encoding="utf-8")
+        assert pa.receipt_problem(".", HEAD, receipt_git(tmp_path))
+    f.write_text(json.dumps({"head": "aaaaaaaa", "ok": True}), encoding="utf-8")
+    assert pa.receipt_problem(".", HEAD, receipt_git(tmp_path)) is None
+    assert pa.guard("W-1", "claude/x", ".", ITEMS, receipt_git(tmp_path), ok, require_receipt=True) == HEAD
+    f.unlink()
+    try:
+        pa.guard("W-1", "claude/x", ".", ITEMS, receipt_git(tmp_path), ok, require_receipt=True)
+    except pa.PushRefused as exc:
+        assert "prepush" in str(exc)
+    else:
+        raise AssertionError("بلا إيصالٍ لا دفع")
+
+
 def test_guard_still_rejects_a_head_that_differs_within_the_shared_prefix():
     seven = {"W-1": {"state": "approved", "approved_head": "aaaaaab"}}
     try:
