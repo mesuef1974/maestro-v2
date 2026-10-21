@@ -36,8 +36,9 @@ allowed-tools: Bash(python C:/Users/mesue/delivery_manager_work/tools/ledger.py:
    ```bash
    python -X utf8 C:/Users/mesue/delivery_manager_work/tools/ledger.py add --source owner --type ui \
      --problem "…" --impact "…" --accept "…" --files templates/x.html \
-     --start 2026-09-29T08:00 --priority P2          # و--urgent مع P0 وحدها
+     --start 2026-09-29T08:00 --priority P2 \n     --origin owner-order --owner-order "«نصُّ أمره الحرفيّ بإنشائها»"   # و--urgent مع P0 وحدها
    ```
+   **الأصلُ إلزاميّ (D-422م):** `owner-order` أو `discussion` يلزمهما `--owner-order` بنصٍّ حرفيٍّ موجودٍ في owner_confirmations.md خلال 7 أيام؛ و`defect` يلزمه `--parent` أو `--evidence مسار:سطر`؛ و`automated` لـkpi_guard وalert وrepo_keeper. نقاشٌ أو عصفٌ أو حكمٌ استشاريّ أو شكوى يرويها المالك **لا تصير بطاقةً** بلا أمره الصريح (D-421م).
    المخرجُ رقمُ البطاقة `W-YYYYMMDD-NNN`. `-X utf8` يجعل رسالةَ الرفض (تبدأ بـ«رُفض:») مقروءةً في Git Bash بدل رموزٍ مشوّهة.
 8. **سلِّم وأبلغ:** رأسُ الطابور إلى 0301 بالترتيب (الأولويّة ← زمنُ البدء ← WSJF)؛ P0 إلى المايسترو فوراً؛ وسطرٌ واحدٌ للمالك أو المايسترو: الرقم، الأثر، المصدر، التالي («إلى 0301 للتصنيف»).
 9. **يوميّاً:** المتأخّر = بطاقةٌ حالتُها `captured`/`verified`/`routed` وزمنُ بدئها مضى. يكشفه `python -X utf8 …/watch_once.py` (تنبيهُ `late_start`؛ وضعٌ حيٌّ يقرأ gh) — أرسل القائمةَ إلى المايسترو.
