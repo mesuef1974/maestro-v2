@@ -1,6 +1,10 @@
 """اختباراتُ مضخّة التدفّق:  python -m pytest test_flow_pump.py"""
 
+import os
+import tempfile
+import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -87,7 +91,10 @@ class Main(unittest.TestCase):
             return []
 
         fake_states = {"W-1": _item(), "W-2": _item()}
+        tmp = Path(tempfile.mkdtemp())
         with (
+            mock.patch.object(fp, "LOCK", tmp / "p.lock"),
+            mock.patch.object(fp, "LOG", tmp / "p.log"),
             mock.patch.object(fp.ledger, "load_events", return_value=[]),
             mock.patch.object(fp.ledger, "reduce_state", return_value=fake_states),
             mock.patch.object(fp, "approve_pass", side_effect=fake_pass),
@@ -98,6 +105,113 @@ class Main(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(seen["approve"], ["W-2"])
         self.assertTrue(plan.called)
+
+
+class HeadPattern(unittest.TestCase):
+    def test_the_three_phrasings_are_read(self):
+        for phrase in ("بالرأس", "للرأس", "الرأس"):
+            self.assertEqual(fp.ready_head(_item("ready_for_review", f"{phrase} deadbeef99")), "deadbeef")
+
+    def test_a_full_forty_hex_head_is_cut_to_eight(self):
+        self.assertEqual(fp.ready_head(_item("ready_for_review", "الرأس " + "a1" * 20)), "a1a1a1a1")
+
+
+class Lock(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.patches = [
+            mock.patch.object(fp, "LOCK", self.tmp / "p.lock"),
+            mock.patch.object(fp, "LOG", self.tmp / "p.log"),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_a_free_lock_is_taken_once(self):
+        self.assertTrue(fp._lock())
+        self.assertFalse(fp._lock())
+
+    def test_a_stale_lock_is_treated_as_dead_and_replaced(self):
+        fp.LOCK.write_text("")
+        old = time.time() - fp.STALE_LOCK_S - 5
+        os.utime(fp.LOCK, (old, old))
+        self.assertTrue(fp._lock())
+
+    def test_a_fresh_lock_makes_the_cycle_skip_without_touching_the_ledger(self):
+        fp.LOCK.write_text("")
+        with mock.patch.object(fp, "_run") as run:
+            self.assertEqual(fp.main([]), 0)
+        run.assert_not_called()
+        self.assertTrue(fp.LOCK.exists())  # قفلُ غيرِها لا يُحذف
+
+    def test_the_lock_is_released_even_if_the_cycle_raises(self):
+        with mock.patch.object(fp, "_run", side_effect=RuntimeError("x")):
+            with self.assertRaises(RuntimeError):
+                fp.main([])
+        self.assertFalse(fp.LOCK.exists())
+
+
+class PublishStage(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        for name in ("LOCK", "LOG"):
+            p = mock.patch.object(fp, name, tmp / name)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _run(self, argv):
+        real_move = fp.ledger.move
+        seen = {}
+
+        def cycle(apply, n):
+            fp.ledger.move("W-1", "published", note="x")
+            return 0
+
+        with (
+            mock.patch.object(fp.ledger, "load_events", return_value=[]),
+            mock.patch.object(fp.ledger, "reduce_state", return_value={}),
+            mock.patch.object(fp.ledger, "move", side_effect=lambda *a, **k: seen.update(k)) as mv,
+            mock.patch.object(fp.ledger_sync, "cycle", side_effect=cycle),
+        ):
+            code = fp.main(argv)
+        self.assertIsNotNone(real_move)
+        return code, seen, mv
+
+    def test_every_ledger_sync_move_carries_the_pump_identity(self):
+        code, seen, _ = self._run(["--apply"])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["by"], fp.SENDER)
+
+    def test_an_explicit_by_is_not_overridden(self):
+        called = {}
+        with (
+            mock.patch.object(fp.ledger, "load_events", return_value=[]),
+            mock.patch.object(fp.ledger, "reduce_state", return_value={}),
+            mock.patch.object(fp.ledger, "move", side_effect=lambda *a, **k: called.update(k)),
+            mock.patch.object(
+                fp.ledger_sync, "cycle", side_effect=lambda apply, n: fp.ledger.move("W-1", "merged", by="0601") and 0
+            ),
+        ):
+            fp.main(["--apply"])
+        self.assertEqual(called["by"], "0601")
+
+    def test_a_dry_run_writes_no_log_line(self):
+        with (
+            mock.patch.object(fp.ledger, "load_events", return_value=[]),
+            mock.patch.object(fp.ledger, "reduce_state", return_value={}),
+            mock.patch.object(fp.ledger_sync, "cycle", return_value=0),
+        ):
+            fp.main([])
+        self.assertFalse(fp.LOG.exists())
+
+    def test_an_applied_cycle_appends_one_log_line_with_the_result(self):
+        with (
+            mock.patch.object(fp.ledger, "load_events", return_value=[]),
+            mock.patch.object(fp.ledger, "reduce_state", return_value={}),
+            mock.patch.object(fp.ledger_sync, "cycle", return_value=0),
+        ):
+            fp.main(["--apply"])
+        self.assertIn("rc=0", fp.LOG.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
