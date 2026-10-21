@@ -77,11 +77,18 @@ def test_parenthesis_with_a_negation_is_not_ignored():
     assert not ac.quote_refusal("نعم (ردّاً على: هل لا تدمج؟)")
 
 
-#: السطرُ الوحيد الحيّ الذي يُعدّ رفضاً: اعتمادٌ مشروطٌ «…ولا دمج قبل W-020» (2026-10-02)؛ الإغلاقُ عند الشكّ مقصود.
-KNOWN_CONDITIONAL = "bf4f8c7e ولا دمج قبل W-020"
+#: أقوالٌ حقيقيةٌ من owner_confirmations.md (لا يُقرأ الملفُّ الحيُّ: يتغيّر بقول المالك ويختلف بين الأشجار)
+REAL_APPROVALS = (
+    "لا تؤجل بلغ خفيفة (ردّاً على: W-047 على الرأس 04fafe7d هل تعتمد أم تؤجّل؟)",
+    "لا تعديل الاسنادات في الانتاج نجح التوليد هيا ادفع اعتمد",
+    "نعم أوقف الشرط وبلغ 0601 و0101",
+    "اعتماد للكل من المالك هيا",
+)
 
 
-def test_real_confirmations_file_has_no_false_refusal():
-    rows = [ln for ln in (ac.ROOT / "owner_confirmations.md").read_text(encoding="utf-8").splitlines() if ln.startswith("|")]
-    flagged = [ln for ln in rows if ac.quote_refusal(ac.row_quote(ln))]
-    assert all(KNOWN_CONDITIONAL in ln for ln in flagged)
+def test_real_owner_approvals_are_not_refused():
+    assert [q for q in REAL_APPROVALS if ac.quote_refusal(q)] == []
+
+
+def test_conditional_approval_with_no_merge_is_refused_on_purpose():
+    assert ac.quote_refusal("اعتمده بالرأس bf4f8c7e ولا دمج قبل W-020 N1-N3")
