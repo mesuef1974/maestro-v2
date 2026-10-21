@@ -54,6 +54,24 @@ class ReadyMark(unittest.TestCase):
         self.assertIn("http://localhost:8500/x/", it["notes"][-1]["text"])
         # لا اعتمادَ ينتحله الرأس: حقلُ approved_head يُكتب للاعتماد وحدَه
         self.assertNotIn("approved_head", it)
+        # (D-452م) والرأسُ المعلَن حقلٌ مهيكلٌ تقرؤه المضخّة
+        self.assertEqual(it["ready_head"], self.head)
+
+    def test_the_structured_ready_head_is_withdrawn_when_work_returns_and_kept_after_approval(self):
+        self.mark()
+        ledger.append_event("state", self.card, {"state": "in_progress", "by": "0702"}, self.ledger)
+        it = self.item()
+        self.assertEqual(it["ready_head"], "")
+        self.assertIsNone(rm.declared_head(it), "الحقلُ الفارغ سحبٌ للإعلان لا رجوعٌ إلى ملاحظةٍ قديمة")
+        # دخولٌ يدويٌّ إلى «جاهز» بملاحظةٍ وحدَها (بلا الحقل): تُقرأ الملاحظةُ الجديدة
+        ledger.append_event("state", self.card, {"state": "ready_for_review", "by": "0702"}, self.ledger)
+        ledger.append_event("note", self.card, {"text": f"{rm.MARK}deadbeef"}, self.ledger)
+        self.assertEqual(rm.declared_head(self.item()), "deadbeef")
+        ledger.append_event("state", self.card, {"state": "in_progress", "by": "0702"}, self.ledger)
+        self.mark()
+        ledger.append_event("state", self.card, {"state": "approved", "by": "0501", "head": self.head}, self.ledger)
+        it = self.item()
+        self.assertEqual((it["ready_head"], it["approved_head"]), (self.head, self.head))
 
     def test_repeating_with_the_same_head_is_a_no_op(self):
         self.mark()

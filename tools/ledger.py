@@ -110,6 +110,12 @@ def reduce_state(events: list[dict]) -> dict[str, dict]:
         if ev["kind"] == "state":
             if data.get("head"):
                 item["approved_head"] = data["head"]  # رأسُ الإيداع الذي رآه المالكُ وقتَ الاعتماد (v2.23)
+            if data.get("ready_head"):
+                item["ready_head"] = data["ready_head"]  # الرأسُ المعلَن «جاهزاً» حقلاً مهيكلاً (D-452م) — ليس اعتماداً
+            elif data["state"] in PRE_REVIEW_STATES and "ready_head" in item:
+                item["ready_head"] = ""  # عودةُ العمل تسحب الإعلانَ؛ ويبقى بعد الاعتماد شاهداً على ما أُعلن
+            elif data["state"] == "ready_for_review" and item.get("state") != "ready_for_review":
+                item.pop("ready_head", None)  # دخولٌ إلى «جاهز» بلا حقلٍ مهيكل (ملاحظةٌ وحدَها): تُقرأ الملاحظةُ لا إعلانٌ مسحوب
             if data.get("branch"):
                 item["branch"] = data["branch"]  # الفرعُ الذي تحقّق منه الدفع على البعيد
             if "held_by" in data:
@@ -244,6 +250,8 @@ def add_item(source: str, problem_type: str, problem: str, impact: str, accept: 
 
 #: حالاتٌ تفكّ حجزَ الجلسة للبطاقة تلقائياً
 RELEASING_STATES = {"closed", "published", "deferred"}
+#: حالاتُ ما قبل المعاينة: النقلُ إليها يمحو ready_head (العملُ عاد فلا رأسَ معلَناً جاهزاً)
+PRE_REVIEW_STATES = {"captured", "verified", "routed", "in_progress", "notes"}
 SESSION_RE = re.compile(r"^\d{4}$")
 
 
@@ -482,6 +490,80 @@ def set_spec(item_id: str, tier: str | None = None, ref: str | None = None, role
             raise LedgerError(f"لا خفضَ للمستوى: البطاقةُ تستوجب full ({'، '.join(why)})")
     append_event("update", item_id, data, path)
     return data
+
+
+#: ختمُ التحقق من مصدر الحقيقة (W-20261020-003، المرحلة د من خطة تجويد الفلو): ما تدّعيه البطاقة يُقاس على المنصّة قبل العمل.
+#: بوّابةُ ظلٍّ: إنذارٌ فقط بلا حجب، وتُفعَّل بعد أسبوع قياس بقرار المالك.
+SOT_VERDICTS = ("مطابق", "مخالف", "متقادم")
+SOT_MAX_AGE_DAYS = 7
+SOT_EVIDENCE_MAX = 10
+SOT_MARK = "إنذارُ ختم المصدر"
+
+
+def parse_evidence(raw: str) -> dict:
+    """دليلٌ بصيغة «الأمر => النتيجة» (أداتا git وgh وground_truth والدفتر؛ قراءةٌ فقط)."""
+    if "=>" not in raw:
+        raise LedgerError('الدليلُ بصيغة "الأمر => النتيجة"')
+    cmd, res = (x.strip() for x in raw.split("=>", 1))
+    if not cmd or not res:
+        raise LedgerError('الدليلُ بصيغة "الأمر => النتيجة" (كلاهما إلزاميّ)')
+    return {"cmd": check_text("evidence_cmd", cmd), "result": check_text("evidence_result", res)}
+
+
+def set_sot_stamp(item_id: str, verdict: str, head: str, evidence: list[str], by: str, correction: str | None = None,
+                  remeasure: bool = False, path=None) -> dict:
+    """يُلحق ختمَ التحقق (أو إعادةَ القياس قبل «جاهزٌ للمعاينة» بـremeasure) حدثَ update. «مخالف» يستلزم نصَّ التصحيح."""
+    item = reduce_state(load_events(path)).get(item_id)
+    if not item:
+        raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
+    check_session(by or "")
+    if verdict not in SOT_VERDICTS:
+        raise LedgerError(f"--verdict واحدٌ من {'، '.join(SOT_VERDICTS)}")
+    if not head or not re.fullmatch(r"[0-9a-f]{7,40}", head):
+        raise LedgerError("--head إلزاميّ: الرأسُ أو النسخةُ المقيسُ عليها (sha، 7 أحرفٍ فأكثر)")
+    if not evidence or len(evidence) > SOT_EVIDENCE_MAX:
+        raise LedgerError(f"الأدلةُ إلزاميّة (1..{SOT_EVIDENCE_MAX})")
+    if verdict == "مخالف" and not correction:
+        raise LedgerError('الحكمُ «مخالف» يستلزم --correction: التصحيحُ (رقمٌ أو نطاقٌ أو إغلاق) قبل العمل')
+    stamp = {"at": now_doha(), "by": by, "head": head[:40], "verdict": verdict, "evidence": [parse_evidence(e) for e in evidence]}
+    if correction:
+        stamp["correction"] = check_text("correction", correction)
+    append_event("update", item_id, {"sot_remeasure" if remeasure else "sot_stamp": stamp}, path)
+    if verdict == "مخالف":
+        append_event("note", item_id, {"text": check_text("note", f"({by}) ختمُ المصدر مخالف — التصحيح: {correction}")}, path)
+    return stamp
+
+
+def check_sot_gate(item: dict, target: str, head_now: str | None = None, now: datetime | None = None) -> str | None:
+    """بوّابةُ الظلّ: عند in_progress لا ختمَ حديثًا ← إنذار (نصٌّ يُعاد ويُدوَّن)؛ وعند ready_for_review لا إعادةَ قياس ← إنذار. لا رفضَ أبدًا."""
+    if target not in ("in_progress", "ready_for_review"):
+        return None
+    stamp = item.get("sot_stamp")
+    problems: list[str] = []
+    if target == "in_progress":
+        if not stamp:
+            problems.append("لا ختمَ تحقّقٍ من مصدر الحقيقة")
+        else:
+            try:
+                at = datetime.fromisoformat(stamp["at"])
+                if at.tzinfo is None:  # توقيتُ الدوحة افتراضًا لختمٍ بلا منطقة
+                    at = at.replace(tzinfo=timezone(timedelta(hours=3)))
+                age = (now or datetime.now(timezone(timedelta(hours=3)))) - at
+            except (KeyError, ValueError, TypeError):
+                age = None
+            if age is None or age > timedelta(days=SOT_MAX_AGE_DAYS):
+                problems.append(f"الختمُ أقدمُ من {SOT_MAX_AGE_DAYS} أيام أو بلا تاريخ")
+            if stamp.get("verdict") == "متقادم":
+                problems.append("حكمُ الختم «متقادم»")
+            if stamp.get("verdict") == "مخالف" and not stamp.get("correction"):
+                problems.append("حكمُ الختم «مخالف» بلا تصحيح")
+            if head_now and stamp.get("head") and not (head_now.startswith(stamp["head"]) or stamp["head"].startswith(head_now)):
+                problems.append(f"تغيّر الرأسُ المقيسُ عليه ({stamp['head'][:8]} ← {head_now[:8]})")
+    elif stamp and not item.get("sot_remeasure"):
+        problems.append("لم تُلحَق إعادةُ قياس الادّعاء الأصليّ قبل «جاهزٌ للمعاينة»")
+    if not problems:
+        return None
+    return f"{SOT_MARK} (ظلّ، لا حجب): " + "؛ ".join(problems)
 
 
 def check_spec_gate(item: dict, target: str, history_states: set[str], waive: str | None) -> str | None:
@@ -751,6 +833,21 @@ def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, 
     return f"إنذار (الظلّ): {problem}"
 
 
+REPEAT_GUARDED = frozenset({"routed", "in_progress"})  # pushed/merged/published/approved تحجبها GATES؛ هاتان حرّتان فيتكرّر حدثُهما؛ وready_for_review يعلن رأسَه في ملاحظةٍ فيُعاد بالرأس الجديد (أمر المالك 10-20 بند5)
+
+
+def check_not_repeat(item_id: str, current: str, state: str, head: str | None, held_by: str | None, path=None) -> None:
+    """يرفض تكرارَ الحدث نفسه في الدفتر: النقلُ إلى حالةٍ هي الحاليّةُ بالرأس نفسه وبلا تغيير حامل (تكرارُه يوقظ الجلسةَ بلا جديد)."""
+    if state != current or state not in REPEAT_GUARDED:
+        return
+    holder = next((e["data"].get("held_by") for e in reversed(load_events(path)) if e["id"] == item_id and e["kind"] == "state" and "held_by" in e["data"]), None)
+    if held_by is not None and (held_by if held_by != "-" else "") != (holder or ""):
+        return  # تغييرُ الحامل نقلٌ حقيقيّ لا تكرار
+    last = next((e for e in reversed(load_events(path)) if e["id"] == item_id and e["kind"] == "state"), None)
+    if last and last["data"].get("state") == state and (last["data"].get("head") or None) == (head or None):
+        raise LedgerError(f"حدثٌ مكرَّر: البطاقةُ في «{state}» أصلاً بالرأس نفسه — لا يُعاد تسجيلُه (أعد القراءةَ بـshow)")
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
          branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None, preflight_repo: str | None = None, waive_preflight: str | None = None, premerge_sha: str | None = None, head_now: str | None = None) -> None:
     if state not in STATES:
@@ -763,6 +860,7 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if item_id not in items:
         raise LedgerError(f"بطاقةٌ غيرُ موجودة: {item_id}")
     check_transition(items[item_id]["state"], state, note)
+    check_not_repeat(item_id, items[item_id]["state"], state, push_head or head, held_by, path)
     check_holder_on_route(items[item_id], state, held_by)
     check_recorder(state, by)
     history = {e["data"].get("state") for e in load_events(path) if e["id"] == item_id and e["kind"] == "state"}
@@ -775,6 +873,12 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         note = f"{note + ' — ' if note else ''}{approval_waiver}"
     if spec_warning:
         print(spec_warning, file=sys.stderr)
+    try:
+        sot_warning = check_sot_gate(items[item_id], state, head_now)
+    except Exception as exc:  # بوّابةُ الظلّ لا تحجب نقلاً مهما كان شكلُ الختم
+        sot_warning = f"{SOT_MARK} (ظلّ): تعذّر فحصُ الختم ({type(exc).__name__})"
+    if sot_warning:
+        print(sot_warning, file=sys.stderr)
     if state == "in_progress":
         wip_note = check_wip(items, item_id, by, waive_wip)
         if wip_note:
@@ -791,6 +895,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if fp_note:
         print(fp_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{fp_note}"
+    if sot_warning:
+        short = f"{note + ' — ' if note else ''}{sot_warning}"
+        if len(short) <= FIELD_MAX:  # بوّابةُ الظلّ لا تُفشل نقلاً أبدًا: إن طال التدوينُ اكتُفي بالطباعة
+            note = short
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
@@ -799,6 +907,8 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
             extra["branch"] = check_remote_push(branch or items[item_id].get("branch"), push_head, remote_lookup)
     if held_by is not None:
         extra["held_by"] = "" if held_by == "-" else held_by
+    if state == "ready_for_review" and head_now and HEAD_RE.match(head_now):
+        extra["ready_head"] = head_now[:8]  # D-452م: الرأسُ المعلَن حقلٌ مهيكلٌ تقرؤه المضخّة، لا «head» الذي يُقرأ اعتماداً
     append_event("state", item_id, {"state": state, "by": by or "غير مُعلَن", **({"head": head} if head else {}), **extra}, path)
     if note:
         append_event("note", item_id, {"text": check_text("note", note)}, path)
@@ -1081,6 +1191,29 @@ def check_patch_id(approved: str, new: str, repo: str | None = None) -> list[str
     return changed
 
 
+REVIEWERS = {"0101"}  # من يفحص الفرق بنفسه لنوع reviewed-diff (أمر المالك 2026-10-20)
+
+
+def check_reviewed_diff(approved: str, new: str, reviewed_by: str | None, repo: str | None = None) -> list[str]:
+    """«اعتماد محتوى الفرق لا الرأس» (أمر المالك 2026-10-20): بعد إصلاح CI أو دمج main، وحتى لو حُلّ تعارضٌ يدوياً،
+    إن فحص 0101 الفرقَ ووثّقه. شروطٌ آليّةٌ: الفاحصُ من REVIEWERS؛ عملُ الفرع عن origin/main (لا الفرقُ بين الرأسين)
+    لا يمسّ ملفّاً حاكماً ولا هجرةً ولا صلاحيّاتٍ/أمناً، ولا يضيف ملفّاً لم يكن في المعتمَد. يعيد ملفّات الفرع الجديد."""
+    if reviewed_by not in REVIEWERS:
+        raise LedgerError(f"فحصُ الفرق يلزمه --reviewed-by من {sorted(REVIEWERS)}")
+    old = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{approved}"], repo).splitlines() if f]
+    changed = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{new}"], repo).splitlines() if f]
+    if not changed:
+        raise LedgerError("عملُ الفرع الجديد فارغٌ عن origin/main (fetch أوّلاً؟)")
+    bad = governing_files(changed) + [f for f in changed if "/migrations/" in f or f.startswith("migrations/")
+                                       or any(k in f.lower() for k in SENSITIVE_PATH_PARTS)]
+    if bad:
+        raise LedgerError(f"ملفّاتٌ حاكمةٌ أو هجراتٌ أو صلاحيّاتٌ/أمنٌ في العمل تُعرض على المالك: {sorted(set(bad))[:5]}")
+    extra = sorted(set(changed) - set(old))
+    if extra:
+        raise LedgerError(f"ملفّاتٌ لم تكن في العمل المعتمَد (نطاقٌ أوسع): {extra[:5]}")
+    return changed
+
+
 CHAIN_MAX = 5  # أقصى طولٍ لسلسلة tests-main-chain؛ ما فوقه يحتاج اعتماداً جديداً (W-20261017-012)
 
 
@@ -1122,6 +1255,12 @@ def check_tests_main_chain(approved: str, new: str, repo: str | None = None) -> 
 
 
 WAIVER_BY = {"0501"}
+#: توقيعٌ آليّ (مضخّة التدفّق، قرار المالك 2026-10-20 «الحل الجذري» وD-451م): الأنواعُ التي يثبتها الكودُ من الشجرة وحدَها
+#: (دمجُ main نظيف، إضافاتُ اختبارٍ لا تُضعف تأكيداً، وسلسلتُهما)؛ ما سواها لـ0501.
+PUMP_WAIVER_BY = {"0101"}
+PUMP_WAIVER_KINDS = {"main-merge", "tests-only", "tests-main-chain", "auto"}
+#: ما يجرّبه --kind auto بالترتيب (D-451م): لا صنفَ رابعَ بلا قرار
+AUTO_KINDS = ("main-merge", "tests-only", "tests-main-chain")
 
 #: ملفّاتٌ حاكمةٌ لا يُستثنى تعديلُها بـwaive-head «وثائق» (W-20261003-040، مواصفة 0103): تُحمَّل في كلّ جلسةٍ أو بالمسار فتوجّه السلوك.
 #: تُطابَق بعد التطبيع (`\` ← `/`، حذفُ `./`، حروفٌ صغيرة).
@@ -1207,17 +1346,19 @@ def check_red_fix(item: dict, approved: str, new: str, repo: str | None = None) 
     return changed
 
 
-def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None) -> None:
+def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, changed=None, kind: str = "docs", repo: str | None = None,
+               reviewed_by: str | None = None) -> None:
     """استثناءٌ صريحٌ مسجَّلٌ لا ضمنيّ: تعديلٌ تافهٌ (وثائق أو .md) بعد الاعتماد بتوقيع 0501؛ لا كودَ ولا صلاحيّاتٍ ولا هجرات."""
-    if by not in WAIVER_BY:
-        raise LedgerError(f"الاستثناءُ لـ{sorted(WAIVER_BY)} وحدَها")
+    if by not in WAIVER_BY and not (by in PUMP_WAIVER_BY and kind in PUMP_WAIVER_KINDS):
+        raise LedgerError(f"الاستثناءُ لـ{sorted(WAIVER_BY)} وحدَها (و{sorted(PUMP_WAIVER_BY)} لنوع {sorted(PUMP_WAIVER_KINDS)} فقط)")
     if not HEAD_RE.match(new_head):
         raise LedgerError("--head غيرُ صالح")
     item = reduce_state(load_events(path)).get(item_id)
     if not item or not item.get("approved_head"):
         raise LedgerError("لا اعتمادَ مربوطاً برأسٍ لهذه البطاقة")
-    if kind == "auto":  # (W-20261016-018) يجرّب النوعين المأذونين وحدَهما بفحص الشجرة؛ لا توسيعَ لصنفٍ ثالث
-        for cand, check in (("main-merge", check_main_merge), ("tests-only", check_tests_only)):
+    if kind == "auto":  # (W-20261016-018، D-451م) يجرّب أنواع AUTO_KINDS وحدَها بفحص الشجرة
+        checks = {"main-merge": check_main_merge, "tests-only": check_tests_only, "tests-main-chain": check_tests_main_chain}
+        for cand, check in ((k, checks[k]) for k in AUTO_KINDS):
             try:
                 check(item["approved_head"], new_head, repo)
             except LedgerError:
@@ -1225,7 +1366,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
             kind = cand
             break
         else:
-            raise LedgerError("لا إعفاءَ آليّاً: الفرقُ ليس دمجَ main خالصاً ولا إصلاحَ اختباراتٍ فقط (الباقي يحتاج اعتماداً جديداً بالرأس)")
+            raise LedgerError("لا إعفاءَ آليّاً: الفرقُ ليس دمجَ main خالصاً ولا إصلاحَ اختباراتٍ فقط ولا سلسلتَهما (الباقي يحتاج اعتماداً جديداً بالرأس)")
     if kind == "main-merge":
         check_main_merge(item["approved_head"], new_head, repo)
         reason = f"دمجُ main فقط (تحقّق آليّ) — {reason}"
@@ -1238,6 +1379,9 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
     elif kind == "tests-only":
         check_tests_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ اختباراتٍ فقط بلا حراسةٍ أمنيّة (تحقّق آليّ) — {reason}"
+    elif kind == "reviewed-diff":
+        check_reviewed_diff(item["approved_head"], new_head, reviewed_by, repo)
+        reason = f"محتوى الفرق بعد فحص {reviewed_by} (تحقّق آليّ: بلا حاكم/هجرات/أمن ولا نطاق أوسع) — {reason}"
     elif kind == "types-only":
         check_types_only(item["approved_head"], new_head, repo)
         reason = f"إصلاحُ أنواعٍ فقط لفشل mypy بقرار المالك 10-10 (تحقّق آليّ: AST مطابق) — {reason}"
@@ -1255,7 +1399,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         if not changed or bad:
             raise LedgerError(f"الاستثناءُ للوثائق وحدَها؛ ملفّاتٌ غيرُ وثائقيّة أو فرقٌ فارغ: {bad[:5]}")
     else:
-        raise LedgerError("--kind: docs أو main-merge أو tests-only أو tests-main-chain أو types-only أو red-fix أو patch-id أو auto")
+        raise LedgerError("--kind: docs أو reviewed-diff أو main-merge أو tests-only أو tests-main-chain أو types-only أو red-fix أو patch-id أو auto")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
 
@@ -1348,6 +1492,10 @@ def main() -> None:
     sp.add_argument("--files-allowed", nargs="*"); sp.add_argument("--files-forbidden", nargs="*")
     sp.add_argument("--accept", action="append"); sp.add_argument("--step", action="append"); sp.add_argument("--by", required=True)
     sp.add_argument("--basic-ok", help="وسمُ «أساس» لبطاقةٍ صغيرة (السبب): يكفيها accept وstep")
+    ss = sub.add_parser("sot-stamp", help="يُلحق ختمَ التحقق من مصدر الحقيقة (أو إعادةَ القياس قبل جاهزٌ للمعاينة بـ--remeasure)")
+    ss.add_argument("id"); ss.add_argument("--verdict", required=True, choices=SOT_VERDICTS); ss.add_argument("--head", required=True)
+    ss.add_argument("--evidence", action="append", required=True, help='"الأمر => النتيجة" (يتكرّر)'); ss.add_argument("--by", required=True)
+    ss.add_argument("--correction"); ss.add_argument("--remeasure", action="store_true")
     nt = sub.add_parser("note", help="ملاحظةٌ على بطاقةٍ دون نقل حالتها")
     nt.add_argument("id"); nt.add_argument("--text", required=True); nt.add_argument("--by", required=True)
     rt = sub.add_parser("return", help="تعيد بطاقةً لنقص المواصفة إلى captured")
@@ -1359,7 +1507,8 @@ def main() -> None:
     rp = sub.add_parser("raise-priority", help="رفعُ أولويّةِ بطاقةٍ (رفعٌ فقط)")
     rp.add_argument("id"); rp.add_argument("priority", choices=PRIORITIES); rp.add_argument("--by", required=True); rp.add_argument("--reason", required=True)
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
-    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "tests-main-chain", "types-only", "red-fix", "patch-id", "auto"])
+    wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "tests-main-chain", "types-only", "red-fix", "patch-id", "reviewed-diff", "auto"])
+    wv.add_argument("--reviewed-by"); wv.add_argument("--repo")
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
@@ -1382,6 +1531,8 @@ def main() -> None:
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
                      args.files_allowed, args.files_forbidden, args.accept, args.step, args.by, basic_ok=args.basic_ok); print("ok")
+        elif args.cmd == "sot-stamp":
+            set_sot_stamp(args.id, args.verdict, args.head, args.evidence, args.by, args.correction, args.remeasure); print("ok")
         elif args.cmd == "note":
             add_note(args.id, args.text, args.by); print("ok")
         elif args.cmd == "return":
@@ -1395,7 +1546,7 @@ def main() -> None:
         elif args.cmd == "reapprove":
             reapprove(args.id, args.head, args.by, args.note); print("ok")
         elif args.cmd == "waive-head":
-            waive_head(args.id, args.head, args.by, args.reason, kind=args.kind); print("ok")
+            waive_head(args.id, args.head, args.by, args.reason, kind=args.kind, repo=args.repo, reviewed_by=args.reviewed_by); print("ok")
         elif args.cmd == "tag":
             head, pr = "", None
             if args.branch:
