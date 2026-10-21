@@ -22,8 +22,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -88,12 +91,82 @@ def load_events(path=None) -> list[dict]:
     return out
 
 
+LOCK_TIMEOUT_S = 30.0
+BACKUP_KEEP = 30
+
+
+@contextmanager
+def _file_lock(p: Path, timeout: float = LOCK_TIMEOUT_S):
+    """قفلُ ملفٍ بين العمليّات (الموجة 0.4، D-453م): جلستان تُلحقان معاً لا يتداخل سطراهما ولا يضيع أحدُهما.
+    قفلٌ استشاريٌّ على ملفٍ جانبيّ `<الدفتر>.lock` (msvcrt على ويندوز، fcntl في غيره) يزول بموت العملية فلا قفلَ معلَّقاً."""
+    lock = p.with_name(p.name + ".lock")
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt  # noqa: PLC0415
+
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl  # noqa: PLC0415
+
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise LedgerError(f"تعذّر قفلُ الدفتر خلال {int(timeout)} ث — عمليةٌ أخرى تكتب؛ أعد المحاولة") from None
+                time.sleep(0.02)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def daily_backup(p: Path, today: str | None = None) -> Path | None:
+    """نسخةٌ احتياطيّةٌ واحدةٌ باليوم `backups/<الدفتر>-YYYY-MM-DD.jsonl` قبل أوّل إلحاقٍ فيه؛ تُحتفظ آخرُ BACKUP_KEEP نسخة.
+    تُستعاد بنسخها فوق الدفتر. تُستدعى والقفلُ ممسوك."""
+    if not p.is_file() or p.stat().st_size == 0:
+        return None
+    day = today or datetime.now(DOHA).strftime("%Y-%m-%d")
+    bdir = p.parent / "backups"
+    dest = bdir / f"{p.stem}-{day}{p.suffix}"
+    if dest.exists():
+        return None
+    bdir.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    shutil.copyfile(p, tmp)
+    with tmp.open("r+b") as fh:
+        os.fsync(fh.fileno())
+    os.replace(tmp, dest)
+    for old in sorted(bdir.glob(f"{p.stem}-*{p.suffix}"))[:-BACKUP_KEEP]:
+        old.unlink(missing_ok=True)
+    return dest
+
+
 def append_event(kind: str, item_id: str, data: dict | None = None, path=None) -> dict:
     p = ledger_path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     event = {"ts": now_doha(), "id": item_id, "kind": kind, "data": data or {}}
-    with p.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+    line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+    with _file_lock(p):
+        daily_backup(p)
+        if p.is_file() and p.stat().st_size:
+            with p.open("rb") as rd:
+                rd.seek(-1, os.SEEK_END)
+                if rd.read(1) != b"\n":
+                    line = b"\n" + line  # سطرٌ سابقٌ مبتورٌ (انقطاعٌ في منتصف الكتابة) لا يلتحم بالحدث الجديد
+        with p.open("ab") as fh:
+            fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
     return event
 
 
