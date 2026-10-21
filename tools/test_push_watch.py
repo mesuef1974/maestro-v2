@@ -161,6 +161,19 @@ class Messages(unittest.TestCase):
         res = [{"card": "W-1", "status": "skipped", "branch": "", "head": "aaaaaaaa", "holder": "0702", "reason": pw.QUIET}]
         self.assertEqual(pw.messages(res, self.DIRECTORY, set()), [])
 
+    def test_a_refusal_for_a_merged_holder_goes_to_its_receiver(self):
+        # المرحلة 2 من الدمج (2026-10-21): 0702 اسمٌ مستعارٌ لـ0701
+        res = [{"card": "W-1", "status": "refused", "branch": "claude/x", "head": "aaaaaaaa", "holder": "0702", "reason": "شجرةٌ متّسخة"}]
+        directory = {"0701": {"id": "local_701"}}
+        (to, sid, _), = pw.messages(res, directory, set(), {"0702": "0701"})
+        self.assertEqual((to, sid), ("0701", "local_701"))
+
+    def test_default_recorder_is_0701_after_merge(self):
+        import inspect
+
+        self.assertEqual(inspect.signature(pw.scan).parameters["by"].default, "0701")
+        self.assertEqual(inspect.signature(pw.cycle).parameters["by"].default, "0701")
+
 
 if __name__ == "__main__":
     unittest.main()

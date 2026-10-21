@@ -35,7 +35,7 @@ import pr_watch  # noqa: E402
 
 STATE_FILE = ROOT / "ledger" / "red_notify_state.json"
 COUNTER = Path("C:/Users/mesue/delivery_manager_work/tools/msg_counter.py")
-SENDER = "0702"
+SENDER = "0701"  # كان 0702؛ دُمج ميثاقُها في 0701 (أمر المالك 2026-10-21)
 ALWAYS = "0101"
 REPEAT_MIN = 15
 KEEP_H = 24  # مدّةُ تذكّر (طلب، فحص) كي لا يتكرّر تذبذبُ أحمر←أخضر←أحمر

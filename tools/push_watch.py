@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE))
 import ledger  # noqa: E402
 import push_approved  # noqa: E402
 import ready_mark  # noqa: E402
+import session_alias  # noqa: E402
 
 RECIPIENT = "0601"
 # أسبابٌ عاديّةٌ لا تستحقّ إعلاناً: لا شجرةَ حاليّةً على الرأس (دُفعت بيدٍ أخرى أو في مستودعٍ آخر) فلا يُخمَّن.
@@ -51,8 +52,9 @@ def worktrees(repo: str, git=push_approved._git) -> list[dict]:
     return entries
 
 
-def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git) -> tuple[dict | None, str]:
-    """(الشجرة، سبب الغياب): واحدةٌ فقط تطابق الرأسَ والفرعَ claude/* ورمزَ البطاقة؛ وإلا None."""
+def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git,
+              branch_re=push_approved.BRANCH_RE) -> tuple[dict | None, str]:
+    """(الشجرة، سبب الغياب): واحدةٌ فقط تطابق الرأسَ والفرعَ (claude/* افتراضاً، أو branch_re) ورمزَ البطاقة؛ وإلا None."""
     seen: set[str] = set()
     found: list[dict] = []
     for repo in repos:
@@ -62,7 +64,7 @@ def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git) -
                 continue
             seen.add(key)
             branch = w.get("branch") or ""
-            if not push_approved.BRANCH_RE.match(branch) or not push_approved.same_head(w.get("head", ""), want8):
+            if not branch_re.match(branch) or not push_approved.same_head(w.get("head", ""), want8):
                 continue
             rc, log = git(w["path"], "log", "-1", "--format=%H", f"--grep={card}", w["head"], "^origin/main")
             if not rc and log.strip():
@@ -75,8 +77,10 @@ def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git) -
 
 
 def scan(items: dict, repos: list[str], apply: bool = True, path=None, git=push_approved._git,
-         approved=push_approved.approval_ok, by: str = "0702") -> list[dict]:
-    """نتيجةُ كلّ بطاقةٍ approved: {card, status: pushed|dry|refused|skipped, branch, head, reason, holder}."""
+         approved=push_approved.approval_ok, by: str = "0701", branch_re=push_approved.BRANCH_RE,
+         require_receipt: bool = False) -> list[dict]:
+    """نتيجةُ كلّ بطاقةٍ approved: {card, status: pushed|dry|refused|skipped, branch, head, reason, holder}.
+    branch_re وrequire_receipt تمرَّران للحارس (المضخّة: فروع claude/* أو w* وإيصالُ prepush للرأس، D-450م)."""
     out = []
     for card in sorted(items):
         item = items[card]
@@ -87,13 +91,14 @@ def scan(items: dict, repos: list[str], apply: bool = True, path=None, git=push_
         if not want:
             out.append({**base, "status": "skipped", "reason": "لا رأسَ اعتمادٍ في الدفتر"})
             continue
-        tree, why = find_tree(card, want, repos, git)
+        tree, why = find_tree(card, want, repos, git, branch_re)
         if tree is None:
             out.append({**base, "status": "skipped", "reason": why})
             continue
         base["branch"] = tree["branch"]
         try:
-            msg = push_approved.push(card, tree["branch"], tree["path"], apply, path=path, git=git, approved=approved, by=by)
+            msg = push_approved.push(card, tree["branch"], tree["path"], apply, path=path, git=git, approved=approved, by=by,
+                                     branch_re=branch_re, require_receipt=require_receipt)
         except (push_approved.PushRefused, ledger.LedgerError) as exc:
             out.append({**base, "status": "refused", "reason": str(exc)})
         else:
@@ -101,8 +106,9 @@ def scan(items: dict, repos: list[str], apply: bool = True, path=None, git=push_
     return out
 
 
-def messages(results: list[dict], directory: dict, announced: set) -> list[tuple[str, str, str]]:
-    """رسائل (مستلم، معرّف، نصّ): تسليمٌ لـ0601 لكلّ دفع؛ ورفضٌ بسببه لحامل البطاقة مرّةً."""
+def messages(results: list[dict], directory: dict, announced: set, aliases: dict | None = None) -> list[tuple[str, str, str]]:
+    """رسائل (مستلم، معرّف، نصّ): تسليمٌ لـ0601 لكلّ دفع؛ ورفضٌ بسببه لحامل البطاقة مرّةً.
+    aliases: رقمٌ مدمَج ← مستقبِلته (session_alias.number_map): حاملٌ مدمَجٌ يُبلَّغ مستقبِلتَه."""
     msgs = []
     for r in results:
         if r["status"] == "pushed":
@@ -110,7 +116,7 @@ def messages(results: list[dict], directory: dict, announced: set) -> list[tuple
             msgs.append((RECIPIENT, sid, f"{r['card']}: دُفع الفرع {r['branch']} بالرأس {r['head']} آلياً بعد approval_check ✔ (السجلّ هو الدفتر) — افتحي الطلب وادمجي؛ لا طلبَ ولا دمجَ من الدافع."))
         elif r["status"] == "refused" and (r["card"], r["head"], r["reason"]) not in announced:
             announced.add((r["card"], r["head"], r["reason"]))
-            to = r["holder"] or "0101"
+            to = session_alias.canonical(r["holder"] or "0101", aliases)
             sid = (directory.get(to) or {}).get("id", "—")
             msgs.append((to, sid, f"{r['card']}: رُفض الدفعُ الآليّ — {r['reason'][:180]}"))
     return msgs
@@ -121,7 +127,7 @@ def emit(msgs: list[tuple[str, str, str]]) -> None:
         print(f"إحالة\t{to}\t{sid}\t{text}", flush=True)
 
 
-def cycle(apply: bool, announced: set, repos: list[str] | None = None, path=None, by: str = "0702") -> list[dict]:
+def cycle(apply: bool, announced: set, repos: list[str] | None = None, path=None, by: str = "0701") -> list[dict]:
     items = ledger.reduce_state(ledger.load_events(path))
     try:
         import session_directory  # noqa: PLC0415
@@ -130,7 +136,7 @@ def cycle(apply: bool, announced: set, repos: list[str] | None = None, path=None
     except Exception:  # noqa: BLE001 — الدليلُ مساعدٌ لا شرط
         directory = {}
     results = scan(items, repos or ready_mark.candidate_repos(None), apply, path, by=by)
-    emit(messages(results, directory, announced))
+    emit(messages(results, directory, announced, session_alias.number_map()))
     return results
 
 
@@ -141,7 +147,7 @@ def main(argv=None) -> int:
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--interval", type=int, default=300)
     ap.add_argument("--dry-run", action="store_true", help="عرضٌ بلا دفع")
-    ap.add_argument("--by", default="0702", help="رقمُ الجلسة المشغِّلة (للدفتر)")
+    ap.add_argument("--by", default="0701", help="رقمُ الجلسة المشغِّلة (للدفتر؛ 0702 مدمَجةٌ في 0701)")
     a = ap.parse_args(argv)
     if not (a.once or a.loop):
         ap.error("اختر --once أو --loop")

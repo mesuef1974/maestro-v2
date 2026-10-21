@@ -150,7 +150,7 @@ class TestSevenCases(unittest.TestCase):
         ]
         rows = {r.ref: r for r in by_case(fw.collect(ev, [], PREVIEW_OK, NOW, TH), 4)}
         self.assertEqual(set(rows), {"A", "B"})
-        self.assertEqual(rows["B"].owner, "0301")
+        self.assertEqual(rows["B"].owner, "0101")  # ميثاقُ 0301 مدمَجٌ في 0101 (2026-10-21)
         self.assertIn("0403", rows["A"].owner)
 
     def test_5_preview_queue_and_expired_pin(self):

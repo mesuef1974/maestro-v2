@@ -2,16 +2,16 @@
 """سجلُّ العصف بنتيجته — سطرٌ واحدٌ لكلّ عصفٍ (قرار 0101، D-157م): بلا وثيقةٍ إضافيّة.
 
     python brainstorm_log.py add --question "…" --chosen "…" --expected "…" --metric "…" --recheck 2026-10-09 \\
-        --baseline 1.35 --target 1.0 --unit س --source "gh pr list … (أمرُ القياس نفسُه)" [--by 0104]
+        --baseline 1.35 --target 1.0 --unit س --source "gh pr list … (أمرُ القياس نفسُه)" [--by 0301]
     python brainstorm_log.py quantify <رقم> --baseline 1.35 --target 1.0 --unit س --source "…"   يُلحق أساساً وهدفاً بعصفٍ سُجّل بلا رقم
-    python brainstorm_log.py due            ما حان موعدُ إعادة قياسه (يقرؤه 0102 لا 0104)
-    python brainstorm_log.py result <رقم> --actual 0.9 [--confounders "…"] [--note "…"]   0102 تقيس بأمر المصدر نفسِه فيُحسب الأثرُ آلياً
+    python brainstorm_log.py due            ما حان موعدُ إعادة قياسه (تقرؤه 0701 لا كاتبةُ العصف 0301 — أمرُ المالك 2026-10-21 «القراءة لـ0701»)
+    python brainstorm_log.py result <رقم> --actual 0.9 [--confounders "…"] [--note "…"]   0701 تقيس بأمر المصدر نفسِه فيُحسب الأثرُ آلياً
     python brainstorm_log.py result <رقم> --achieved yes|no|partial --note "…"            لعصفٍ بلا رقمٍ قياسيّ (حكمٌ نوعيّ)
 
 الأثرُ = (الفعليّ − الأساس) ÷ (الهدف − الأساس): ≥1 تحقّق، (0..1) جزئيّ، ≤0 لم يتحقّق (يصحّ للاتّجاهين: خفضٍ أو رفع).
 الأثرُ **ارتباطٌ لا سببيّة**: تُسجَّل «المُشوِّشات» (تغييراتٌ أخرى في الفترة نفسِها) فيُقرأ الأثرُ بحذرٍ.
 
-الملفّ `ledger/brainstorms.jsonl` يُلحَق فقط. مؤشّرُ 0104: نسبةُ العصف الذي حقّق أثرَه المتوقَّع = achieved=yes ÷ ما أُعيد قياسُه.
+الملفّ `ledger/brainstorms.jsonl` يُلحَق فقط. مؤشّرُ 0701 (قارئةُ الأثر): نسبةُ العصف الذي حقّق أثرَه المتوقَّع = achieved=yes ÷ ما أُعيد قياسُه.
 """
 
 from __future__ import annotations
@@ -60,13 +60,13 @@ def _append(row: dict, path: Path = FILE) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def add(question: str, chosen: str, expected: str, metric: str, recheck: str, by: str = "0104", path: Path = FILE,
+def add(question: str, chosen: str, expected: str, metric: str, recheck: str, by: str = "0301", path: Path = FILE,
         baseline: float | None = None, target: float | None = None, unit: str = "", source: str = "") -> int:
     date.fromisoformat(recheck)  # يرفض تاريخاً غيرَ صالح
     if (baseline is None) != (target is None):
         raise ValueError("الأساسُ والهدفُ معاً أو لا شيء")
     if baseline is not None and (baseline == target or not source.strip()):
-        raise ValueError("عصفٌ بأثرٍ قياسيّ يلزمه أساسٌ ≠ هدفٍ وأمرُ قياسٍ مصدرٌ (--source) يعيده 0102")
+        raise ValueError("عصفٌ بأثرٍ قياسيّ يلزمه أساسٌ ≠ هدفٍ وأمرُ قياسٍ مصدرٌ (--source) تعيده 0701")
     n = sum(1 for r in _rows(path) if r["kind"] == "brainstorm") + 1
     row = {"kind": "brainstorm", "n": n, "ts": datetime.now(DOHA).isoformat(timespec="minutes"), "by": by, "question": question.strip(),
            "chosen": chosen.strip(), "expected": expected.strip(), "metric": metric.strip(), "recheck": recheck}
@@ -121,7 +121,7 @@ def main() -> int:
         a.add_argument(f"--{k}", required=True)
     a.add_argument("--baseline", type=float); a.add_argument("--target", type=float)
     a.add_argument("--unit", default=""); a.add_argument("--source", default="")
-    a.add_argument("--by", default="0104")
+    a.add_argument("--by", default="0301")  # كاتبةُ العصف: الحوكمة (ميثاقُ 0102 مدمَجٌ فيها)
     sub.add_parser("due")
     qz = sub.add_parser("quantify")
     qz.add_argument("n", type=int); qz.add_argument("--baseline", type=float, required=True); qz.add_argument("--target", type=float, required=True)

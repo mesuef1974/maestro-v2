@@ -12,7 +12,7 @@
     python daily_audit.py --sessions-json <ملفُّ مخرج list_sessions> [--no-live] [--json]
 
 الملفُّ: مصفوفةُ list_sessions كما هي (أو قائمةُ عناوين). list_sessions تُسقط الجلسةَ المستدعِية،
-فيُضاف عنوانُها بـ--self-title (الافتراض «0102 · التقييم والعصف: جودةُ المنظومة»).
+فيُضاف عنوانُها بـ--self-title (الافتراض «0301 · الحوكمة: حراسة القواعد» كما في الشريط — كانت 0103؛ وميثاقُ 0102 مدمَجٌ فيها منذ 2026-10-21).
 """
 
 from __future__ import annotations
@@ -98,8 +98,9 @@ def registry_checks(root: Path, tabs: dict, routing: dict, live: list[dict] | No
         group = r.get("group")
         if group is None:
             out.append({"level": "report", "area": "الشريط", "msg": f"«{title}» خارج أيّ تبويب", "fix": "تُنقل إلى تبويب رقمها (بموافقة التطبيق، للمايسترو)"})
-        elif title[:4].isdigit() and not group["name"].startswith(title[:2] + " · "):
-            out.append({"level": "report", "area": "الشريط", "msg": f"«{title}» في «{group['name']}» لا في تبويب {title[:2]}",
+        # التبويبُ المسجَّلُ أوّلاً (المجموعة 01 مرقَّمةٌ بالترتيب: 0201 و0301 فيها، أمر المالك 2026-10-21)، وإلّا أوّلُ خانتين
+        elif title[:4].isdigit() and not group["name"].startswith(members.get(title, title[:2]) + " · "):
+            out.append({"level": "report", "area": "الشريط", "msg": f"«{title}» في «{group['name']}» لا في تبويب {members.get(title, title[:2])}",
                         "fix": "بلّغ المايسترو بالنقل"})
         last = r.get("lastActivityAt")
         if title not in core and not r.get("isRunning") and last:
@@ -235,7 +236,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default="C:/Users/mesue/delivery_manager_work")
     ap.add_argument("--sessions-json", type=Path)
-    ap.add_argument("--self-title", default="0102 · التقييم والعصف: جودةُ المنظومة")
+    ap.add_argument("--self-title", default="0301 · الحوكمة: حراسة القواعد")  # كانت 0103 (ترقيمُ 01 بالترتيب، أمر المالك 2026-10-21)
     ap.add_argument("--repo-prefix", default="D:/shschool_mvp")
     ap.add_argument("--idle-hours", type=float, default=3.0)
     ap.add_argument("--decisions", type=int, default=12, help="عددُ آخر القرارات التي تُطابَق أوقاتُها")

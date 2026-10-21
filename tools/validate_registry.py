@@ -18,10 +18,21 @@ ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_TAB_KEYS = ("id", "name", "order", "layer", "purpose", "goals", "kpis", "inputs", "outputs", "skills", "permissions", "lifecycle", "live_cap", "members")
 
 # أرقامٌ ميّتةٌ لا تُعاد ولم تُستعمل لجلسةٍ أخرى (D-197م/D-198م، docs/session_renumbering_2026-10-04.md).
-# أمّا 0104/0201/0701 فأُعيد استعمالُها لجلساتٍ حيّةٍ فليست ميّتة.
-DEAD_NUMBERS = ("0203", "0801", "0105", "0204", "0702")
+# أمّا 0104/0201/0701/0702 فأُعيد (0702 أُعيد فتحُها معاوناً لـ0701 بقرار المالك D-315م، 10-10) استعمالُها لجلساتٍ حيّةٍ فليست ميّتة.
+# والمدمَجةُ في المرحلة 2 (0702/0102، أمر المالك 2026-10-21) أسماءٌ مستعارةٌ في aliases لا أرقامٌ ميّتة بعدُ:
+# جلساتُها القديمةُ ما زالت في session_names.json وsessions_snapshot.json حتى تُؤرشف (alias_problems يحرس اتّساقَها).
+# و0201/0301 أُعيدا لجلستين حيّتين بترقيم المجموعة 01 بالترتيب (أمر المالك 2026-10-21 14:02) فهما في «_reused».
+DEAD_NUMBERS = ("0203", "0801", "0105", "0204")
 FLOW_CHANGELOG_SINCE = "2026-10-04"
 _SELF_REF = re.compile(r"(\d{4})\s*(?:دُمجت|دمجت|دُمجَت|مدموجة)\s+في\s+\1(?!\d)")
+# الشريطُ قد يكتب «الحوكمة» والسجلُّ «الحوكمةُ»: الفرقُ تشكيلٌ تجميليٌّ لا يُسقط التعرّف، فالسجلُّ هو المصدر
+# وتُقارَن العناوينُ الحيّةُ به بلا تشكيلٍ ولا تطويل (ملاحظة 0301 على الجولة 2، 2026-10-21).
+_TASHKEEL = re.compile(r"[ً-ْٰـ]")
+
+
+def bare_title(title: str) -> str:
+    """العنوانُ بلا تشكيلٍ ولا تطويل، للمقارنة بين الشريط والسجلّ."""
+    return _TASHKEEL.sub("", title)
 
 
 def self_reference_problems(text: str, where: str = "tabs.json") -> list[str]:
@@ -56,6 +67,33 @@ def dead_number_problems(tabs: dict, names: dict | None = None, snapshot: list |
     return out
 
 
+def alias_problems(tabs: dict) -> list[str]:
+    """اتّساقُ session_policy.aliases مع السجلّ: الرقمُ المستعار لا يبقى جلسةً قائمة، وهدفُه جلسةُ نواةٍ حاليّة،
+    وكلُّ ميثاقٍ في charters[*].merged يُحال رقمُه إلى مستقبِلته (المرحلة 2 من الدمج، 2026-10-21)."""
+    policy = tabs.get("session_policy", {})
+    aliases = {k: v for k, v in policy.get("aliases", {}).items() if not k.startswith("_")}
+    reused = policy.get("aliases", {}).get("_reused") or {}
+    charters = policy.get("charters", {})
+    core = {t[:4] for t in policy.get("core_sessions", [])}
+    # هدفُ الإحالة: جلسةُ نواةٍ قائمةٌ أو نواةٌ تنتظر الفتح (core_to_open)
+    targets = core | {str(t.get("title", "") if isinstance(t, dict) else t)[:4] for t in policy.get("core_to_open", [])}
+    standing = core | {m[:4] for tab in tabs.get("tabs", []) for m in tab.get("members", [])} | {t[:4] for t in charters}
+    out = []
+    for old, new in aliases.items():
+        if old in standing:
+            out.append(f"aliases: {old} ← {new} مستعارٌ وما زال جلسةً قائمة (نواةٌ أو عضوٌ أو ميثاق)")
+        if new not in targets:
+            out.append(f"aliases: هدفُ الإحالة {old} ← {new} ليس جلسةَ نواةٍ حاليّة (أحِل إلى المستقبِلة الأخيرة مباشرةً)")
+    for title, ch in charters.items():
+        for merged in ch.get("merged") or {}:
+            num = merged[:4]
+            # رقمٌ مدمَجٌ أُعيد لجلسةٍ حيّةٍ أخرى يُحال في «_reused» (يُحلّ بطلبٍ صريح) لا في الإحالة العاديّة
+            ok = aliases.get(num) == title[:4] or (num in standing and reused.get(num) == title[:4])
+            if not ok:
+                out.append(f"«{merged}» مدمَجٌ في «{title}» بلا إحالة {num} ← {title[:4]} في aliases")
+    return out
+
+
 def changelog_problems(text: str, since: str = FLOW_CHANGELOG_SINCE) -> list[str]:
     """أسطرُ flow_changelog المؤرَّخةُ بعد `since` يلزمها رقمُ إصدار (vN.NN) ورقمُ قرار (D-NNNم). ما قبلها مستثنى."""
     out = []
@@ -82,7 +120,9 @@ def name_problems(title: str, tab_number: str, serial: dict) -> list[str]:
     problems = []
     # الجلسةُ المرنةُ تُفتح في 04 وتحمل رقمَها وهي تنتقل إلى 05 و06 و07 (D-46م)
     allowed = {tab_number, *serial.get("carried_from", {}).get(tab_number, [])}
-    if head[:2] not in allowed:
+    # تبويبٌ مرقَّمٌ بالترتيب بلا رقمه (serial.ordinal_tabs، المجموعة 01 بأمر المالك 2026-10-21): SS·TT مقبولٌ بجانب TTSS
+    ordinal = tab_number in serial.get("ordinal_tabs", {}) and head[2:] == tab_number
+    if head[:2] not in allowed and not ordinal:
         problems.append(f"«{title}»: أوّلُ خانتين {head[:2]} لا تطابقان رقمَ مرحلته {tab_number} ولا مرحلةَ فتحٍ مسموحةً فيها")
     if int(head[2:]) < 1:
         problems.append(f"«{title}»: التسلسلُ داخل التبويب يبدأ من 01")
@@ -136,6 +176,7 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
     for title in core:
         if title not in seen:
             problems.append(f"جلسةُ النواة «{title}» غيرُ مسجَّلةٍ في أيّ تبويب")
+    problems += alias_problems(tabs)
     for ptype, spec in routing["problem_types"].items():
         # التوجيهُ بالتبويب؛ أسماءُ المنفّذين والملّاك مرجعٌ لا شرط (الجلساتُ تُفتح عند الطلب — D-43م)
         # التوجيهُ إلى اختصاص (specialties) أو إلى مرحلة (D-46م)
@@ -145,12 +186,13 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
         # جلساتُ المهامّ المجدولة الآليّة ليست مقاعد — تُستثنى بالبادئة
         prefixes = tuple(tabs.get("scheduled_task_title_prefixes", []))
         live_titles = [t for t in live_titles if not (prefixes and t.startswith(prefixes))]
-        known = set(seen) | {p["title"] for p in tabs.get("pending_archive", [])}
+        known = {bare_title(t) for t in seen} | {bare_title(p["title"]) for p in tabs.get("pending_archive", [])}
+        live_bare = {bare_title(t) for t in live_titles}
         for title in live_titles:
-            if title not in known:
+            if bare_title(title) not in known:
                 problems.append(f"جلسةٌ حيّةٌ غيرُ مسجَّلة: «{title}»")
         for title in seen:
-            if title not in live_titles:
+            if bare_title(title) not in live_bare:
                 problems.append(f"مسجَّلةٌ بلا جلسةٍ حيّة: «{title}»")
     return problems
 
@@ -158,7 +200,8 @@ def validate(tabs: dict, routing: dict, live_titles: list[str] | None = None) ->
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--sessions"); ap.add_argument("--project", default="schoolos")
+    ap.add_argument("--sessions")
+    ap.add_argument("--project", default="schoolos")
     args = ap.parse_args()
     base = ROOT / "projects" / args.project
     tabs = json.loads((base / "tabs.json").read_text(encoding="utf-8"))

@@ -179,7 +179,7 @@ def red_or_pending_prs(
                 3,
                 f"فحوصُ الطلبات {UNMEASURED} (gh)",
                 None,
-                "0601 و0702",
+                "0601 و0701",
                 "تحقّقوا من الطلبات يدوياً",
                 "—",
             )
@@ -201,7 +201,7 @@ def red_or_pending_prs(
                     3,
                     f"طلبٌ بفحصٍ أحمر — {p['title']}",
                     age,
-                    "0601 و0702",
+                    "0601 و0701",
                     "أعيدي التشغيل أو صنّفي العطل",
                     ref,
                 )
@@ -213,7 +213,7 @@ def red_or_pending_prs(
                     3,
                     f"طلبٌ معلَّق الفحوص — {p['title']}",
                     age,
-                    "0601 و0702",
+                    "0601 و0701",
                     "أعيدي أو صنّفي",
                     ref,
                 )
@@ -235,7 +235,7 @@ def routed_stale_or_not_full(items: dict, now: datetime, th: Thresholds) -> list
                     4,
                     f"موجَّهةٌ بمواصفةٍ {tier} لا full",
                     age,
-                    "0301",
+                    "0101",
                     "أكملي المواصفة full أو أعيديها",
                     it["id"],
                 )

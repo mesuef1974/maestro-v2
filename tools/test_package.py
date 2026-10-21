@@ -316,7 +316,7 @@ class ArchiveCheck(unittest.TestCase):
     def test_only_core_sessions_are_blocked(self):
         blocked = ac.permanent_titles(TABS)
         self.assertEqual(set(blocked), set(TABS["session_policy"]["core_sessions"]))
-        self.assertIn("0101 · المايسترو", blocked)
+        self.assertIn("0101 · المايسترو: التوجيه والاعتماد", blocked)
         self.assertNotIn("مسار Backend والبيانات", blocked)
         self.assertFalse(ac.evaluate({**self.FACTS, "title": "0601 · الإصدار: الدمجُ والنشر"}, blocked)["eligible"])
 
@@ -479,7 +479,7 @@ class Registry(unittest.TestCase):
 
     def test_detects_duplicate_member_and_unknown_route(self):
         bad = json.loads(json.dumps(TABS))
-        bad["tabs"][1]["members"].append("0101 · المايسترو")
+        bad["tabs"][1]["members"].append("0101 · المايسترو: التوجيه والاعتماد")
         bad["tabs"][1]["live_cap"] = 9
         self.assertTrue(any("في تبويبَين" in p for p in vr.validate(bad, ROUTING)))
         bad_route = json.loads(json.dumps(ROUTING))
@@ -496,7 +496,7 @@ class Registry(unittest.TestCase):
         self.assertTrue(any("يبدأ من 01" in p for p in probs))
         self.assertTrue(any("أطولُ من 40" in p for p in probs))
         bad2 = json.loads(json.dumps(TABS))
-        bad2["tabs"][0]["members"].remove("0103 · الحوكمة: حراسةُ القواعد")
+        bad2["tabs"][0]["members"].remove("0301 · الحوكمة: حراسة القواعد")
         self.assertTrue(any("جلسةُ النواة" in p for p in vr.validate(bad2, ROUTING)))
 
     def test_empty_tab_is_allowed(self):
