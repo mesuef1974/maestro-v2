@@ -49,6 +49,39 @@ def test_stale_head_stays_stale_even_if_refusal(tmp_path):
     assert [st for _, st in ev] == ["stale"]
 
 
+REFUSALS = (
+    "لا، ارفضه ولا تدمج", "لن أعتمد", "لا، لن أدمج", "أوقف ولا تدمج", "ليس الآن", "ليس بعد",
+    "نعم (لكن لا تدمج حتى الصباح)", "لا ادفع", "لن أوافق", "لا، لا تدمج", "ولا تعتمد",
+)
+APPROVALS = (
+    "اعتمد", "ادفع", "نعم أوقف الشرط", "لا مانع", "ولا مانع لدي", "لا تعديل في الانتاج نجح التوليد ادفع اعتمد",
+    "اعتمد (رداً على: هل ترفض أو لا تدمج؟)", "نعم اعتمد (ردّاً على سؤال (هل لا تدمج؟))", "لا، اعتمد",
+)
+
+
+def test_refusal_forms_are_all_caught():
+    assert [q for q in REFUSALS if not ac.quote_refusal(q)] == []
+
+
+def test_sound_approvals_are_not_refused():
+    assert [q for q in APPROVALS if ac.quote_refusal(q)] == []
+
+
+def test_leading_no_is_overridden_only_by_an_explicit_separator():
+    assert not ac.quote_refusal("لا، اعتمد")
+    assert ac.quote_refusal("لا اعتمد")
+
+
+def test_parenthesis_with_a_negation_is_not_ignored():
+    assert ac.quote_refusal("نعم (لكن لا تدمج حتى الصباح)")
+    assert not ac.quote_refusal("نعم (ردّاً على: هل لا تدمج؟)")
+
+
+#: السطرُ الوحيد الحيّ الذي يُعدّ رفضاً: اعتمادٌ مشروطٌ «…ولا دمج قبل W-020» (2026-10-02)؛ الإغلاقُ عند الشكّ مقصود.
+KNOWN_CONDITIONAL = "bf4f8c7e ولا دمج قبل W-020"
+
+
 def test_real_confirmations_file_has_no_false_refusal():
     rows = [ln for ln in (ac.ROOT / "owner_confirmations.md").read_text(encoding="utf-8").splitlines() if ln.startswith("|")]
-    assert [ln for ln in rows if ac.quote_refusal(ac.row_quote(ln)) and "رفض" not in ln and "ارفض" not in ln] == []
+    flagged = [ln for ln in rows if ac.quote_refusal(ac.row_quote(ln))]
+    assert all(KNOWN_CONDITIONAL in ln for ln in flagged)
