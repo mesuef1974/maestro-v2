@@ -186,7 +186,9 @@ def cmd_down(dry: bool) -> int:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="preview_accounts.py")
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+    parser =argparse.ArgumentParser(prog="preview_accounts.py")
     sub = parser.add_subparsers(dest="cmd", required=True)
     for name in ("sync", "check", "down"):
         sub.add_parser(name).add_argument("--dry-run", action="store_true")

@@ -15,4 +15,8 @@ def to_doha(moment: datetime) -> datetime:
 
 
 if __name__ == "__main__":
+    import sys
+
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     print(now().isoformat(timespec="seconds"))

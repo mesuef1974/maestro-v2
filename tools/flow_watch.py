@@ -254,7 +254,7 @@ def routed_stale_or_not_full(items: dict, now: datetime, th: Thresholds) -> list
                     4,
                     f"موجَّهةٌ بمواصفةٍ {tier} لا full",
                     age,
-                    "0101",
+                    "0301",
                     "أكملي المواصفة full أو أعيديها",
                     it["id"],
                 )

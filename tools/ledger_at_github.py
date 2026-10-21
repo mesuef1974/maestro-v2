@@ -68,7 +68,9 @@ def corrected_times(events: list[dict]) -> dict[str, dict[str, str]]:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser()
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+    ap =argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("show")
     s.add_argument("state")
