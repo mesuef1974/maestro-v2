@@ -108,6 +108,7 @@ def check(events: list[dict], confirmations: dict[str, set[str]], lookup=None, i
 
 
 def main(argv: list[str] | None = None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--all", action="store_true", help="يشمل merged/published/closed")
     ap.add_argument("--json", action="store_true")
