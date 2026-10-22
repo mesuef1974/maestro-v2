@@ -80,7 +80,7 @@ def test_real_registry_aliases_consistent():
     tabs = json.loads((vr.ROOT / "projects/schoolos/tabs.json").read_text(encoding="utf-8"))
     assert vr.alias_problems(tabs) == []
     merged = {m[:4]: t[:4] for t, ch in tabs["session_policy"]["charters"].items() for m in ch.get("merged", {})}
-    assert merged == {"0702": "0701", "0102": "0301"}  # 0201/0301 القديمان صارا جلستين عند الطلب 0106/0107 (D-455م)
+    assert merged == {"0102": "0301"}  # 0702 أُعيدت جلسةً مستقلّةً (أمر المالك 2026-10-22)؛ 0201/0301 القديمان صارا جلستين عند الطلب 0106/0107 (D-455م)
 
 
 def test_merged_number_reused_for_live_session_is_accepted_only_in_reused():

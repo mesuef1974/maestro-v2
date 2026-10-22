@@ -60,8 +60,8 @@ def test_round2_texts_live_in_the_source():
     assert "بعد 14:30 وبعد 19:00 (D-429م)" in text["0601.md"] and "(D-429م)" in text["INDEX.md"]
     assert "## إذا توقّف إرسالُك بين الجلسات (قرارُ المالك 2026-10-18)" in text["COMMON.md"]
     assert "## اعتمادُ الرأس لا يُسأل عنه المالك (أمر المالك 2026-10-18)" in text["COMMON.md"]
-    assert "ترث 0701 كلَّ صلاحيّات التبويب 07 بعد خروج 0702" in text["0701.md"]
-    assert "(0701 وحدَها (المستقبِلة))" in text["0701.md"]
+    assert "معاونوها 0702 (تنفيذ المسنَد) و0703 (توزيع وتتبّع)" in text["0701.md"] or "ومعاونوها: 0702 تنفّذ المسنَد" in text["0701.md"]
+    assert "(0701 وحدَها (المستقبِلة))" in (CARDS / "details" / "0702.md").read_text(encoding="utf-8")  # 0702 ميثاقٌ مستقلّ من 2026-10-22
     assert "«القراءة لـ0701»" in text["0701.md"] and "brainstorm_log.py due" in text["0701.md"]
     assert "ولا تقيّم أثرَ عصفٍ كتبته" in text["0301.md"]
     assert "حدُّ الرسائل لكلّ جلسة: 600 رسالة" in text["COMMON.md"] and "حدُّ الرسائل 600" in r.COMMON_DIGEST and "150 لكلّ جلسة" not in r.COMMON_DIGEST + r.GOVERNING

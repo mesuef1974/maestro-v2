@@ -1,0 +1,4 @@
+{"at": "2026-10-22T06:21:20", "evidence": {"files": 2, "bytes": 20, "skipped_unknown": ["W-2"], "skipped_state": 1}, "tmp": {"files": 0, "bytes": 0}, "freed_bytes": 20, "freed_db_bytes": 0, "session_dbs_dropped": 0}
+{"at": "2026-10-22T06:21:20", "evidence": {"files": 0, "bytes": 0, "skipped_unknown": [], "skipped_state": 1}, "tmp": {"files": 0, "bytes": 0}, "freed_bytes": 0, "freed_db_bytes": 0, "session_dbs_dropped": 0}
+{"at": "2026-10-22T06:21:20", "evidence": {"files": 0, "bytes": 0, "skipped_unknown": [], "skipped_state": 0}, "tmp": {"files": 0, "bytes": 0}, "freed_bytes": 0, "freed_db_bytes": 0, "session_dbs_dropped": 0}
+{"at": "2026-10-22T06:21:20", "evidence": {"files": 0, "bytes": 0, "skipped_unknown": [], "skipped_state": 0}, "tmp": {"files": 0, "bytes": 0}, "freed_bytes": 0, "freed_db_bytes": 0, "session_dbs_dropped": 0}
