@@ -344,10 +344,71 @@ def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -
     return out
 
 
+RERUNS = HERE.parent / "ledger" / "ci_reruns.json"
+#: فحصٌ معلَّق أطولَ من هذا (دقائق) يُبلَّغ مرّةً واحدة؛ والفاشل أو الملغى يُعاد مرّةً واحدةً لكلّ رأس
+CI_STUCK_MIN = 30
+RUN_ID = re.compile(r"/actions/runs/(\d+)")
+
+
+def _reruns() -> dict:
+    try:
+        return json.loads(RERUNS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def ci_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=None) -> list[str]:
+    """(مرحلة CI العالق) لا رسائلَ بين الجلسات: فحصٌ فاشل/ملغى لطلبٍ معتمَد يُعاد مرّةً واحدة لكلّ رأس (`gh run rerun --failed`)،
+    والمعلَّق أكثر من CI_STUCK_MIN دقيقة يُسجَّل ملاحظةً في الدفتر مرّةً واحدة؛ والمتكرّر فشلُه يُبلَّغ ولا يُعاد."""
+    from datetime import datetime, timezone
+
+    sh = sh or _sh
+    now = now or datetime.now(timezone.utc)
+    done, out = _reruns(), []
+    for cid, pr, _item in approved_prs(states, prs):
+        num, head = pr.get("number"), pr["headRefOid"][:8]
+        rc, raw = sh(["gh", "pr", "checks", str(num), "--json", "name,bucket,startedAt,link"], ac.REPO_DIR)
+        try:
+            checks = json.loads(raw) if rc in (0, 8) else None
+        except ValueError:
+            checks = None
+        if checks is None:
+            continue
+        key = f"{num}:{head}"
+        bad = [c for c in checks if c.get("bucket") in ("fail", "cancel")]
+        runs = sorted({m.group(1) for c in bad if (m := RUN_ID.search(c.get("link") or ""))})
+        if bad and runs:
+            if done.get(key):
+                out.append(f"{cid}: #{num} فحصٌ فاشل بعد إعادةٍ سابقة للرأس {head} ({bad[0].get('name')}) — لا إعادة ثانية")
+            elif not apply:
+                out.append(f"{cid}: #{num} يُعاد {len(runs)} تشغيلٍ فاشل للرأس {head} (عرض)")
+            else:
+                oks = [sh(["gh", "run", "rerun", r, "--failed"], ac.REPO_DIR)[0] == 0 for r in runs]
+                done[key] = 1
+                RERUNS.write_text(json.dumps(done), encoding="utf-8")
+                out.append(f"{cid}: #{num} إعادةُ {len(runs)} تشغيلٍ فاشل للرأس {head}: {'✔' if all(oks) else '✘'}")
+            continue
+        for c in checks:
+            if c.get("bucket") != "pending" or not c.get("startedAt") or done.get(key + ":stuck"):
+                continue
+            age = (now - datetime.fromisoformat(c["startedAt"].replace("Z", "+00:00"))).total_seconds() / 60
+            if age < CI_STUCK_MIN:
+                continue
+            if apply:
+                ledger.add_note(cid, f"فحصٌ معلَّق منذ {int(age)} دقيقة على #{num} ({c.get('name')}) — رصد المضخّة", SENDER)
+                done[key + ":stuck"] = 1
+                RERUNS.write_text(json.dumps(done), encoding="utf-8")
+            out.append(f"{cid}: #{num} فحصٌ معلَّق {int(age)} دقيقة ({c.get('name')})")
+            break
+    return out
+
+
 LOCK = HERE.parent / "ledger" / "flow_pump.lock"
 LOG = HERE.parent / "ledger" / "flow_pump.log"
 #: مفتاحُ الإيقاف (الموجة 0.3، D-453م): وجودُ الملف يمنع الدورة من أيّ مشغِّل (الخطّاف، مهمّةٌ مجدولة، يدويّاً) لا الخطّافَ وحده
 OFF = HERE.parent / "ledger" / "flow_pump.off"
+#: مفتاحُ منع الدمج: وجودُ الملف يعطّل مرحلةَ الدمج وحدَها من أيّ مشغِّل (الخطّاف يطلق المضخّةَ بلا --no-merge)
+NO_MERGE = HERE.parent / "ledger" / "flow_pump.nomerge"
 STALE_LOCK_S = 900
 
 
@@ -385,6 +446,7 @@ def _run(argv=None) -> int:
     ap.add_argument("--no-push", action="store_true", help="بلا مرحلة الدفع")
     ap.add_argument("--no-line", action="store_true", help="بلا كتابة سطر الاعتماد في الطلب")
     ap.add_argument("--no-merge", action="store_true", help="بلا الدمج الآليّ")
+    ap.add_argument("--no-ci", action="store_true", help="بلا إعادة الفحوص العالقة")
     a = ap.parse_args(argv)
 
     def load() -> dict[str, dict]:
@@ -415,9 +477,14 @@ def _run(argv=None) -> int:
     if not a.no_line:
         for line in line_pass(states, prs, a.apply):
             print("سطر: " + line)
-    if not a.no_merge:
+    if NO_MERGE.exists():
+        print(f"دمج: معطَّل بمفتاح ({NO_MERGE.name})")
+    elif not a.no_merge:
         for line in merge_pass(states, prs, a.apply):
             print("دمج: " + line)
+    if not a.no_ci:
+        for line in ci_pass(states, prs, a.apply):
+            print("ci: " + line)
     print("— مرحلة النشر (ledger_sync) —")
     if a.skip:
         orig = ledger_sync.plan
