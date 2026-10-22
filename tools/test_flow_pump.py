@@ -571,6 +571,109 @@ class PushPass(unittest.TestCase):
         repos.assert_not_called()
 
 
+def _rollup(*entries):
+    return {"number": 1, "isDraft": False, "statusCheckRollup": list(entries)}
+
+
+class CiLimit(unittest.TestCase):
+    """W-20261022-019: لا دفعَ لبطاقات المنصّة وطلبان قيد الفحص (checks لم تكتمل)."""
+
+    def test_check_run_and_status_context_pending_rules(self):
+        self.assertTrue(fp._entry_pending({"status": "IN_PROGRESS"}))
+        self.assertTrue(fp._entry_pending({"status": "QUEUED"}))
+        self.assertFalse(fp._entry_pending({"status": "COMPLETED", "conclusion": "FAILURE"}))
+        self.assertTrue(fp._entry_pending({"state": "PENDING"}))
+        self.assertFalse(fp._entry_pending({"state": "SUCCESS"}))
+
+    def _sh(self, prs, rc=0):
+        return lambda cmd, cwd=None: (rc, json.dumps(prs))
+
+    def test_counts_only_open_non_draft_prs_with_an_unfinished_check(self):
+        prs = [
+            _rollup({"status": "COMPLETED"}, {"status": "IN_PROGRESS"}),
+            {**_rollup({"status": "IN_PROGRESS"}), "isDraft": True},
+            _rollup({"status": "COMPLETED"}),
+            _rollup({"state": "PENDING"}),
+            {"number": 5, "isDraft": False, "statusCheckRollup": []},
+        ]
+        self.assertEqual(fp.ci_in_flight(self._sh(prs)), 2)
+
+    def test_unreadable_gh_is_none_not_zero(self):
+        self.assertIsNone(fp.ci_in_flight(self._sh([], rc=1)))
+        self.assertIsNone(fp.ci_in_flight(lambda cmd, cwd=None: (0, "not json")))
+        self.assertIsNone(fp.ci_in_flight(lambda cmd, cwd=None: (0, "{}")))
+
+
+class CiLimitPush(PushPass):
+    """نفسُ إعداد الدفع، بمستودعٍ يُعرَّف منصّةً أو لا، وعدّادِ فحوصٍ مُحاكى."""
+
+    platform = True
+
+    def git(self, branch):
+        base = super().git(branch)
+        calls = base.calls
+        platform = self.platform
+
+        def git(repo, *args):
+            if args[:2] == ("remote", "get-url"):
+                calls.append(args)
+                return 0, ("https://github.com/x/shschool_mvp.git" if platform else "https://github.com/x/maestro-v2.git") + "\n"
+            return base(repo, *args)
+
+        git.calls = calls
+        return git
+
+    def run_gated(self, busy, platform=True, apply=True):
+        type(self).platform = platform
+        (self.gitdir / fp.ledger.RECEIPT_NAME).write_text(json.dumps({"head": "aaaaaaaa", "ok": True}), encoding="utf-8")
+        git = self.git("w20261020-001-x")
+        states = fp.ledger.reduce_state(fp.ledger.load_events(self.path))
+        with mock.patch.object(fp, "LOG", self.tmp / "pump.log"):
+            lines = fp.push_pass(states, apply, repos=["C:/repo"], path=self.path, git=git, approved=lambda c, h: True,
+                                 busy_fn=lambda: busy)
+        pushes = [a for a in git.calls if a[0] == "push"]
+        return lines, pushes, fp.ledger.reduce_state(fp.ledger.load_events(self.path))[self.card]["state"]
+
+    def test_two_prs_in_ci_defer_the_push_and_say_why(self):
+        lines, pushes, state = self.run_gated(2)
+        self.assertEqual((pushes, state), ([], "approved"))
+        self.assertIn("يُؤجَّل", lines[0])
+        self.assertIn("2 طلباً قيد الفحص", lines[0])
+
+    def test_below_the_limit_it_pushes(self):
+        lines, pushes, state = self.run_gated(1)
+        self.assertEqual(state, "pushed")
+        self.assertEqual(len(pushes), 1)
+
+    def test_unreadable_ci_state_defers_instead_of_guessing(self):
+        lines, pushes, state = self.run_gated(None)
+        self.assertEqual((pushes, state), ([], "approved"))
+        self.assertIn("تعذّرت", lines[0])
+
+    def test_a_tool_repo_card_is_not_limited(self):
+        lines, pushes, state = self.run_gated(5, platform=False)
+        self.assertEqual(state, "pushed")
+
+    def test_deferral_is_logged_once_across_repeated_cycles(self):
+        self.run_gated(2)
+        self.run_gated(2)
+        log = (self.tmp / "pump.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(log), 1)
+        self.assertIn("دفع:", log[0])
+
+    def test_a_dry_run_writes_no_log(self):
+        self.run_gated(2, apply=False)
+        self.assertFalse((self.tmp / "pump.log").exists())
+
+    def test_the_cap_counts_pushes_of_the_same_cycle(self):
+        items = {"W-1": {"approved_head": "aaaaaaaa"}, "W-2": {"approved_head": "aaaaaaaa"}}
+        with mock.patch("push_watch.find_tree", return_value=({"path": "C:/repo/wt1", "branch": "w1"}, "")):
+            keep, lines = fp.defer_for_ci(items, ["C:/repo"], lambda *a: (0, "git@github.com:x/shschool_mvp.git"), lambda: 1)
+        self.assertEqual(sorted(keep), ["W-1"])
+        self.assertEqual(len(lines), 1)
+        self.assertIn("W-2", lines[0])
+
+
 class Stages(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
