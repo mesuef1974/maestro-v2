@@ -249,3 +249,15 @@ def test_make_plan_passes_registry_aliases(monkeypatch):
     wm.make_plan(argparse.Namespace(all=True, stale=True, sender="0701"), [], "", {})
     assert seen["plan"]["aliases"] == {"0702": "0701"} and seen["plan"]["channel"] == wm.TEST_CHANNEL
     assert seen["stale"]["aliases"] == {"0702": "0701"} and seen["stale"]["channel"] is None
+
+
+def test_running_arg_replaces_activity_window():
+    assert wm.running_from_arg("0101, 0501,0701") == {"0101", "0501", "0701"}
+    assert wm.running_from_arg("") is None and wm.running_from_arg(None) is None
+    assert wm.running_from_arg("abc 0702 12345") == {"0702"}
+
+
+def test_live_for_uses_running_when_given(monkeypatch):
+    monkeypatch.setattr(wm, "live_sessions", lambda: {"9999"})
+    assert wm.live_for(type("A", (), {"running": "0101,0501"})()) == {"0101", "0501"}
+    assert wm.live_for(type("A", (), {"running": ""})()) == {"9999"}

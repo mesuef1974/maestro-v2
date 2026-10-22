@@ -293,6 +293,19 @@ def live_sessions() -> set[str]:
     return {n for n, e in sd.entries().items() if now_ms - e["at"] <= LIVE_WINDOW_MS}
 
 
+def running_from_arg(text: str | None) -> set[str] | None:
+    """«--running 0101,0501»: الجلساتُ العاملةُ فعلاً (isRunning) يقدّمها المنفِّذُ من list_sessions؛ ملفاتُ الجلسات على القرص بلا هذا الحقل،
+    فنافذةُ النشاط تقديرٌ لا قياس. بلا القيمة يبقى التقدير القديم. تُقبل أرقامٌ من أربع خاناتٍ فقط."""
+    if not text:
+        return None
+    return {t for t in re.split(r"[,\s]+", text.strip()) if SESSION_NUM.match(t) and len(t) == 4}
+
+
+def live_for(a) -> set[str]:
+    running = running_from_arg(getattr(a, "running", None))
+    return running if running is not None else live_sessions()
+
+
 def message_for(session: str, rows: list[tuple[str, str]]) -> str:
     return "\n".join(payload(i, s) for i, s in rows)
 
@@ -317,10 +330,10 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
     aliases = sa.number_map()
     if a.stale:
         now = datetime.now().astimezone()
-        return stale_plan(events, directory, live_sessions(), now, log=read_log(), channel=channel, sent=sender_count(a.sender),
+        return stale_plan(events, directory, live_for(a), now, log=read_log(), channel=channel, sent=sender_count(a.sender),
                           aliases=aliases)
     hist = woken_history()
-    return plan(events, cursor, directory, live_sessions(), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
+    return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
 
 
@@ -329,6 +342,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--commit", action="store_true", help="يقدّم المؤشّر ويسجّل wake_log ويزيد عدّاد المرسِل بعدد الرسائل")
     ap.add_argument("--sender", default="0701", help="الجلسة التي ترسل فعلاً (عدّادها هو المحروس)")
+    ap.add_argument("--running", default="", help="أرقام الجلسات العاملة فعلاً (isRunning من list_sessions) مفصولةً بفواصل؛ تحلّ محلّ نافذة النشاط")
     ap.add_argument("--all", action="store_true", help="يعمّم على كلّ الحاملين بدل قناة التجربة")
     ap.add_argument("--stale", action="store_true", help="يتتبّع الحالةَ القائمة لا الحدث: يعيد إيقاظَ مسؤولِ كلّ بطاقةٍ عالقةٍ كلَّ ساعة (بلا تقديمِ مؤشّر)")
     ap.add_argument("--json", action="store_true", help="خطّةٌ آليّة: قائمة {to,session_id,message}")
