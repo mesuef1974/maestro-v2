@@ -546,7 +546,7 @@ class PushPass(unittest.TestCase):
 class Stages(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
-        for name in ("LOCK", "LOG", "OFF"):
+        for name in ("LOCK", "LOG", "OFF", "NO_MERGE"):
             p = mock.patch.object(fp, name, tmp / name)
             p.start()
             self.addCleanup(p.stop)
@@ -579,6 +579,12 @@ class Stages(unittest.TestCase):
     def test_each_stage_can_be_switched_off(self):
         called, _ = self.run_main(["--apply", "--no-push", "--no-line", "--no-merge"])
         self.assertEqual(called, ["approve", "prs", "waive"])
+
+    def test_the_no_merge_switch_skips_only_the_merge_stage(self):
+        fp.NO_MERGE.write_text("")
+        called, out = self.run_main(["--apply"])
+        self.assertEqual(called, ["approve", "prs", "waive", "push", "line"])
+        self.assertIn("دمج: معطَّل", out)
 
     def test_unreadable_prs_are_reported_not_taken_as_none(self):
         called, out = self.run_main([], prs=None)
