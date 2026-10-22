@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -37,6 +38,7 @@ import session_alias as sa  # noqa: E402  (الأسماءُ المستعارة �
 EVENTS = ROOT / "ledger" / "events.jsonl"
 CURSOR = ROOT / "wake_cursor.json"
 LOG = ROOT / "wake_log.jsonl"
+FINGERPRINT = ROOT / "wake_fingerprint.json"  # بصمةُ آخر حالةٍ عولجت (الإيقاظُ بالتغيير لا بالزمن، أمر المالك 10-22 لتقليل التوكنز)
 MAX_BATCH = 20
 MAX_PER_MINUTE = 3  # أقصى جلساتٍ تُوقَظ (تبدأ عملاً) في الدقيقة؛ الزائدُ يُؤجَّل لا يُسقط (أمر المالك 10-20 بند5)
 MAX_LIVE = 14
@@ -288,6 +290,69 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
     return p
 
 
+def fingerprint(events: list[dict], now: datetime, extra: str = "") -> str:
+    """بصمةُ حالةِ الدفتر: لكلّ بطاقةٍ في حالةٍ منتظِرةٍ (id، الحالة، الحامل، وهل تجاوزت حدَّها) ثمّ `extra` (لقطةُ الطلبات).
+    تغيُّرُ أيٍّ منها يغيّر البصمةَ؛ وعبورُ البطاقةِ حدَّ عُلوقها يغيّرها أيضاً فلا يضيع العالقُ بصمتِ الدفتر. دالّةٌ نقيّةٌ."""
+    since: dict[str, datetime] = {}
+    for ev in events:
+        if ev["kind"] == "state" and ev["data"].get("state"):
+            since[ev["id"]] = _dt(ev["ts"])
+    rows = []
+    for item_id, it in ledger.reduce_state(events).items():
+        st = it.get("state")
+        rule = STALE_RULES.get(st)
+        if rule is None or item_id not in since:
+            continue
+        stale = now - since[item_id] >= timedelta(hours=rule[1])
+        rows.append([item_id, st, str(it.get("held_by") or ""), stale])
+    body = json.dumps([sorted(rows), extra], ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def read_fingerprint(path: Path | None = None) -> str:
+    path = path or FINGERPRINT  # يُقرأ عند الاستدعاء لا عند التعريف فيصحّ تبديلُه في الاختبار
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("fp", ""))
+    except (OSError, ValueError, AttributeError):
+        return ""  # بلا ملفٍّ أو بملفٍّ تالفٍ: «تغيّر» فيُعالَج ولا يُسكَت
+
+
+def write_fingerprint(fp: str, path: Path | None = None) -> None:
+    path = path or FINGERPRINT
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"fp": fp, "ts": ledger.now_doha()}), encoding="utf-8")
+    tmp.replace(path)  # كتابةٌ ذرّيّة: انقطاعٌ في منتصفها لا يترك بصمةً مبتورة
+
+
+def report(events: list[dict], now: datetime, fp: str) -> str:
+    """تقريرٌ بسكربت من الأرقام (لا قراءةَ نموذجٍ): عددُ بطاقاتِ كلّ حالةٍ منتظِرةٍ وعدد العالقِ منها."""
+    since: dict[str, datetime] = {}
+    for ev in events:
+        if ev["kind"] == "state" and ev["data"].get("state"):
+            since[ev["id"]] = _dt(ev["ts"])
+    counts: dict[str, list[int]] = {}
+    for item_id, it in ledger.reduce_state(events).items():
+        st = it.get("state")
+        rule = STALE_RULES.get(st)
+        if rule is None or item_id not in since:
+            continue
+        c = counts.setdefault(st, [0, 0])
+        c[0] += 1
+        c[1] += now - since[item_id] >= timedelta(hours=rule[1])
+    parts = " ؛ ".join(f"{st} {c[0]} (عالقة {c[1]})" for st, c in sorted(counts.items())) or "لا بطاقاتٍ منتظِرة"
+    return f"تغيّرت الحالة [{fp}]: {parts}"
+
+
+def read_pr_state(path: str | None) -> str:
+    """لقطةُ الطلبات من ملفٍّ يكتبه المُنفِّذ (مثلاً خرجُ gh pr list) تدخل البصمةَ نصّاً كما هي؛ غيابُه لا يكسر."""
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def live_sessions() -> set[str]:
     import session_directory as sd
 
@@ -350,6 +415,8 @@ def main(argv=None) -> int:
     ap.add_argument("--json", action="store_true", help="خطّةٌ آليّة: قائمة {to,session_id,message}")
     ap.add_argument("--watch", action="store_true", help="مراقبةٌ (Monitor): سطرٌ لكلّ جلسةٍ عند التغيّر فقط، بلا كتابة ولا تقديمِ مؤشّر؛ الإرسالُ بيد المنفِّذ")
     ap.add_argument("--interval", type=int, default=300, help="مع --watch: ثوانٍ بين الدورات")
+    ap.add_argument("--changed-only", action="store_true", help="لا خطّةَ ولا إيقاظَ ولا قرارَ إلا إن تغيّرت بصمةُ الحالة عن المحفوظة (wake_fingerprint.json)، ويطبع تقريراً بسكربت عند التغيّر؛ ومع --commit تُحفَظ البصمةُ بعد المعالجة الكاملة")
+    ap.add_argument("--pr-state", default="", help="ملفٌّ فيه لقطةُ الطلبات (حالاتٌ ورؤوسٌ وفحوص) تدخل البصمةَ؛ غيابُه يُهمَل")
     ap.add_argument("--once", action="store_true", help="مع --watch: دورةٌ واحدة")
     a = ap.parse_args(argv)
     import session_directory as sd
@@ -357,6 +424,7 @@ def main(argv=None) -> int:
     hist = woken_history()
     if a.watch:
         seen: set = set()
+        last_fp = read_fingerprint() if a.changed_only else ""
         cleared = time.time()
         while True:
             if a.stale and time.time() - cleared >= REWAKE_MIN * 60:
@@ -364,6 +432,15 @@ def main(argv=None) -> int:
                 cleared = time.time()
             try:
                 events = read_events(EVENTS)
+                if a.changed_only:
+                    fp = fingerprint(events, datetime.now().astimezone(), read_pr_state(a.pr_state))
+                    if fp == last_fp:
+                        if a.once:
+                            return 0
+                        time.sleep(a.interval)
+                        continue
+                    last_fp = fp
+                    print(f"# {report(events, datetime.now().astimezone(), fp)}", flush=True)
                 cursor = json.loads(CURSOR.read_text(encoding="utf-8"))["ts"] if CURSOR.is_file() else (events[-1]["ts"] if events else "")
                 directory = {n: e["id"] for n, e in sd.entries().items()}
                 p = make_plan(a, events, cursor, directory)
@@ -376,6 +453,13 @@ def main(argv=None) -> int:
             time.sleep(a.interval)
 
     events = read_events(EVENTS)
+    fp = ""
+    if a.changed_only:
+        fp = fingerprint(events, datetime.now().astimezone(), read_pr_state(a.pr_state))
+        if fp == read_fingerprint():
+            print("لا تغيّر عن آخر بصمة: لا إيقاظَ ولا قرار")
+            return 0
+        print(report(events, datetime.now().astimezone(), fp))
     cursor = json.loads(CURSOR.read_text(encoding="utf-8"))["ts"] if CURSOR.is_file() else (events[-1]["ts"] if events else "")
     directory = {n: e["id"] for n, e in sd.entries().items()}
     p = make_plan(a, events, cursor, directory)
@@ -402,6 +486,8 @@ def main(argv=None) -> int:
             subprocess.run([sys.executable, str(HERE / "msg_counter.py"), "add", a.sender, str(len(p.wakes))], check=False)  # noqa: S603
         if not p.halted and not p.deferred and not a.stale:
             CURSOR.write_text(json.dumps({"ts": p.cursor}), encoding="utf-8")
+        if fp and not p.halted and not p.deferred:
+            write_fingerprint(fp)  # لا تُحفَظ عند التوقّف أو التأجيل فيُعاد النظرُ في الدورة التالية
     return 0
 
 
