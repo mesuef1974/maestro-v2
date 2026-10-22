@@ -22,7 +22,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-LIMIT = 300  # قرار المالك 2026-10-21 (كان 150 D-414م)
+LIMIT = 600  # قرار المالك 2026-10-22 (كان 300 D-447م، وقبله 150 D-414م)
 WARN_AT = 80  # عند هذا العدد يُنبَّه إلى اقتراب الحدّ
 STATE = Path(__file__).resolve().parent.parent / "msg_counter.json"
 
