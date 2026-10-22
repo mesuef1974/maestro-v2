@@ -404,10 +404,52 @@ def merge_block(card: str, pr: dict) -> str | None:
     return None
 
 
+MAIN_RUN_EVENTS = ("push", "merge_group")  # تشغيلاتُ ما بعد الدمج: فحصُ main ونشرُه وطابورُ الدمج (لا تعليقاتُ الطلبات)
+
+
+def main_runs_in_flight(sh=None) -> int | None:
+    """عددُ تشغيلات main الجاريةِ أو المنتظِرة (دمجٌ في الطابور أو فحصٌ أو نشرٌ بعد دمج)؛ None إن تعذّرت القراءة."""
+    rc, out = (sh or _sh)(["gh", "run", "list", "--limit", "40", "--json", "status,event,headBranch"], ac.REPO_DIR)
+    if rc:
+        return None
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return sum(
+        1
+        for r in data
+        if isinstance(r, dict)
+        and r.get("event") in MAIN_RUN_EVENTS
+        and str(r.get("status") or "").lower() in ("queued", "in_progress", "waiting", "pending", "requested")
+        and (r.get("headBranch") == "main" or str(r.get("headBranch") or "").startswith("gh-readonly-queue/main"))
+    )
+
+
+def serial_block(num, prs: list[dict], armed_now: list, sh) -> str | None:
+    """(W-20261022-020، «طلبٌ واحد لكلّ نشر») سببُ عدم تفعيل --auto الآن: طلبٌ آخر فُعِّل عليه الدمجُ التلقائيّ (في الطابور)،
+    أو فُعِّل في هذه الدورة، أو تشغيلٌ جارٍ على main (فحصٌ أو نشر). تعذّرُ القراءة يمنع ولا يخمّن."""
+    if armed_now:
+        return f"فُعِّل الدمجُ الآليّ على #{armed_now[0]} في هذه الدورة — طلبٌ واحدٌ لكلّ نشر"
+    for other in prs:
+        if other.get("number") != num and not other.get("isDraft") and other.get("autoMergeRequest"):
+            return f"#{other.get('number')} في الطابور (دمجٌ آليٌّ مفعَّل) — طلبٌ واحدٌ لكلّ نشر"
+    busy = main_runs_in_flight(sh)
+    if busy is None:
+        return "تعذّرت قراءةُ تشغيلات main (gh) — لا تفعيلَ بلا علم"
+    if busy:
+        return f"{busy} تشغيلاً جارياً على main (طابورٌ أو فحصٌ أو نشر) — طلبٌ واحدٌ لكلّ نشر"
+    return None
+
+
 def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -> list[str]:
-    """(D-450م) دمجٌ آليّ عند خضرة CI لطلبٍ سطرُ اعتماده سليم: `--auto` مقيَّدٌ بالرأس (`--match-head-commit`) فلا يُدمج غيرُه."""
+    """(D-450م) دمجٌ آليّ عند خضرة CI لطلبٍ سطرُ اعتماده سليم: `--auto` مقيَّدٌ بالرأس (`--match-head-commit`) فلا يُدمج غيرُه.
+    (W-20261022-020) وطلبٌ واحدٌ فقط لكلّ نشر: لا تفعيلَ والطابورُ أو main مشغولان (serial_block)."""
     sh = sh or _sh
     out: list[str] = []
+    armed_now: list = []
     for cid, pr, _item in approved_prs(states, prs):
         num, full = pr.get("number"), pr["headRefOid"]
         head = full[:8]
@@ -423,13 +465,19 @@ def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -
         if not approval_ok(cid, head):
             out.append(f"{cid}: #{num} رأس {head} بلا اعتمادٍ ثابت — لا دمج")
             continue
+        wait = serial_block(num, prs, armed_now, sh)
+        if wait:
+            out.append(f"{cid}: #{num} ⏸ يؤجَّل الدمجُ الآليّ — {wait}")
+            continue
         if not apply:
             out.append(f"{cid}: #{num} يُدمج آليّاً عند خضرة CI بالرأس {head} (عرض)")
+            armed_now.append(num)  # يحجب غيرَه في العرض أيضاً ليطابق ما سيجري
             continue
         rc, msg = sh(["gh", "pr", "merge", str(num), "--squash", "--auto", "--match-head-commit", full], ac.REPO_DIR)
         if rc != 0:
             out.append(f"{cid}: #{num} دمجٌ آليّ عند خضرة CI: ✘ {_tail(msg)}")
         elif auto_merge_armed(num, sh):
+            armed_now.append(num)
             out.append(f"{cid}: #{num} دمجٌ آليّ عند خضرة CI: ✔")
         else:
             out.append(f"{cid}: #{num} نجح الأمرُ لكنّ الدمجَ الآليّ غيرُ مفعَّلٍ على GitHub (autoMergeRequest فارغ) — لا تأشير")

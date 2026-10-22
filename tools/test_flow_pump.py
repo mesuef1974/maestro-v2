@@ -437,11 +437,14 @@ LINED = f"اعتُمد من المالك على 8500 — 2026-10-20 — الرأ
 class ViewSh(FakeSh):
     """يردّ على `gh pr view` بحالة الدمج الآليّ المعطاة؛ وباقي الأوامر كما FakeSh."""
 
-    def __init__(self, view_out='{"autoMergeRequest": {"enabledAt": "x"}, "state": "OPEN"}', view_rc=0):
+    def __init__(self, view_out='{"autoMergeRequest": {"enabledAt": "x"}, "state": "OPEN"}', view_rc=0, runs_out="[]", runs_rc=0):
         super().__init__()
         self.view_out, self.view_rc = view_out, view_rc
+        self.runs_out, self.runs_rc = runs_out, runs_rc
 
     def __call__(self, cmd, cwd=None):
+        if cmd[:3] == ["gh", "run", "list"]:  # main هادئ افتراضاً (W-20261022-020)؛ ولا يُسجَّل بين استدعاءات الدمج
+            return self.runs_rc, self.runs_out
         if cmd[:3] == ["gh", "pr", "view"]:
             self.calls.append(cmd)
             return self.view_rc, self.view_out
@@ -507,6 +510,85 @@ class MergePass(unittest.TestCase):
         lines, sh = self.run_pass(_pr(body=LINED), apply=False)
         self.assertEqual(sh.calls, [])
         self.assertIn("(عرض)", lines[0])
+
+
+def _run(status="in_progress", event="push", branch="main"):
+    return {"status": status, "event": event, "headBranch": branch}
+
+
+class SerialMerge(unittest.TestCase):
+    """W-20261022-020: طلبٌ واحد لكلّ نشر — لا --auto والطابورُ أو main مشغولان، وطلبٌ واحدٌ يُفعَّل في الدورة."""
+
+    def run_pass(self, prs, sh=None, apply=True, states=None):
+        sh = sh or ViewSh()
+        with (
+            mock.patch.object(fp, "approval_ok", return_value=True),
+            mock.patch.object(fp.ac, "security_approved", return_value=None),
+        ):
+            lines = fp.merge_pass(states or _states(), prs, apply, sh)
+        return lines, sh
+
+    def merged(self, sh):
+        return [c for c in sh.calls if c[:3] == ["gh", "pr", "merge"]]
+
+    def test_main_runs_count_only_push_and_queue_events_on_main_in_flight(self):
+        runs = [_run(), _run("queued", "merge_group", "gh-readonly-queue/main/pr-9"), _run("completed"),
+                _run(event="pull_request"), _run(branch="feature/x")]
+        self.assertEqual(fp.main_runs_in_flight(lambda c, cwd=None: (0, json.dumps(runs))), 2)
+
+    def test_unreadable_runs_are_none(self):
+        self.assertIsNone(fp.main_runs_in_flight(lambda c, cwd=None: (1, "")))
+        self.assertIsNone(fp.main_runs_in_flight(lambda c, cwd=None: (0, "zzz")))
+        self.assertIsNone(fp.main_runs_in_flight(lambda c, cwd=None: (0, "{}")))
+
+    def test_a_busy_main_defers_the_arming_and_says_why(self):
+        lines, sh = self.run_pass([_pr(body=LINED)], sh=ViewSh(runs_out=json.dumps([_run()])))
+        self.assertEqual(self.merged(sh), [])
+        self.assertIn("يؤجَّل", lines[0])
+        self.assertIn("1 تشغيلاً جارياً على main", lines[0])
+
+    def test_a_running_deploy_on_main_after_a_merge_also_defers(self):
+        lines, sh = self.run_pass([_pr(body=LINED)], sh=ViewSh(runs_out=json.dumps([_run("queued")])))
+        self.assertEqual(self.merged(sh), [])
+
+    def test_another_pr_already_armed_holds_this_one_back(self):
+        other = _pr(num=9, card="W-20261020-009", autoMergeRequest={"enabledAt": "x"})
+        lines, sh = self.run_pass([_pr(body=LINED), other])
+        self.assertEqual(self.merged(sh), [])
+        self.assertIn("#9 في الطابور", lines[0])
+
+    def test_a_draft_armed_pr_does_not_block(self):
+        other = _pr(num=9, card="W-20261020-009", autoMergeRequest={"enabledAt": "x"}, isDraft=True)
+        lines, sh = self.run_pass([_pr(body=LINED), other])
+        self.assertEqual(len(self.merged(sh)), 1)
+
+    def test_unreadable_main_runs_defer_instead_of_arming(self):
+        lines, sh = self.run_pass([_pr(body=LINED)], sh=ViewSh(runs_rc=1))
+        self.assertEqual(self.merged(sh), [])
+        self.assertIn("تعذّرت", lines[0])
+
+    def test_only_one_pr_is_armed_per_cycle(self):
+        second = "W-20261020-002"
+        states = {**_states(), second: {"state": "pushed", "approved_head": "abcdef12", "approvals": [{"ts": "2026-10-20T10:00:00+03:00"}], "notes": []}}
+        prs = [_pr(num=7, body=LINED), _pr(num=8, card=second, body=LINED.replace(CARD, second))]
+        with mock.patch.object(fp, "line_ok", return_value=True):
+            lines, sh = self.run_pass(prs, states=states)
+        self.assertEqual(len(self.merged(sh)), 1)
+        self.assertTrue(any("فُعِّل الدمجُ الآليّ على #7" in line for line in lines))
+
+    def test_dry_run_also_holds_the_second_pr_back(self):
+        second = "W-20261020-002"
+        states = {**_states(), second: {"state": "pushed", "approved_head": "abcdef12", "approvals": [{"ts": "2026-10-20T10:00:00+03:00"}], "notes": []}}
+        prs = [_pr(num=7, body=LINED), _pr(num=8, card=second, body=LINED)]
+        with mock.patch.object(fp, "line_ok", return_value=True):
+            lines, sh = self.run_pass(prs, states=states, apply=False)
+        self.assertEqual(sum("(عرض)" in line for line in lines), 1)
+        self.assertEqual(sh.calls, [])
+
+    def test_migration_and_security_blocks_still_come_first(self):
+        lines, sh = self.run_pass([_pr(body=LINED, files=[{"path": "school/migrations/0007_x.py"}])], sh=ViewSh(runs_out=json.dumps([_run()])))
+        self.assertIn("0601", lines[0])
+        self.assertNotIn("يؤجَّل", lines[0])
 
 
 class PushPass(unittest.TestCase):
