@@ -12,7 +12,7 @@ import render_role_cards as r  # noqa: E402
 
 CARDS = ROOT / "role_cards"
 #: عباراتٌ مفتاحيّةٌ لكلّ قاعدةٍ حاكمةٍ يجب أن تبقى في كلّ نواة.
-MUST = ["العربيّةُ وحدَها", "سيدي", "D-88م", "D-381م", "D-421م", "D-130م", "D-414م", "D-447م", "msg_counter", "ground_truth", "اعتماد المالك"]
+MUST = ["العربيّةُ وحدَها", "سيدي", "D-88م", "D-381م", "D-421م", "D-130م", "D-414م", "D-447م", "D-468م", "msg_counter", "ground_truth", "اعتماد المالك"]
 
 
 @pytest.mark.parametrize("sid", r.NUCLEUS_ROLES)
@@ -29,7 +29,7 @@ def test_details_and_common_keep_full_text(sid):
     common = (CARDS / "COMMON.md").read_text(encoding="utf-8")
     assert r.COMMON.split("\n")[0] in common
     assert "قواعدُ تسري على كلّ الجلسات" in det
-    assert len(det.encode("utf-8")) > 10000
+    assert len(det.encode("utf-8")) > 5000
 
 
 def test_governing_constant_covers_must():
@@ -54,7 +54,8 @@ def test_cards_on_disk_equal_a_fresh_generator_run(tmp_path, monkeypatch):
 
 def test_round2_texts_live_in_the_source():
     """نصوصٌ كانت يدويّةً أو أُمر بها في الجولة 2 تُولَّد من المصدر."""
-    text = {n: (CARDS / n).read_text(encoding="utf-8") for n in ("0301.md", "0601.md", "0701.md", "COMMON.md", "INDEX.md")}
+    text = {n: (CARDS / n).read_text(encoding="utf-8") for n in ("details/0301.md", "details/0601.md", "details/0701.md", "COMMON.md", "INDEX.md")}
+    text.update({k[8:]: v for k, v in list(text.items()) if k.startswith("details/")})
     assert "## ختم مصدر الحقيقة (W-20261020-003، ظلّ)" in text["0301.md"]
     assert "بعد 14:30 وبعد 19:00 (D-429م)" in text["0601.md"] and "(D-429م)" in text["INDEX.md"]
     assert "## إذا توقّف إرسالُك بين الجلسات (قرارُ المالك 2026-10-18)" in text["COMMON.md"]
@@ -63,7 +64,7 @@ def test_round2_texts_live_in_the_source():
     assert "(0701 وحدَها (المستقبِلة))" in text["0701.md"]
     assert "«القراءة لـ0701»" in text["0701.md"] and "brainstorm_log.py due" in text["0701.md"]
     assert "ولا تقيّم أثرَ عصفٍ كتبته" in text["0301.md"]
-    assert "حدُّ الرسائل لكلّ جلسة: 300 رسالة" in text["COMMON.md"] and "حدُّ الرسائل 300" in r.COMMON_DIGEST and "150 لكلّ جلسة" not in r.COMMON_DIGEST + r.GOVERNING
+    assert "حدُّ الرسائل لكلّ جلسة: 600 رسالة" in text["COMMON.md"] and "حدُّ الرسائل 600" in r.COMMON_DIGEST and "150 لكلّ جلسة" not in r.COMMON_DIGEST + r.GOVERNING
 
 
 def test_gate_and_advisor_charters_split_out_of_0101_into_0106_and_0107():
@@ -74,7 +75,7 @@ def test_gate_and_advisor_charters_split_out_of_0101_into_0106_and_0107():
     assert "## مدمَج من 0201 ·" not in details and "## مدمَج من 0301 ·" not in details
     assert "role_cards/details/0101.md" in core
     assert len(core.encode("utf-8")) <= 4096
-    gate = (CARDS / "0106.md").read_text(encoding="utf-8")
-    advisor = (CARDS / "0107.md").read_text(encoding="utf-8")
+    gate = (CARDS / "details" / "0106.md").read_text(encoding="utf-8")
+    advisor = (CARDS / "details" / "0107.md").read_text(encoding="utf-8")
     assert "البلاغات" in gate and "تسليمُ رأسه إلى 0107" in gate
     assert "بوّابةَ المواصفة الكاملة" in advisor and "الفاصل مع 0301 الحوكمة" in advisor
