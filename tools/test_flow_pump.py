@@ -434,9 +434,23 @@ class LinePass(unittest.TestCase):
 LINED = f"اعتُمد من المالك على 8500 — 2026-10-20 — الرأس abcdef12 — {CARD}"
 
 
+class ViewSh(FakeSh):
+    """يردّ على `gh pr view` بحالة الدمج الآليّ المعطاة؛ وباقي الأوامر كما FakeSh."""
+
+    def __init__(self, view_out='{"autoMergeRequest": {"enabledAt": "x"}, "state": "OPEN"}', view_rc=0):
+        super().__init__()
+        self.view_out, self.view_rc = view_out, view_rc
+
+    def __call__(self, cmd, cwd=None):
+        if cmd[:3] == ["gh", "pr", "view"]:
+            self.calls.append(cmd)
+            return self.view_rc, self.view_out
+        return super().__call__(cmd, cwd)
+
+
 class MergePass(unittest.TestCase):
-    def run_pass(self, pr, ok=True, security=None, apply=True):
-        sh = FakeSh()
+    def run_pass(self, pr, ok=True, security=None, apply=True, sh=None):
+        sh = sh or ViewSh()
         with (
             mock.patch.object(fp, "approval_ok", return_value=ok),
             mock.patch.object(fp.ac, "security_approved", return_value=security),
@@ -446,8 +460,22 @@ class MergePass(unittest.TestCase):
 
     def test_a_lined_clean_pr_is_queued_to_merge_at_green_ci_bound_to_its_exact_head(self):
         lines, sh = self.run_pass(_pr(body=LINED))
-        self.assertEqual(sh.calls, [["gh", "pr", "merge", "7", "--squash", "--auto", "--match-head-commit", FULL]])
+        self.assertEqual(sh.calls[0], ["gh", "pr", "merge", "7", "--squash", "--auto", "--match-head-commit", FULL])
         self.assertIn("✔", lines[0])
+
+    def test_no_tick_when_gh_succeeds_but_auto_merge_is_not_armed(self):  # #1226 و#1223 و#1218
+        for view_out in ('{"autoMergeRequest": null, "state": "OPEN"}', "", "ليس json"):
+            lines, _sh = self.run_pass(_pr(body=LINED), sh=ViewSh(view_out=view_out))
+            self.assertNotIn("✔", lines[0], view_out)
+            self.assertIn("غيرُ مفعَّل", lines[0])
+
+    def test_tick_when_the_pr_is_already_merged(self):
+        lines, _sh = self.run_pass(_pr(body=LINED), sh=ViewSh(view_out='{"autoMergeRequest": null, "state": "MERGED"}'))
+        self.assertIn("✔", lines[0])
+
+    def test_a_failed_view_means_no_tick(self):
+        lines, _sh = self.run_pass(_pr(body=LINED), sh=ViewSh(view_rc=1))
+        self.assertNotIn("✔", lines[0])
 
     def test_blocked_prs_are_reported_and_never_merged(self):
         cases = {

@@ -340,8 +340,26 @@ def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -
             out.append(f"{cid}: #{num} يُدمج آليّاً عند خضرة CI بالرأس {head} (عرض)")
             continue
         rc, msg = sh(["gh", "pr", "merge", str(num), "--squash", "--auto", "--match-head-commit", full], ac.REPO_DIR)
-        out.append(f"{cid}: #{num} دمجٌ آليّ عند خضرة CI: {'✔' if rc == 0 else '✘ ' + _tail(msg)}")
+        if rc != 0:
+            out.append(f"{cid}: #{num} دمجٌ آليّ عند خضرة CI: ✘ {_tail(msg)}")
+        elif auto_merge_armed(num, sh):
+            out.append(f"{cid}: #{num} دمجٌ آليّ عند خضرة CI: ✔")
+        else:
+            out.append(f"{cid}: #{num} نجح الأمرُ لكنّ الدمجَ الآليّ غيرُ مفعَّلٍ على GitHub (autoMergeRequest فارغ) — لا تأشير")
     return out
+
+
+def auto_merge_armed(num, sh) -> bool:
+    """W-20261022-009: نجاحُ `gh pr merge --auto` وحدَه لا يكفي (سجّلت المضخّةُ ✔ لطلباتٍ بلا autoMergeRequest)؛ تُقرأ حالةُ الطلب بعدها:
+    ✔ فقط إن كان الدمجُ الآليّ مفعَّلاً فعلاً أو الطلبُ مدموجاً. قراءةٌ فاشلةٌ أو غيرُ مفهومةٍ = غيرُ مفعَّل."""
+    rc, text = sh(["gh", "pr", "view", str(num), "--json", "autoMergeRequest,state"], ac.REPO_DIR)
+    if rc != 0:
+        return False
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return False
+    return bool(data.get("autoMergeRequest")) or data.get("state") == "MERGED"
 
 
 LOCK = HERE.parent / "ledger" / "flow_pump.lock"
