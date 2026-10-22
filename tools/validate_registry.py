@@ -77,6 +77,9 @@ def alias_problems(tabs: dict) -> list[str]:
     core = {t[:4] for t in policy.get("core_sessions", [])}
     # هدفُ الإحالة: جلسةُ نواةٍ قائمةٌ أو نواةٌ تنتظر الفتح (core_to_open)
     targets = core | {str(t.get("title", "") if isinstance(t, dict) else t)[:4] for t in policy.get("core_to_open", [])}
+    # أو جلسةٌ حيّةٌ عند الطلب لها ميثاقٌ بـlifecycle وهي عضوٌ في تبويب (0106/0107/0108): الرقمُ المدمَج يُحال إليها (0102 ← 0108، 2026-10-22)
+    members = {m for tab in tabs.get("tabs", []) for m in tab.get("members", [])}
+    targets |= {t[:4] for t, ch in charters.items() if ch.get("lifecycle") and t in members}
     standing = core | {m[:4] for tab in tabs.get("tabs", []) for m in tab.get("members", [])} | {t[:4] for t in charters}
     out = []
     for old, new in aliases.items():

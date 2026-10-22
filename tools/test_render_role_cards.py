@@ -63,7 +63,7 @@ def test_round2_texts_live_in_the_source():
     assert "معاونوها 0702 (تنفيذ المسنَد) و0703 (توزيع وتتبّع)" in text["0701.md"] or "ومعاونوها: 0702 تنفّذ المسنَد" in text["0701.md"]
     assert "(0701 وحدَها (المستقبِلة))" in (CARDS / "details" / "0702.md").read_text(encoding="utf-8")  # 0702 ميثاقٌ مستقلّ من 2026-10-22
     assert "«القراءة لـ0701»" in text["0701.md"] and "brainstorm_log.py due" in text["0701.md"]
-    assert "ولا تقيّم أثرَ عصفٍ كتبته" in text["0301.md"]
+    assert "والعصفُ وتسجيلُه لـ0108" in text["0301.md"] and "brainstorm_log.py add" in (CARDS / "details" / "0108.md").read_text(encoding="utf-8")  # العصف انتقل من 0301 إلى 0108 (2026-10-22)
     assert "حدُّ الرسائل لكلّ جلسة: 600 رسالة" in text["COMMON.md"] and "حدُّ الرسائل 600" in r.COMMON_DIGEST and "150 لكلّ جلسة" not in r.COMMON_DIGEST + r.GOVERNING
 
 

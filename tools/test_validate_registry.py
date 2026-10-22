@@ -80,7 +80,8 @@ def test_real_registry_aliases_consistent():
     tabs = json.loads((vr.ROOT / "projects/schoolos/tabs.json").read_text(encoding="utf-8"))
     assert vr.alias_problems(tabs) == []
     merged = {m[:4]: t[:4] for t, ch in tabs["session_policy"]["charters"].items() for m in ch.get("merged", {})}
-    assert merged == {"0102": "0301"}  # 0702 أُعيدت جلسةً مستقلّةً (أمر المالك 2026-10-22)؛ 0201/0301 القديمان صارا جلستين عند الطلب 0106/0107 (D-455م)
+    assert merged == {}  # لا ميثاقَ مدمَجاً اليوم: 0702 جلسةٌ مستقلّة (2026-10-22)، 0201/0301 القديمان 0106/0107 (D-455م)، و0102 صار 0108 (2026-10-22)
+    assert tabs["session_policy"]["aliases"]["0102"] == "0108"
 
 
 def test_merged_number_reused_for_live_session_is_accepted_only_in_reused():
@@ -102,3 +103,12 @@ def test_ordinal_tab_accepts_sstt_and_keeps_ttss():
     assert vr.name_problems("0302 · خطأ", "01", serial) != []
     assert vr.name_problems("0201 · الرصد", "01", {"max_title_len": 40}) != [], "بلا ordinal_tabs يبقى TTSS وحده"
 
+
+
+def test_alias_may_target_on_demand_live_session_with_lifecycle():
+    # 0102 ← 0108: جلسةٌ عند الطلب (عضوٌ في تبويب وميثاقُها بـlifecycle) ليست نواةً لكنّها هدفٌ صالح
+    tabs = _merge_tabs(aliases={"0702": "0701", "0102": "0108"})
+    assert any("0102 ← 0108 ليس جلسةَ نواة" in p for p in vr.alias_problems(tabs))
+    tabs["tabs"] = [{"members": ["0108 · التقييم والعصف"]}]
+    tabs["session_policy"]["charters"]["0108 · التقييم والعصف"] = {"lifecycle": "عند الطلب"}
+    assert not any("0102 ← 0108" in p for p in vr.alias_problems(tabs))
