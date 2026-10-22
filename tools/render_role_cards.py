@@ -137,18 +137,39 @@ def merged_sections(ch: dict, sid: str | None = None, aliases: dict | None = Non
 
 def _pointers(sid: str) -> list[str]:
     base = "C:/Users/mesue/delivery_manager_work"
-    return ["## التفصيل (عند الحاجة لا عند كلّ بدء)",
-            f"- بطاقتي الكاملة (مهامّي ومداي ومخرجاتي): `{base}/role_cards/details/{sid}.md`",
-            f"- القواعد المشتركة الكاملة: `{base}/role_cards/COMMON.md` · الخريطة: `role_cards/INDEX.md` · القرارات: `decisions.md`",
+    return ["## التفصيل (عند الحاجة)",
+            f"- بطاقتي الكاملة: `{base}/role_cards/details/{sid}.md`",
+            f"- القواعد المشتركة: `{base}/role_cards/COMMON.md` · الخريطة: `role_cards/INDEX.md` · القرارات: `decisions.md`",
             ""]
+
+
+FLOW_TITLE = "موقعي من الفلو المؤتمت"
+
+
+def flow_section(fp: dict | None, short: bool = False) -> list[str]:
+    """قسمٌ موحَّدٌ «موقعي من الفلو المؤتمت» (أمر المالك D-475م): ستّةُ أسطرٍ بالعناوين نفسِها لكلّ بطاقة؛ `short` للنواة الضيّقة."""
+    if not fp:
+        return []
+    if short:
+        return [f"## {FLOW_TITLE}", *[f"- {x}" for x in fp.get("short", [])], ""] if fp.get("short") else []
+    return [f"## {FLOW_TITLE}", *[f"- **{k}:** {v}" for k, v in fp["lines"].items()], ""]
 
 
 def nucleus(title: str, ch: dict, tab: dict | None) -> str:
     sid = title.split(" · ")[0]
-    out = [f"# بطاقةُ دورٍ (نواة) — {title}", "",
-           "> مولَّدةٌ من `tabs.json`. هذه النواةُ وحدها تُقرأ عند البدء؛ وكلُّ نصٍّ آخر في `details/` و`COMMON.md` لم يُحذف.", "",
-           "## من أنا", ch["role"], "", "## أهدافي", *[f"- {g}" for g in ch["goals"]], "",
-           "## حدودي (ما لا أفعله)", ch["boundaries"], "", GOVERNING, *_pointers(sid)]
+    fp = ch.get("flow_position")
+
+    def build(flow: list[str]) -> list[str]:
+        return [f"# بطاقةُ دورٍ (نواة) — {title}", "",
+                "> مولَّدةٌ من `tabs.json`؛ النواةُ وحدها تُقرأ عند البدء.", "",
+                "## من أنا", ch["role"], "", "## أهدافي", *[f"- {g}" for g in ch["goals"]], "",
+                "## حدودي (ما لا أفعله)", ch["boundaries"], "", *flow, GOVERNING, *_pointers(sid)]
+
+    out = build([])
+    for flow in (flow_section(fp), flow_section(fp, short=True)):  # الكاملُ إن اتّسع السقف وإلا المختصر (والتفصيلُ في details)
+        if flow and len(chr(10).join(build(flow)).encode("utf-8")) <= NUCLEUS_MAX_BYTES:
+            out = build(flow)
+            break
     text = chr(10).join(out)
     if ch.get("merged"):  # إشارةٌ قصيرةٌ إن اتّسع لها سقفُ النواة؛ والنصُّ الكاملُ في details
         nums = "، ".join(t.split(" · ")[0] for t in ch["merged"])
@@ -160,16 +181,23 @@ def nucleus(title: str, ch: dict, tab: dict | None) -> str:
 
 
 def nucleus_flexible(tab: dict) -> str:
-    out = [f"# بطاقةُ دورٍ (نواة) — الجلسات المرنة (التبويب {tab.get('number', '04')} · {tab['name']})", "",
-           "> مولَّدةٌ من `tabs.json`. لكلّ جلسةٍ مرنةٍ مهمّةٌ واحدة؛ هذه النواةُ تُقرأ عند البدء ولم يُحذف نصٌّ من التفصيل.", "",
-           "## من أنا", tab["purpose"], "",
-           "## تسلسلي المختصر (التفصيل في details)",
-           "1. أعمل في شجرتي وأودِع محلّيّاً بمسارات صريحة ولا أدفع قبل الاعتماد.",
-           "2. «جاهزٌ للمعاينة» إلى 0501: الرابط الكامل، ما يُعاين، الدور وخطورته، الرأس؛ ثمّ أتوقّف، ولا إيداعَ بعده إلا لملاحظة المالك أو فشل فحص، و`make prepush` كاملاً (مع mypy بإصدار CI) قبل «جاهز».",
-           "3. `approval_check.py card <رمزي>` ثبت ← أدفع `HEAD:refs/heads/claude/<اسم>` وأسلّم 0501 فـ0601؛ لا أفتح طلباً.",
-           "4. واجهةٌ: مهارات التصميم تُستدعى فعلاً قبل «جاهز» ولا ادّعاءَ بصريّاً بلا قياس.", "",
-           GOVERNING, *_pointers("04")]
-    return chr(10).join(out)
+    def build(flow: list[str]) -> list[str]:
+        return [f"# بطاقةُ دورٍ (نواة) — الجلسات المرنة (التبويب {tab.get('number', '04')} · {tab['name']})", "",
+                "> مولَّدةٌ من `tabs.json`. لكلّ جلسةٍ مرنةٍ مهمّةٌ واحدة؛ هذه النواةُ تُقرأ عند البدء ولم يُحذف نصٌّ من التفصيل.", "",
+                "## من أنا", tab["purpose"], "",
+                "## تسلسلي المختصر (التفصيل في details)",
+                "1. أعمل في شجرتي وأودِع محلّيّاً بمسارات صريحة ولا أدفع قبل الاعتماد.",
+                "2. «جاهزٌ للمعاينة» إلى 0501: الرابط الكامل، ما يُعاين، الدور وخطورته، الرأس؛ ثمّ أتوقّف، ولا إيداعَ بعده إلا لملاحظة المالك أو فشل فحص، و`make prepush` كاملاً (مع mypy بإصدار CI) قبل «جاهز».",
+                "3. `approval_check.py card <رمزي>` ثبت ← أدفع `HEAD:refs/heads/claude/<اسم>` وأسلّم 0501 فـ0601؛ لا أفتح طلباً.",
+                "4. واجهةٌ: مهارات التصميم تُستدعى فعلاً قبل «جاهز» ولا ادّعاءَ بصريّاً بلا قياس.", "",
+                *flow, GOVERNING, *_pointers("04")]
+
+    fp = tab.get("flow_position")
+    for flow in (flow_section(fp), flow_section(fp, short=True)):  # الكاملُ إن اتّسع السقف وإلا المختصر (والتفصيلُ في details)
+        text = chr(10).join(build(flow))
+        if flow and len(text.encode("utf-8")) <= NUCLEUS_MAX_BYTES:
+            return text
+    raise SystemExit("نواة الجلسات المرنة تجاوزت السقف — اختصر قسم الفلو")
 
 
 def common_tools(tabs: dict) -> str:
@@ -195,7 +223,7 @@ def card(title: str, ch: dict, tab: dict | None, aliases: dict | None = None) ->
             "## مهامّي وطريقةُ عملي", *[f"- {m}" for m in ch["method"]], "",
             "## مداي ومصادري", *[f"- **{k}:** {v}" for k, v in ch["scope"].items()], "",
             "## مخرجاتي", *[f"- {o}" for o in ch["outputs"]], "",
-            "## حدودي (ما لا أفعله)", ch["boundaries"], ""]
+            "## حدودي (ما لا أفعله)", ch["boundaries"], "", *flow_section(ch.get("flow_position"))]
     if sid in READY_GATE:
         out += ["## شرطُ قبول «جاهزٌ للمعاينة» (W-20261020-013)", READY_GATE[sid], ""]
     shared = bool(tab) and len(tab["members"]) > 1  # تبويبٌ مشتركٌ بين عدّة جلساتٍ: صلاحيّاتُه ومهاراتُه ليست لكلّ عضو
@@ -236,6 +264,7 @@ def flexible_card(tab: dict) -> str:
            "## من أنا", tab["purpose"], "", "## تسلسلُ عملي (ولا أسأل المالكَ في أيٍّ منه)", *[f"{i}. {x}" for i, x in enumerate(steps, 1)], "",
            "## أهدافي", *[f"- {g}" for g in tab["goals"]], "", "## مؤشّراتي", *[f"- {k}" for k in tab["kpis"]], "",
            "## مداخلي", *[f"- {x}" for x in tab["inputs"]], "", "## مخرجاتي", *[f"- {x}" for x in tab["outputs"]], "",
+           *flow_section(tab.get("flow_position")),
            "## صلاحيّاتي وقدراتي", f"- **الصلاحيّات:** {tab['permissions']}", "- **المهارات:** " + "، ".join(f"`{x}`" for x in tab["skills"]), "",
            COMMON_DIGEST]
     return "\n".join(out)
@@ -250,7 +279,33 @@ def alias_line(aliases: dict | None) -> list[str]:
             + "، ".join(f"{k} ← {v}" for k, v in pairs) + "."]
 
 
-def index(rows: list[tuple[str, str]], aliases: dict | None = None) -> str:
+def flow_line_table(charters: dict, tabs: dict) -> list[str]:
+    """جدولُ «خطّ الفلو» من flow_position في المواثيق (مصدرٌ واحد): المرحلةُ ثمّ الجلسةُ وما تملكه من حالات وإلى من تسلّم."""
+    rows = [(v["flow_position"]["stage"], t.split(" · ")[0], v["flow_position"]["states"], v["flow_position"]["next"])
+            for t, v in charters.items() if v.get("flow_position")]
+    for tab in tabs["tabs"]:
+        fp = tab.get("flow_position")
+        if tab.get("id") == "execute" and fp:
+            rows.append((fp["stage"], "04SS", fp["states"], fp["next"]))
+    out = ["", "## خطّ الفلو: مَن يملك أيَّ مرحلةٍ وحالة",
+           "> الحالاتُ من `ledger.py`: captured ثمّ verified ثمّ routed ثمّ in_progress ثمّ ready_for_review ثمّ approved ثمّ pushed ثمّ merged ثمّ published (ويُسجَّل `approved` لـ0501 أو 0101 و`merged`/`published` لـ0601 أو 0101). قسمُ «موقعي من الفلو المؤتمت» في كلّ بطاقة يفصّل المدخلَ والمخرجَ وما يوقظ.", "",
+           "| المرحلة | الجلسة | الحالةُ التي تملكها أو تعمل عليها | تسلّم إلى |", "|---|---|---|---|"]
+    out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in sorted(rows, key=lambda r: (r[0], r[1]))]
+    return out
+
+
+def assistants_section(sp: dict) -> list[str]:
+    """مساعدو 0101: جلساتٌ مؤقّتةٌ بلا صلاحية اعتماد (D-475م)."""
+    a = sp.get("assistants")
+    if not a:
+        return []
+    out = ["", "## مساعدو 0101 (جلساتٌ مؤقّتةٌ تحت 0101)", a["note"], "",
+           "| المساعد | دورُه | موقعُه من الفلو |", "|---|---|---|"]
+    out += [f"| 0101-{r['id']} · {r['name']} | {r['role']} | {r['flow']} |" for r in a["rows"]]
+    return out
+
+
+def index(rows: list[tuple[str, str]], aliases: dict | None = None, tabs: dict | None = None) -> str:
     out = ["# خريطةُ الجلسات الثابتة: من يفعل ماذا", "", "> مولَّدةٌ من `tabs.json`. كلُّ جلسةٍ تقرأ بطاقتَها `role_cards/<رقمها>.md` عند البدء، وتعرف بهذه الخريطة مَن تخاطب.", "",
            "| الجلسة | دورُها في سطر | بطاقتُها |", "|---|---|---|"]
     out += [f"| {t} | {r} | `role_cards/{t.split(' · ')[0]}.md` |" for t, r in rows]
@@ -261,8 +316,10 @@ def index(rows: list[tuple[str, str]], aliases: dict | None = None) -> str:
             "- حكمٌ على تنبيهٍ أمنيٍّ أو ثغرة ← **0104** (0701 ترصد وتحيل). امتثالٌ وقانونٌ وقواعدٌ ← **0301**.",
             "- خيارات مقيسةٌ لقرارٍ مفتوحٌ ← **0301**. مرجعٌ وزاريٌّ وتصنيفٌ وتسمية ← **0101**.",
             "- خارطةٌ بعد الدمج وقياسُ جودةٍ بعد النشر ورصدٌ وأتمتةُ مهمّةٍ دوريّةٍ في الكود ← **0701** (ميثاقُ 0702 مدمَجٌ فيها).",
-            *alias_line(aliases), ""]
-    return "\n".join(out)
+            *alias_line(aliases)]
+    if tabs:
+        out += flow_line_table(tabs["session_policy"]["charters"], tabs) + assistants_section(tabs["session_policy"])
+    return "\n".join(out + [""])
 
 
 def tab_of(title: str, tabs: dict) -> dict | None:
@@ -305,7 +362,7 @@ def main() -> int:
                 (details / "04.md").write_text(full, encoding="utf-8")
                 full = nucleus_flexible(tab)
             (outdir / "04.md").write_text(full, encoding="utf-8")
-    (outdir / "INDEX.md").write_text(index(rows, aliases), encoding="utf-8")
+    (outdir / "INDEX.md").write_text(index(rows, aliases, tabs), encoding="utf-8")
     print(f"role_cards/ ✔ ({len(rows)} بطاقة + INDEX)")
     return 0
 
