@@ -31,6 +31,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 
 import ledger  # noqa: E402  (قراءةٌ فقط)
+import msg_counter  # noqa: E402  (الحصّةُ مصدرُها الواحد: msg_counter.LIMIT)
 import session_alias as sa  # noqa: E402  (الأسماءُ المستعارة من tabs.json)
 
 EVENTS = ROOT / "ledger" / "events.jsonl"
@@ -40,7 +41,8 @@ MAX_BATCH = 20
 MAX_PER_MINUTE = 3  # أقصى جلساتٍ تُوقَظ (تبدأ عملاً) في الدقيقة؛ الزائدُ يُؤجَّل لا يُسقط (أمر المالك 10-20 بند5)
 MAX_LIVE = 14
 TEST_CHANNEL = frozenset({"0701", "0301"})  # أسبوعُ التجربة (W-20261017-007) قبل تعميم الإرسال؛ خرجت 0702 و0102 بدمجهما في 0701 و0103 (أمر المالك 2026-10-21)، ثمّ صارت 0103 ← 0301 بترقيم 01 (14:02)
-COUNTER_GUARD = 260  # فوقها (من 300) لا إرسال ويُبلَّغ 0101
+COUNTER_MARGIN = 60  # هامشٌ تحت الحصّة لا يُرسَل بعده
+COUNTER_GUARD = msg_counter.LIMIT - COUNTER_MARGIN  # فوقه (من الحصّة المقروءة) لا إرسال ويُبلَّغ 0101
 COUNTER = ROOT / "msg_counter.json"
 LIVE_WINDOW_MS = 15 * 60 * 1000  # «حيّة» = نشاطٌ خلال 15 دقيقة (الخاملةُ المنتهيةُ دورتُها لا تستهلك ذاكرةً ولا تُعدّ؛ كانت ساعتين فتجاوزت السقفَ دائماً)
 SESSION_NUM = re.compile(r"^\d{4}")
@@ -157,7 +159,7 @@ def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, 
                 p.skipped.append((item_id, f"تأجيل: سقفُ {MAX_PER_MINUTE} إيقاظاتٍ في الدقيقة"))
         p.deferred = True
     if p.wakes and sent + len(p.wakes) > COUNTER_GUARD:
-        p.halted = f"حارس msg_counter: {sent} + {len(p.wakes)} رسالةً يتجاوز {COUNTER_GUARD} من 150: لا إرسال، أبلغ 0101"
+        p.halted = f"حارس msg_counter: {sent} + {len(p.wakes)} رسالةً يتجاوز {COUNTER_GUARD} من {msg_counter.LIMIT}: لا إرسال، أبلغ 0101"
         p.wakes = {}
     elif len(set(p.wakes) | set(live)) > MAX_LIVE:
         p.halted = f"الجلساتُ الحيّةُ مع الموقَظين تتجاوز {MAX_LIVE}: لا إيقاظ"
@@ -278,7 +280,7 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         p.halted = f"سقفُ الإيقاظ اليوميّ {DAILY_CAP}: {day_count} + {len(p.wakes)}"
         p.wakes = {}
     elif p.wakes and sent + len(p.wakes) > COUNTER_GUARD:
-        p.halted = f"حارس msg_counter: {sent} + {len(p.wakes)} يتجاوز {COUNTER_GUARD} من 150: لا إرسال"
+        p.halted = f"حارس msg_counter: {sent} + {len(p.wakes)} يتجاوز {COUNTER_GUARD} من {msg_counter.LIMIT}: لا إرسال"
         p.wakes = {}
     elif len(set(p.wakes) | set(live)) > MAX_LIVE:
         p.halted = f"الجلساتُ الحيّةُ مع الموقَظين تتجاوز {MAX_LIVE}: لا إيقاظ"

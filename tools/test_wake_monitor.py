@@ -87,16 +87,17 @@ def test_test_channel_wakes_only_the_two_receivers():
     assert out.wakes == {} and "خارج قناة التجربة" in out.skipped[0][1]
 
 
-def test_counter_guard_blocks_above_260():
+def test_counter_guard_blocks_above_the_quota_margin():
+    g = wm.COUNTER_GUARD
     dirs = {"0701": "local_a", "0702": "local_b"}
     ev = _routed("0701") + [
         created("W-20261016-009"),
         state("W-20261016-009", "routed", NEW, held_by="0702"),
     ]
-    assert wm.plan(ev, CUR, dirs, set(), verify=ok, sent=258).wakes  # 258 + 2 = 260 مسموح
-    p = wm.plan(ev, CUR, dirs, set(), verify=ok, sent=259)  # 259 + 2 = 261
+    assert wm.plan(ev, CUR, dirs, set(), verify=ok, sent=g - 2).wakes  # الحدُّ نفسُه مسموح
+    p = wm.plan(ev, CUR, dirs, set(), verify=ok, sent=g - 1)  # تجاوزٌ بواحد
     assert p.wakes == {} and "msg_counter" in p.halted
-    assert wm.plan(_routed("0701"), CUR, dirs, set(), verify=ok, sent=260).halted
+    assert wm.plan(_routed("0701"), CUR, dirs, set(), verify=ok, sent=g).halted
 
 
 def test_sender_count_reads_file_and_missing_file_closes_the_guard(tmp_path):
@@ -261,3 +262,12 @@ def test_live_for_uses_running_when_given(monkeypatch):
     monkeypatch.setattr(wm, "live_sessions", lambda: {"9999"})
     assert wm.live_for(type("A", (), {"running": "0101,0501"})()) == {"0101", "0501"}
     assert wm.live_for(type("A", (), {"running": ""})()) == {"9999"}
+
+
+def test_counter_guard_follows_msg_counter_quota():
+    assert wm.COUNTER_GUARD == wm.msg_counter.LIMIT - wm.COUNTER_MARGIN == 540
+
+
+def test_halt_text_reports_the_read_quota_not_a_hardcoded_one():
+    p = wm.plan(_routed("0701"), CUR, {"0701": "local_x"}, set(), verify=ok, sent=wm.COUNTER_GUARD)
+    assert p.halted and str(wm.msg_counter.LIMIT) in p.halted and "من 150" not in p.halted
