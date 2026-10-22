@@ -201,11 +201,91 @@ def waive_pass(states: dict[str, dict], apply: bool, prs: list[dict] | None = No
     return out
 
 
+MAX_IN_CI = 2  # أمر المالك 2026-10-22: طلبان فقط قيد الفحص معاً في المنصّة (لا تكدّس مشغّلات ولا إعادة فحوص)
+PLATFORM_MARK = "shschool_mvp"  # مستودعُ المنصّة: مستودعاتُ الأدوات (maestro) لا فحوصَ ثقيلةً فيها فلا تُقيَّد
+
+
+def _entry_pending(entry: dict) -> bool:
+    """مدخلُ statusCheckRollup لم يكتمل: CheckRun بحالةٍ غير COMPLETED، أو StatusContext بحالة PENDING/EXPECTED."""
+    if "status" in entry:
+        return str(entry.get("status") or "").upper() != "COMPLETED"
+    return str(entry.get("state") or "").upper() in ("PENDING", "EXPECTED")
+
+
+def ci_in_flight(sh=None) -> int | None:
+    """عددُ الطلباتِ المفتوحة غيرِ المسوّدة التي فحوصُها لم تكتمل؛ None إن تعذّرت القراءة (فيُؤجَّل الدفعُ ولا يُبنى على غياب)."""
+    rc, out = (sh or _sh)(["gh", "pr", "list", "--state", "open", "--limit", "100", "--json", "number,isDraft,statusCheckRollup"], ac.REPO_DIR)
+    if rc:
+        return None
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return sum(
+        1
+        for pr in data
+        if isinstance(pr, dict) and not pr.get("isDraft")
+        and any(_entry_pending(e) for e in (pr.get("statusCheckRollup") or []) if isinstance(e, dict))
+    )
+
+
+def _is_platform(path: str, git) -> bool:
+    rc, out = git(path, "remote", "get-url", "origin")
+    return not rc and PLATFORM_MARK in out
+
+
+def _log_once(text: str) -> None:
+    """سطرُ سببِ التأجيل في flow_pump.log مرّةً لا في كلّ دورةٍ (idempotent): يُتخطّى إن كان آخرُ سطرٍ هو نفسُه."""
+    try:
+        last = LOG.read_text(encoding="utf-8").splitlines()[-1:] if LOG.exists() else []
+        if last and last[0].endswith(text):
+            return
+        from datetime import datetime
+
+        with LOG.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {text}\n")
+    except OSError:
+        pass
+
+
 PUSH_STATUS = {"pushed": "دُفع ✔", "dry": "يُدفع (عرض)", "refused": "✘ رُفض الدفع", "skipped": "تخطٍّ"}
 
 
-def push_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = None, path=None, git=None, approved=None) -> list[str]:
-    """(D-450م) approved ← pushed عبر push_watch.scan بحرّاس push_approved كلّها، وفرعٍ claude/* أو w*، وإيصال prepush للرأس نفسه."""
+def defer_for_ci(items: dict[str, dict], repos: list[str], git, busy_fn) -> tuple[dict[str, dict], list[str]]:
+    """(W-20261022-019) بطاقاتُ المنصّة لا تُدفع وفي المنصّة طلبان قيد الفحص: (ما يُدفع، أسطرُ التأجيل بسببه).
+    السقفُ يشمل ما يُدفع في هذه الدورة نفسِها (المفتوحُ قيدَ الفحص + المدفوعُ الآن ≤ MAX_IN_CI)؛ ولا يُعاد فحصٌ آليّاً."""
+    import push_watch  # noqa: PLC0415
+
+    keep: dict[str, dict] = {}
+    lines: list[str] = []
+    busy: int | None = None
+    asked = False
+    taken = 0
+    for cid in sorted(items):
+        want = (items[cid].get("approved_head") or "").strip()
+        tree, _why = push_watch.find_tree(cid, want, repos, git, push_approved.PUMP_BRANCH_RE) if want else (None, "")
+        if tree is None or not _is_platform(tree["path"], git):
+            keep[cid] = items[cid]
+            continue
+        if not asked:
+            busy, asked = busy_fn(), True
+        if busy is None:
+            why = "تعذّرت قراءةُ حالة الفحوص (gh)"
+        elif busy + taken >= MAX_IN_CI:
+            why = f"{busy} طلباً قيد الفحص" + (f" و{taken} يُدفع الآن" if taken else "") + f" (السقف {MAX_IN_CI})"
+        else:
+            keep[cid] = items[cid]
+            taken += 1
+            continue
+        lines.append(f"{cid}: ⏸ يُؤجَّل الدفع — {why}")
+    return keep, lines
+
+
+def push_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = None, path=None, git=None, approved=None, busy_fn=None) -> list[str]:
+    """(D-450م) approved ← pushed عبر push_watch.scan بحرّاس push_approved كلّها، وفرعٍ claude/* أو w*، وإيصال prepush للرأس نفسه.
+    busy_fn (W-20261022-019): دالّةٌ تعيد عددَ الطلبات قيد الفحص؛ معها تُؤجَّل بطاقاتُ المنصّة عند بلوغ السقف ويُسجَّل السبب."""
     items = {k: v for k, v in states.items() if v.get("state") == "approved"}
     if not items:
         return []
@@ -213,9 +293,16 @@ def push_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = No
     import ready_mark  # noqa: PLC0415
 
     kw = {k: v for k, v in (("git", git), ("approved", approved)) if v is not None}
-    results = push_watch.scan(items, repos or ready_mark.candidate_repos(None), apply, path, by=SENDER,
-                              branch_re=push_approved.PUMP_BRANCH_RE, require_receipt=True, **kw)
-    out, quiet = [], 0
+    where_repos = repos or ready_mark.candidate_repos(None)
+    deferred: list[str] = []
+    if busy_fn is not None:
+        items, deferred = defer_for_ci(items, where_repos, git or push_approved._git, busy_fn)
+        if apply:
+            for line in deferred:
+                _log_once("دفع: " + line)
+    results = push_watch.scan(items, where_repos, apply, path, by=SENDER,
+                              branch_re=push_approved.PUMP_BRANCH_RE, require_receipt=True, **kw) if items else []
+    out, quiet = list(deferred), 0
     for r in results:
         if r["status"] == "skipped" and push_watch.QUIET in r["reason"]:
             quiet += 1
@@ -429,7 +516,7 @@ def _run(argv=None) -> int:
         print("إعفاء: " + line)
     states = reload(states)
     if not a.no_push:
-        for line in push_pass(states, a.apply):
+        for line in push_pass(states, a.apply, busy_fn=ci_in_flight):
             print("دفع: " + line)
         states = reload(states)
     if not a.no_line:
