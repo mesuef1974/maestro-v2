@@ -905,6 +905,16 @@ def check_prepush_receipt(repo: str, git=None, conflicts=None) -> str | None:
 _FINGERPRINT = re.compile(r"^(?:head=)?([0-9a-f]{8})(?:[: ]\s*(?:sha256=)?)([0-9a-f]{16})$")
 
 
+def check_ready_head(item: dict, state: str, head_now: str | None) -> str | None:
+    """W-20261022-008: النقلُ إلى «جاهزٌ للمعاينة» بلا رأسٍ معلَنٍ يترك ready_head فارغاً فتتوقّف البطاقةُ عند أوّل مرحلة؛ يُرفض
+    ويُدَلّ على ready_mark (أو --head-now). بطاقاتُ docs بلا شيفرةٍ فلا رأسَ لها."""
+    if state != "ready_for_review" or item.get("type") == "docs":
+        return None
+    if head_now and HEAD_RE.match(head_now):
+        return None
+    return "«جاهزٌ للمعاينة» بلا رأسٍ معلَن: استعمل ready_mark.py <بطاقة> --head <sha8> --by <رقمك> (أو --head-now <sha8>)"
+
+
 def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, head_now: str | None = None, waived: str | None = None) -> str | None:
     """بصمةُ `make premerge` قبل «جاهزٌ للمعاينة» (W-20261016-021، المكوّن B): `--premerge-sha <head8>:<sha16>` (أو سطر البصمة كما يطبعه الفحص).
     بلا بصمة أو برأسٍ مخالفٍ لرأس الفرع الحاليّ: إنذارٌ في الظلّ، ورفضٌ مع PREMERGE_GATE_ENFORCE=1. نوع docs مستثنىً بنوعه المعلن.
@@ -987,6 +997,9 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if pre_note:
         print(pre_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{pre_note}"
+    ready_head_problem = check_ready_head(items[item_id], state, head_now)
+    if ready_head_problem:
+        raise LedgerError(ready_head_problem)
     fp_note = check_premerge_fingerprint(items[item_id], state, premerge_sha, head_now, waive_preflight)
     if fp_note:
         print(fp_note, file=sys.stderr)
