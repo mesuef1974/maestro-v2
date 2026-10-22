@@ -348,6 +348,8 @@ LOCK = HERE.parent / "ledger" / "flow_pump.lock"
 LOG = HERE.parent / "ledger" / "flow_pump.log"
 #: مفتاحُ الإيقاف (الموجة 0.3، D-453م): وجودُ الملف يمنع الدورة من أيّ مشغِّل (الخطّاف، مهمّةٌ مجدولة، يدويّاً) لا الخطّافَ وحده
 OFF = HERE.parent / "ledger" / "flow_pump.off"
+#: مفتاحُ منع الدمج: وجودُ الملف يعطّل مرحلةَ الدمج وحدَها من أيّ مشغِّل (الخطّاف يطلق المضخّةَ بلا --no-merge)
+NO_MERGE = HERE.parent / "ledger" / "flow_pump.nomerge"
 STALE_LOCK_S = 900
 
 
@@ -415,7 +417,9 @@ def _run(argv=None) -> int:
     if not a.no_line:
         for line in line_pass(states, prs, a.apply):
             print("سطر: " + line)
-    if not a.no_merge:
+    if NO_MERGE.exists():
+        print(f"دمج: معطَّل بمفتاح ({NO_MERGE.name})")
+    elif not a.no_merge:
         for line in merge_pass(states, prs, a.apply):
             print("دمج: " + line)
     print("— مرحلة النشر (ledger_sync) —")
