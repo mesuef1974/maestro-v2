@@ -6,6 +6,7 @@
 الكشوف (كلٌّ برمزٍ ثابت):
   NO_HEAD         بطاقةٌ approved/pushed بلا approved_head في الدفتر
   NO_CONFIRM      بطاقةٌ approved/pushed لا يذكرها أيُّ سطرٍ في owner_confirmations.md ولا اعتمادَ مسجَّلاً في أحداثها
+  UNMERGED_CONFIRM (معلومة، لا تُفشل الفحص) البطاقةُ لا سطرَ لها في ملف هذه الشجرة لكنّ لها سطراً في الشجرة الحيّة (--live-confirmations) لم يدخل main بعد
   CONFIRM_HEAD    سطورُ التأكيد تذكر رؤوساً ليس بينها رأسُ الدفتر
   PUSHED_NO_APPR  بطاقةٌ pushed (أو تالية) لم تمرّ قطّ بـapproved في أحداثها ولا اعتمادَ لها
   BRANCH_MISSING  بطاقةٌ pushed فرعُها المسجَّل غيرُ موجودٍ على البعيد
@@ -65,7 +66,8 @@ def remote_head(branch: str, repo: str | None) -> str | None:
     return p.stdout.split()[0] if p.stdout.strip() else None
 
 
-def check(events: list[dict], confirmations: dict[str, set[str]], lookup=None, include_history: bool = False) -> list[dict]:
+def check(events: list[dict], confirmations: dict[str, set[str]], lookup=None, include_history: bool = False,
+          live_confirmations: dict[str, set[str]] | None = None) -> list[dict]:
     items = ledger.reduce_state(events)
     approved_once = ever_approved(events)
     scope = LIVE | (HISTORIC if include_history else set())
@@ -84,7 +86,9 @@ def check(events: list[dict], confirmations: dict[str, set[str]], lookup=None, i
         conf = confirmations.get(cid)
         if not head:
             add("NO_HEAD", item, "لا approved_head في الدفتر")
-        if conf is None and not has_appr:
+        if conf is None and cid in (live_confirmations or {}):
+            add("UNMERGED_CONFIRM", item, "سطرُ التأكيد في الشجرة الحيّة وغيرُ مدفوعٍ إلى main بعد")
+        elif conf is None and not has_appr:
             add("NO_CONFIRM", item, "لا سطرَ في owner_confirmations.md ولا اعتمادَ مسجَّلاً")
         elif conf and head and any(conf) and not any(_same(head, h) for h in conf):
             add("CONFIRM_HEAD", item, f"رأسُ الدفتر {head[:8]} ليس بين رؤوس التأكيد {sorted(h[:8] for h in conf)}")
@@ -109,18 +113,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--repo", default="D:/shschool_mvp", help="مستودعُ التنفيذ لقراءة البعيد")
     ap.add_argument("--no-git", action="store_true", help="بلا فحص البعيد")
+    ap.add_argument("--live-confirmations", default="C:/Users/mesue/delivery_manager_work/owner_confirmations.md",
+                    help="ملفُ الشجرة الحيّة لتمييز «غيرُ مدفوعٍ بعد» عن «غائب»")
     ap.add_argument("--confirmations", default=str(ROOT / "owner_confirmations.md"))
     a = ap.parse_args(argv)
     events = ledger.load_events()
     conf = parse_confirmations(Path(a.confirmations).read_text(encoding="utf-8"))
-    found = check(events, conf, None if a.no_git else (lambda b: remote_head(b, a.repo)), a.all)
+    live_p = Path(a.live_confirmations)
+    live = parse_confirmations(live_p.read_text(encoding="utf-8")) if live_p.is_file() and live_p.resolve() != Path(a.confirmations).resolve() else None
+    found = check(events, conf, None if a.no_git else (lambda b: remote_head(b, a.repo)), a.all, live)
     if a.json:
         print(json.dumps(found, ensure_ascii=False, indent=1))
     else:
         for f in found:
             print(f"{f['code']:<15} {f['id']} [{f['state']}] {f['message']}")
         print(f"— {len(found)} كشف" if found else "— الدفتر سليم")
-    return 1 if found else 0
+    return 1 if any(f["code"] != "UNMERGED_CONFIRM" for f in found) else 0
 
 
 if __name__ == "__main__":

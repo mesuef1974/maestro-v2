@@ -61,3 +61,9 @@ def test_history_only_with_all():
     e = [card(d), ev(d, "state", state="merged")]
     assert lic.check(e, CONF) == []
     assert ("NO_HEAD", d) in codes(lic.check(e, CONF, include_history=True))
+
+
+def test_confirmation_only_in_live_tree_is_unmerged_not_missing():
+    b = "W-20261022-002"
+    e = [card(b), ev(b, "state", state="approved", head="11112222")]
+    assert codes(lic.check(e, CONF, live_confirmations={b: set()})) == [("UNMERGED_CONFIRM", b)]
