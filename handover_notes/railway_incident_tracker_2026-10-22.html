@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>لوحة تتبّع حادثة Railway</title>
+<style>
+:root{--bg:#fff;--fg:#1c1c1e;--line:#d9d9de;--card:#f6f6f8;--warn:#fff4d6;--bad:#fde3e3;--ok:#e3f4e6;--wait:#e6edfa}
+@media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececf0;--line:#33333a;--card:#202024;--warn:#3a321a;--bad:#3b2020;--ok:#1c3322;--wait:#1d2a44}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.8 system-ui,"Segoe UI",Tahoma,sans-serif}
+main{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem}h2{font-size:1.15rem;margin-top:1.8rem;border-block-end:1px solid var(--line);padding-block-end:.3rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:10px 0}
+.warn{background:var(--warn)}.bad{background:var(--bad)}.ok{background:var(--ok)}
+code{direction:ltr;unicode-bidi:embed;background:var(--card);border-radius:4px;padding:0 4px}
+.t{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:760px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:start;vertical-align:top}
+td.s{white-space:nowrap;font-weight:600}
+.s-todo{background:var(--bad)}.s-wait{background:var(--wait)}.s-part{background:var(--warn)}.s-done{background:var(--ok)}
+</style></head><body><main>
+<h1>لوحة تتبّع حادثة إفصاح Railway (21 أكتوبر 2026)</h1>
+<p>أُعدّت 2026-10-22 من جلسة تنسيق تحت 0101. تنسيقية فقط: لا تدوير ولا تغيير في الإنتاج ولا إرسال خارجي ولم تُقرأ أي قيمة سر. المصادر: خطة 0101، دليل التدوير وجرد الأسرار من 0301، وصفحة status.railway.com (آخر تحديث مقروء 22 أكتوبر 02:19 UTC). الحالات كما في المستندات؛ لم يصل بعد أي إبلاغ إنجاز من المالك أو 0301 أو 0201.</p>
+
+<div class="card bad"><b>الخلاصة:</b> لا خطوة منفّذة بعد. البناء ما زال متوقفاً في كل المناطق، فكل ما يتطلب إعادة نشر ينتظر. المتاح الآن للمالك: القسم 0 والقسم 1 من الدليل (جرد الأسماء، الاحتواء، المزوّدون الخارجيون، النسخة الاحتياطية).</div>
+
+<h2>1. حالة الخطوات</h2>
+<div class="t"><table>
+<tr><th>#</th><th>الخطوة</th><th>المسؤول</th><th>الحالة</th><th>يعتمد على</th><th>دليل الإنجاز المطلوب (بلا قيم)</th></tr>
+<tr><td>0.1</td><td>جرد أسماء المتغيرات الفعلية في Railway للخدمات الثلاث وPostgres وRedis (حسم تعارض قائمة 0101 مع <code>railway.ts</code>)</td><td>المالك</td><td class="s s-todo">لم يبدأ</td><td>—</td><td>قائمة بالأسماء الموجودة من الثمانية الاختيارية</td></tr>
+<tr><td>0.3</td><td>نسخة احتياطية جديدة خارج Railway قبل أي تغيير</td><td>0301 / المالك</td><td class="s s-done">تمّت (تقرير 0301)</td><td>—</td><td>run 39711454023 ناجح. تُعاد بعد Postgres وقبل FERNET</td></tr>
+<tr><td>A</td><td>مفاتيح المزوّدين: Twilio، GitHub (<code>QCC_GITHUB_TOKEN</code>)، Sentry (إنشاء الجديد فقط)، AWS (إنشاء الجديد دون حذف القديم)، البريد (إنشاء الجديد فقط)؛ VAPID مؤجَّل</td><td>المالك (D-471م)</td><td class="s s-todo">لم يبدأ</td><td>0.1 يحدد ما يلزم</td><td>تأكيد المالك لكل مزوّد: أُنشئ الجديد / أُبطل القديم (Twilio وGitHub فقط يُبطلان الآن)</td></tr>
+<tr><td>A2</td><td>إبطال المفاتيح القديمة لـAWS وSentry والبريد بعد نشر ناجح</td><td>المالك</td><td class="s s-wait">ينتظر البناء</td><td>عودة البناء + دفعة 2.1</td><td>رفع ملف، رسالة بريد، خطأ تجريبي</td></tr>
+<tr><td>B</td><td>الاحتواء: إغلاق TCP Proxy لـPostgres وRedis (فقط إن كان <code>DATABASE_URL</code> داخلياً)</td><td>المالك (D-472م)</td><td class="s s-part">الخطوات جاهزة، التنفيذ للمالك</td><td>0.2 (هل الوصول العام مفعّل؟ وهل الرابط داخلي؟). الخطوات: <code>tcp_proxy_close_steps_0301_2026-10-22.md</code></td><td>الجواب نعم/لا، والموقع يعمل بعد الإغلاق. أثره: يتوقف النسخ الليلي حتى إعادة التفعيل</td></tr>
+<tr><td>C</td><td>Postgres: <code>ALTER ROLE</code> للدورين ثم <code>DB_PASSWORD</code> و<code>APP_DB_PASSWORD</code> و<code>DATABASE_URL</code> ثم سر GitHub <code>DATABASE_PUBLIC_URL</code></td><td>المالك أو 0601 بأمره</td><td class="s s-wait">ينتظر البناء</td><td>عودة البناء + نسخة 0.3</td><td>دخول ناجح، لوحة المعلّم، مهمة عامل، نسخ احتياطي ناجح</td></tr>
+<tr><td>C2</td><td>Redis: كلمة مرور جديدة وتحديث الروابط الثلاثة</td><td>المالك</td><td class="s s-wait">ينتظر البناء</td><td>عودة البناء</td><td>مهمة خلفية تكتمل وWebSocket</td></tr>
+<tr><td>D</td><td>SECRET_KEY (قيمة واحدة للخدمات الثلاث؛ يُسقط الجلسات؛ بلا <code>SECRET_KEY_FALLBACKS</code>)</td><td>المالك</td><td class="s s-wait">ينتظر البناء</td><td>عودة البناء + C</td><td>دخول جديد وصفحة محمية</td></tr>
+<tr><td>E</td><td>FERNET_KEY: القديم إلى <code>FERNET_OLD_KEYS</code>، جديد، نشر، <code>rotate_fernet_key</code> داخل الخدمة عبر <code>railway ssh</code>، تحقق يدوي، ثم تفريغ القديم بعد يومين استقرار</td><td>المالك بعد مراجعة أمنية وPDPPL</td><td class="s s-wait">ينتظر البناء + مراجعة</td><td>D + C + نسخة بعد C + إعلان داخلي (الدخول بالرقم الشخصي يتعطل مؤقتاً)</td><td>دخول بالرقمين، فتح سجل صحي وهاتف طالب، اختبار التغطية، خلو السجل من <code>InvalidToken</code></td></tr>
+<tr><td>F</td><td>النسخة الاحتياطية: جديدة قبل البدء (0.3) وبعد C وقبل E؛ النسخ القديمة في R2 تبقى مشفّرة بالمفتاح القديم؛ <code>BACKUP_PASSPHRASE</code> وR2 لا تُدوَّر</td><td>المالك</td><td class="s s-todo">لم يبدأ</td><td>0.3 ثم C</td><td>نجاح كل تشغيل؛ قرار مصير النسخ القديمة داخل تقييم PDPPL</td></tr>
+<tr><td>G</td><td>مسودة تقييم PDPPL (بلا إرسال) وتحديد من يقرر الإخطار ضمن نافذة 72 ساعة</td><td>0301 يعدّ المسودة؛ القرار والإرسال للمالك</td><td class="s s-part">مسودة جاهزة (ثقة 0.65)، القرار للمالك</td><td>فحص السجلات (الدليل القسم 4 في الجرد)</td><td><code>pdppl_breach_notification_assessment_draft_0301_2026-10-22.html</code>. الـ72 ساعة تنتهي ≈ 2026-10-25 02:58 إن اعُتبر الاكتشاف لحظة بريد Railway. إقليم Railway هو sjc فيلزم تقييم نقل عبر الحدود</td></tr>
+<tr><td>H</td><td>فحص سجلات الإنتاج منذ 21 أكتوبر (Railway، Postgres، axes، سجل التدقيق، Sentry، AWS/R2/Twilio)، وفحص استعمال المفاتيح غير المشمولة (مزوّدو الذكاء إن وُجدوا)</td><td>المالك أو 0601 (قراءة فقط)</td><td class="s s-todo">لم يبدأ</td><td>—</td><td>ملخص: وُجد/لم يوجد نشاط غريب</td></tr>
+</table></div>
+
+<h2>1ب. قرارات ذات موعد (المالك، قبل صباح 2026-10-24)</h2>
+<div class="t"><table>
+<tr><th>#</th><th>القرار</th><th>الموعد</th><th>الحالة</th></tr>
+<tr><td>1</td><td>تثبيت وقت الاكتشاف = لحظة بريد Railway، 2026-10-22 02:58 (D-475م)</td><td>الـ72 ساعة تنتهي ≈ 2026-10-25 02:58</td><td class="s s-done">تقرر</td></tr>
+<tr><td>2</td><td>DPO لهذه الحادثة هو المالك نفسه (D-475م)</td><td>قائمته أدناه</td><td class="s s-done">تقرر</td></tr>
+<tr><td>3</td><td>طلب إيضاح من Railway: المسودة جاهزة في <code>railway_clarification_request_draft_2026-10-22.md</code> (إنجليزي مع ملخص عربي)</td><td>إرسال المالك بيده؛ المقترح رد قبل 10-23 12:00</td><td class="s s-part">المسودة جاهزة، لم تُرسَل</td></tr>
+<tr><td>4</td><td>اجتماع القرار (الإخطار الاحترازي ونقل البيانات عبر الحدود)</td><td>قبل صباح 10-24</td><td class="s s-todo">معلّق</td></tr>
+</table></div>
+
+<h3>قائمة DPO (المالك) لتقييم PDPPL</h3>
+<div class="t"><table>
+<tr><th>#</th><th>ما يلزم إقراره</th><th>الموعد</th></tr>
+<tr><td>1</td><td>فتح سجل خرق في المنصة (<code>breach/</code>) بوقت اكتشاف 10-22 02:58، وحالته «قيد التقييم»</td><td>اليوم 10-22</td></tr>
+<tr><td>2</td><td>إقرار توثيق الاحتواء المنفَّذ بتواريخه وساعاته (إغلاق TCP Proxy، كل تدوير)</td><td>عند كل خطوة</td></tr>
+<tr><td>3</td><td>إرسال طلب الإيضاح إلى Railway، وتوقيت الرد المطلوب</td><td>10-22 أو 10-23 صباحاً</td></tr>
+<tr><td>4</td><td>اعتماد نتيجة فحص السجلات وحسم السيناريو: أ لا خرق، ب محتمل غير مؤكد (التقدير الحالي)، ج مؤكد</td><td>قبل اجتماع القرار</td></tr>
+<tr><td>5</td><td>قرار الإشعار الاحترازي للجهة الرقابية (NCSA بحسب المنصة؛ الجهة الحالية تُتحقق منها) وبنوده الناقصة: عدد المتأثرين من القاعدة، جهة الاتصال</td><td>اجتماع قبل صباح 10-24</td></tr>
+<tr><td>6</td><td>إخطار الأفراد: «واجب» أو «غير لازم بسبب مكتوب» في سجل الخرق</td><td>افتراضياً بموعد إشعار الجهة (≈ 10-25 02:58)</td></tr>
+<tr><td>7</td><td>تقييم النقل عبر الحدود لاستضافة sjc: هل أُجري؟ ضمانات وموافقات</td><td>يُفتح الآن، لا يمنع الإخطار</td></tr>
+<tr><td>8</td><td>مراجعة مستشار الخصوصية للمسودة (ثقة 0.65 دون عتبة 0.8) والتحقق من نص القانون وأرقام المواد</td><td>قبل الاجتماع</td></tr>
+<tr><td>9</td><td>مصير النسخ الاحتياطية القديمة (مشفّرة بالمفتاح القديم المحتمل تسريبه)</td><td>مع تقييم FERNET</td></tr>
+</table></div>
+<div class="card warn"><b>تنبيه تاريخ:</b> مسودة 0301 تقول إن الموعد ≈ 10-25 يوم سبت. الحساب الظاهر من الإفصاح (الأربعاء 21 أكتوبر) يجعل 10-22 الخميس و10-25 الأحد، أي يوم عمل. يتحقق 0301 من ذلك؛ ويوما 10-23 (الجمعة) و10-24 (السبت) عطلة أسبوعية في قطر، فالأحوط عقد اجتماع القرار اليوم 10-22 أو تأكيد حضور الأطراف في العطلة.</div>
+
+<h2>2. شرط استئناف البناء والتنفيذ</h2>
+<div class="card warn">
+<b>الحالة الآن: لم يتحقق.</b> حسب status.railway.com (22 أكتوبر 02:19 UTC): البناء متوقف في US West وUS East وEU West وSoutheast Asia؛ الاستعادة مرحلية (المؤسسات، ثم Pro، ثم Hobby، ثم المجاني)؛ نشرت Railway أدلة تدوير وذكرت أن بعض الخطوات يحتاج إعادة نشر فينتظر البناء. وتدوّر Railway بنفسها كل بيانات اعتماد المخازن (buckets) وتحتاج إعادة نشرها وإعادة ربط GitHub بعد عودة البناء.
+<ol>
+<li>تظهر على الصفحة عودة البناء لمنطقة مشروعنا (قد تتأخر خطتنا عن المؤسسات).</li>
+<li>نشر تجريبي صغير ينجح.</li>
+<li>نسخة احتياطية جديدة (0.3) اكتملت.</li>
+<li>لا دمج مخطط في الليلة نفسها، ونافذة بعد الدوام.</li>
+<li>ممنوع <code>railway config apply</code> قبل هبوط #1223.</li>
+</ol>
+<b>مجهول:</b> سلوك Railway عند تعديل متغير أثناء توقف البناء (تأخير أم فشل). لذلك لا نغيّر متغيرات قبل العودة. المتابعة: كل فحص دوري لصفحة الحالة؛ التغيّر يرفع إلى 0101.</div>
+
+<h2>3. ملاحظات متابعة</h2>
+<ul>
+<li>رسالة «Scheduled Project Deletion» لمشروع camel-milk-research ليست من منصتنا ولم تُفتح؛ يُترك لقرار المالك.</li>
+<li>قد يصل بريد من Railway يحدد الحسابات المتأثرة تأكيداً؛ بريد المالك مُراسَل مباشرة أصلاً فالتعامل معه مشمولاً.</li>
+<li>مفاتيح مزوّدي الذكاء (OpenRouter وAnthropic وOpenAI) ذكرتها أدلة Railway للفحص؛ جرد 0301 لا يذكرها في Railway. يُتحقق من أنها غير مخزنة هناك عند الخطوة 0.1.</li>
+<li>تصحيحا 0301 على الجرد: <code>rotate_fernet_key</code> بـ<code>railway ssh</code> لا <code>railway run</code>، ولا وجود لأمر <code>verify_encryption</code>. الأوامر في قسم «أوامر التدوير» من ملف الجرد قديمة بهذين الوجهين؛ المرجع هو الدليل.</li>
+</ul>
+
+<h2>4. قائمة المالك اليدوية (بالترتيب)</h2>
+<div class="card ok">
+<b>اليوم، بلا بناء:</b>
+<ol>
+<li>في Railway: دوّن أسماء المتغيرات فقط (لا قيمها) للخدمات الثلاث وPostgres وRedis.</li>
+<li>تحقق: هل <code>DATABASE_URL</code> داخلي (ينتهي بـ<code>.railway.internal</code>)؟ وهل TCP Proxy مفعّل لـPostgres وRedis؟</li>
+<li>شغّل النسخ الاحتياطي من GitHub Actions وتأكد من نجاحه.</li>
+<li>إن كان الرابط داخلياً: أغلق TCP Proxy لـPostgres ثم Redis. تحقق أن الموقع يعمل.</li>
+<li>Twilio: أنشئ رمزاً ثانوياً، أبطل الأساسي، حدّث الرمز من إعدادات الإشعارات في الإدارة.</li>
+<li>GitHub: أبطل <code>QCC_GITHUB_TOKEN</code> إن وُجد اسمه.</li>
+<li>Sentry والبريد وAWS: أنشئ مفاتيح جديدة فقط ولا تحذف القديمة. AWS: اقرأ CloudTrail للمفتاح القديم منذ 21 أكتوبر.</li>
+<li>VAPID: لا تدوّره الآن.</li>
+<li>راجع سجلات الدخول والتدقيق وSentry منذ 21 أكتوبر (أو كلّف 0601 بالقراءة).</li>
+<li>راجع مسودة PDPPL من 0301 وقرر: وقت الاكتشاف، DPO، طلب الإيضاح من Railway، اجتماع القرار (قبل صباح 10-24). الإرسال لك وحدك.</li>
+</ol>
+<b>عند عودة البناء، بعد الدوام:</b>
+<ol start="11">
+<li>دفعة واحدة: AWS وSentry والبريد الجديدة، نشر، تحقق، ثم أبطل القديمة.</li>
+<li>Postgres: <code>ALTER ROLE</code> للدورين، حدّث المتغيرات الثلاثة، نشر، أعد تفعيل الوصول، حدّث <code>DATABASE_PUBLIC_URL</code> في GitHub، شغّل النسخ.</li>
+<li>Redis: كلمة جديدة وثلاثة روابط، نشر.</li>
+<li>SECRET_KEY: قيمة واحدة للخدمات الثلاث، نشر (تُسقط الجلسات).</li>
+<li>FERNET_KEY: فقط بعد موافقة المراجعة الأمنية وPDPPL؛ بعد الخطوات السابقة ونسخة جديدة.</li>
+<li>بعد يومين استقرار: فرّغ <code>FERNET_OLD_KEYS</code>.</li>
+</ol>
+<b>لا تفعل:</b> لا تلصق قيمة سر في محادثة أو ملف؛ لا <code>railway config apply</code>؛ لا تغيّر <code>BACKUP_PASSPHRASE</code> أو R2؛ لا تحذف مفتاحاً قديماً قبل نجاح الجديد.
+</div>
+</main></body></html>
