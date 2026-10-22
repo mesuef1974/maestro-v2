@@ -806,3 +806,43 @@ class Stages(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CiPass(unittest.TestCase):
+    def _run(self, checks, done=None, apply=True):
+        from datetime import datetime, timezone
+
+        states = {"W-9": {"state": "approved", "approved_head": "aaaaaaaa"}}
+        prs = [{"number": 7, "headRefOid": "a" * 40}]
+        calls = []
+
+        def sh(cmd, cwd=None):
+            calls.append(cmd)
+            return (0, json.dumps(checks)) if cmd[:3] == ["gh", "pr", "checks"] else (0, "")
+
+        tmp = Path(tempfile.mkdtemp()) / "r.json"
+        if done:
+            tmp.write_text(json.dumps(done))
+        now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+        with mock.patch.object(fp, "RERUNS", tmp), mock.patch.object(fp, "approved_prs", lambda s, p: [("W-9", prs[0], {})]), \
+                mock.patch.object(fp.ledger, "add_note") as note:
+            out = fp.ci_pass(states, prs, apply, sh, now)
+        return out, calls, note
+
+    def test_failed_check_is_rerun_once(self):
+        link = "https://github.com/o/r/actions/runs/123/job/9"
+        out, calls, _ = self._run([{"name": "axe", "bucket": "cancel", "link": link}])
+        self.assertIn(["gh", "run", "rerun", "123", "--failed"], calls)
+        out2, calls2, _ = self._run([{"name": "axe", "bucket": "cancel", "link": link}], done={"7:aaaaaaaa": 1})
+        self.assertFalse(any(c[:3] == ["gh", "run", "rerun"] for c in calls2))
+        self.assertIn("لا إعادة ثانية", out2[0])
+
+    def test_pending_over_threshold_notes_once(self):
+        out, _, note = self._run([{"name": "e2e", "bucket": "pending", "startedAt": "2026-10-23T11:00:00Z", "link": ""}])
+        note.assert_called_once()
+        self.assertIn("معلَّق", out[0])
+
+    def test_fresh_pending_is_ignored(self):
+        out, _, note = self._run([{"name": "e2e", "bucket": "pending", "startedAt": "2026-10-23T11:50:00Z", "link": ""}])
+        self.assertEqual(out, [])
+        note.assert_not_called()
