@@ -37,13 +37,13 @@ def test_real_registry_has_aliases():
 def test_real_registry_resolves_phase2_merged_numbers():
     # المرحلة 2 (أمر المالك 2026-10-21): المدمَجةُ أسماءٌ مستعارةٌ لمستقبِلاتها؛ ثمّ ترقيمُ 01 بالترتيب (14:02):
     # 0103 ← 0301 و0102 ← 0301، و0201 و0301 جلستان حيّتان فخرجتا من الإحالة إلى «_reused»
-    expect = {"0702": "0701", "0102": "0301", "0103": "0301", "0204": "0101", "0202": "0101"}
+    expect = {"0102": "0301", "0103": "0301", "0204": "0101", "0202": "0101"}
     for old, new in expect.items():
         assert sa.resolve(old).startswith(new), old
     m = sa.number_map()
     assert {k: m[k] for k in expect} == expect
     reused = sa._load(None)["session_policy"]["aliases"]["_reused"]
-    assert "0702" not in reused and "0201" not in m and "0301" not in m
+    assert "0702" not in reused and "0702" not in m and "0201" not in m and "0301" not in m
     assert sa.resolve("0201").startswith("0201 · المايسترو") and sa.resolve("0301").startswith("0301 · الحوكمة")
     assert sa.resolve("0201", legacy=True).startswith("0106") and sa.resolve("0301", legacy=True).startswith("0107")  # D-455م
 
