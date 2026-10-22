@@ -271,3 +271,109 @@ def test_counter_guard_follows_msg_counter_quota():
 def test_halt_text_reports_the_read_quota_not_a_hardcoded_one():
     p = wm.plan(_routed("0701"), CUR, {"0701": "local_x"}, set(), verify=ok, sent=wm.COUNTER_GUARD)
     assert p.halted and str(wm.msg_counter.LIMIT) in p.halted and "من 150" not in p.halted
+
+
+# ── الإيقاظ بالتغيير لا بالزمن (بصمة الحالة) ──────────────────────────────────
+
+from datetime import datetime, timedelta  # noqa: E402
+
+T0 = datetime.fromisoformat("2026-10-16T11:30:00+03:00")
+
+
+def test_fingerprint_is_stable_for_the_same_ledger():
+    ev = _routed("0701")
+    assert wm.fingerprint(ev, T0) == wm.fingerprint(list(ev), T0)
+
+
+def test_fingerprint_changes_when_a_card_state_or_holder_changes():
+    a = wm.fingerprint(_routed("0701"), T0)
+    ev = _routed("0701") + [state("W-20261016-001", "in_progress", "2026-10-16T11:10:00+03:00", held_by="0701")]
+    assert wm.fingerprint(ev, T0) != a
+    assert wm.fingerprint(_routed("0501"), T0) != a
+
+
+def test_fingerprint_changes_when_a_card_crosses_its_stale_limit():
+    ev = _routed("0701")  # routed منذ 11:00: حدُّها ثلاث ساعات
+    before = wm.fingerprint(ev, T0)
+    assert wm.fingerprint(ev, T0 + timedelta(hours=1)) == before
+    assert wm.fingerprint(ev, T0 + timedelta(hours=3)) != before
+
+
+def test_fingerprint_includes_the_pr_snapshot_and_ignores_finished_cards():
+    ev = _routed("0701")
+    assert wm.fingerprint(ev, T0, "pr 1 clean") != wm.fingerprint(ev, T0, "pr 1 blocked")
+    done = ev + [state("W-20261016-001", "published", "2026-10-16T11:20:00+03:00")]
+    assert wm.fingerprint(done, T0) == wm.fingerprint([], T0)
+
+
+def test_read_fingerprint_missing_or_corrupt_counts_as_changed(tmp_path):
+    assert wm.read_fingerprint(tmp_path / "none.json") == ""
+    bad = tmp_path / "bad.json"
+    bad.write_text("{oops", encoding="utf-8")
+    assert wm.read_fingerprint(bad) == ""
+    good = tmp_path / "ok.json"
+    wm.write_fingerprint("abc123", good)
+    assert wm.read_fingerprint(good) == "abc123" and not list(tmp_path.glob("*.tmp"))
+
+
+def test_report_is_a_script_line_with_counts_and_stale():
+    line = wm.report(_routed("0701"), T0 + timedelta(hours=4), "fp1")
+    assert "fp1" in line and "routed 1 (عالقة 1)" in line
+
+
+def _setup_main(tmp_path, monkeypatch, events):
+    import json
+
+    import session_directory as sd
+
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8")
+    monkeypatch.setattr(wm, "EVENTS", path)
+    monkeypatch.setattr(wm, "CURSOR", tmp_path / "cursor.json")
+    monkeypatch.setattr(wm, "LOG", tmp_path / "log.jsonl")
+    monkeypatch.setattr(wm, "FINGERPRINT", tmp_path / "fp.json")
+    monkeypatch.setattr(sd, "entries", lambda: {"0701": {"id": "local_x"}})
+    monkeypatch.setattr(wm, "live_sessions", lambda: set())
+    monkeypatch.setattr(wm, "ground_truth_ok", lambda i, s: True)
+    monkeypatch.setattr(wm, "sender_count", lambda *a, **k: 0)
+
+
+def test_changed_only_is_silent_and_idempotent_when_nothing_changed(tmp_path, monkeypatch, capsys):
+    _setup_main(tmp_path, monkeypatch, _routed("0701"))
+    wm.main(["--changed-only", "--commit", "--all"])
+    first = capsys.readouterr().out
+    assert "تغيّرت الحالة" in first
+    assert (tmp_path / "fp.json").is_file()
+    wm.main(["--changed-only", "--commit", "--all"])
+    second = capsys.readouterr().out
+    assert "لا تغيّر" in second and "إلى " not in second
+    assert len((tmp_path / "log.jsonl").read_text(encoding="utf-8").splitlines()) == 1  # لا كتابةَ ثانيةً في السجلّ
+
+
+def test_changed_only_without_commit_never_saves_the_fingerprint(tmp_path, monkeypatch, capsys):
+    _setup_main(tmp_path, monkeypatch, _routed("0701"))
+    wm.main(["--changed-only", "--all"])
+    capsys.readouterr()
+    assert not (tmp_path / "fp.json").exists()
+    wm.main(["--changed-only", "--all"])
+    assert "لا تغيّر" not in capsys.readouterr().out
+
+
+def test_halted_plan_does_not_save_the_fingerprint_so_it_is_retried(tmp_path, monkeypatch, capsys):
+    _setup_main(tmp_path, monkeypatch, _routed("0701"))
+    halted = wm.WakePlan()
+    halted.halted = "سقفٌ"
+    monkeypatch.setattr(wm, "make_plan", lambda *a, **k: halted)
+    wm.main(["--changed-only", "--commit", "--all"])
+    assert "توقّف" in capsys.readouterr().out
+    assert not (tmp_path / "fp.json").exists()
+
+
+def test_watch_changed_only_prints_one_report_then_stays_silent(tmp_path, monkeypatch, capsys):
+    _setup_main(tmp_path, monkeypatch, _routed("0701"))
+    wm.write_fingerprint("old", tmp_path / "fp.json")
+    wm.main(["--watch", "--once", "--changed-only", "--all"])
+    assert "تغيّرت الحالة" in capsys.readouterr().out
+    wm.write_fingerprint(wm.fingerprint(wm.read_events(tmp_path / "events.jsonl"), datetime.now().astimezone()), tmp_path / "fp.json")
+    wm.main(["--watch", "--once", "--changed-only", "--all"])
+    assert capsys.readouterr().out == ""
