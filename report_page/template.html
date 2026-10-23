@@ -298,12 +298,12 @@ const DOCNAME={rating:"التقييم من 100: المنصّة والفلو",pla
 
 /* ---------- بيانات نظرة عامة ---------- */
 const SCORE={
- platform:{name:"المنصّة SchoolOS",score:61,target:[75,78],cls:"warn",tier:"جيّد لمرحلة نموّ",band:"النطاق 60 إلى 74",
+ platform:{name:"المنصّة SchoolOS",score:62,target:[75,78],cls:"warn",tier:"جيّد لمرحلة نموّ",band:"النطاق 60 إلى 74",
   note:"قوية هندسياً بانضباط الاختبارات والحرّاس وسرعة التسليم، لكنها دون عتبة الاعتماد المؤسسي في الخصوصية والتوسّع والتشغيل.",
-  axes:[["الأمن والامتثال",11,20],["جودة الشيفرة والاختبار",12,15],["المعمارية وقابلية الصيانة",6,10],["الأداء والبيانات والتوسّع",8,15],["تجربة الاستخدام والوصولية",10,15],["تغطية المجال الوظيفي",8,15],["التسليم والتشغيل",6,10]]},
- flow:{name:"الفلو المؤتمت",score:48,target:[65,70],cls:"bad",tier:"واعد، يعتمد على المشغّلين",band:"النطاق 40 إلى 59",
+  axes:[["الأمن والامتثال",11,20],["جودة الشيفرة والاختبار",12,15],["المعمارية وقابلية الصيانة",6,10],["الأداء والبيانات والتوسّع",8,15],["تجربة الاستخدام والوصولية",10,15],["تغطية المجال الوظيفي",8,15],["التسليم والتشغيل",7,10]]},
+ flow:{name:"الفلو المؤتمت",score:51,target:[65,70],cls:"bad",tier:"واعد، يعتمد على المشغّلين",band:"النطاق 40 إلى 59",
   note:"حوكمة مبتكرة ووسيط دورة سريع، لكن الأتمتة نفسها لم تبلغ الصلابة التي تسمح بتركها بلا إشراف.",
-  axes:[["سلامة البوابات والاعتماد",11,20],["سرعة التدفق وإنتاجيته",12,20],["اعتمادية الأتمتة وسلامة الدفتر",7,15],["النشر والاستعادة",5,15],["عبء المالك والحوكمة",7,15],["المراقبة والتوثيق والاستمرارية",6,15]]}
+  axes:[["سلامة البوابات والاعتماد",12,20],["سرعة التدفق وإنتاجيته",12,20],["اعتمادية الأتمتة وسلامة الدفتر",9,15],["النشر والاستعادة",5,15],["عبء المالك والحوكمة",7,15],["المراقبة والتوثيق والاستمرارية",6,15]]}
 };
 const RISKS={
  platform:[
@@ -366,7 +366,7 @@ function buildOverview(){
     d.o.map((o,i)=>`<div class="opt"><input type="radio" name="${d.id}" id="${d.id}-${i}" value="${i}"><label for="${d.id}-${i}">${esc(o[0])}${o[1]?'<span class="rec">موصى به</span>':''}<small style="display:block;color:var(--muted);font-size:.84rem">${esc(o[2])}</small></label></div>`).join("")+`</div></fieldset></div>`).join("");
   $("#v-over").innerHTML=`
   <div class="hero bleed"><div class="in">
-    <p class="eyebrow">2026-10-21 · origin/main 6f7ec060 · static review</p>
+    <p class="eyebrow">2026-10-23 · إعادة تقييم بعد الموجة 0 · الأساس 2026-10-21</p>
     <h1>تقييم SchoolOS والفلو المؤتمت</h1>
     <p class="sub">تقييم احترافي من 100 بمعايير صارمة، مبنيّ على قراءة ساكنة للشيفرة وثلاثة تقارير SWOT، مع خطة زمنية لرفع الدرجتين.</p>
     <div class="chips"><span class="chip bad"><i></i>التجميد الطارئ قائم: لا دمج ولا دفع ولا نشر</span><span class="chip"><i></i>الطلبان المعلّقان: 1204 و1218</span><span class="chip"><i></i>6 قرارات تنتظرك</span></div>
@@ -374,8 +374,8 @@ function buildOverview(){
     <div class="legend-g"><span class="a">قوس الدرجة الحالية</span><span class="t">القوس الخارجي: الهدف المتوقع</span></div>
   </div></div>
   <section class="sec bleed"><div class="in"><h2>أين تضيع النقاط</h2><p class="lead">طول كل شريط يعكس وزن المحور، وتعبئته ما نالته المنصّة منه. الأحمر ما دون 55% من وزنه، والكهرماني بين 55 و75%، والأخضر فوق ذلك.</p>
-    <div class="two"><div class="panel"><h3>المنصّة SchoolOS <em>61 من 100</em></h3>${bars(SCORE.platform)}</div>
-    <div class="panel"><h3>الفلو المؤتمت <em>48 من 100</em></h3>${bars(SCORE.flow)}</div></div></div></section>
+    <div class="two"><div class="panel"><h3>المنصّة SchoolOS <em>62 من 100</em></h3>${bars(SCORE.platform)}</div>
+    <div class="panel"><h3>الفلو المؤتمت <em>51 من 100</em></h3>${bars(SCORE.flow)}</div></div></div></section>
   <section class="sec bleed"><div class="in"><h2>أخطر الفجوات مرتبةً بالأثر</h2><p class="lead">خمس في كل جهة، ولكل واحدة دليلها في الملاحق.</p>
     <div class="two"><div class="panel"><h3>المنصّة</h3>${risks("platform")}</div><div class="panel"><h3>الفلو</h3>${risks("flow")}</div></div></div></section>
   <section class="sec bleed"><div class="in"><h2>الخطة في صورة</h2><p class="lead">خمس موجات. انقر أي شريط لتفتح تفاصيله في الخطة.</p>${gantt()}</div></section>
