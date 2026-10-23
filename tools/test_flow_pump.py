@@ -961,10 +961,258 @@ class CiLimitPush(PushPass):
         self.assertIn("W-2", lines[0])
 
 
+class TreePass(unittest.TestCase):
+    """(W-20261023-016) مرحلة الشجرة: git وهميّ؛ لا تُنشأ شجرةٌ إلا على فرعٍ محلّيٍّ رأسُه الرأسُ المعتمَد بالضبط."""
+
+    NO_TREE = (None, "لا شجرةَ على الرأس aaaaaaaa بفرع claude/* يحمل رمز W-1")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        p = mock.patch.object(fp, "LOG", self.tmp / "pump.log")
+        p.start()
+        self.addCleanup(p.stop)
+        self.states = {"W-1": {"state": "approved", "approved_head": "aaaaaaaa"}}
+
+    def git(self, branches=(("claude/w1-x", "a" * 40),), origin="https://github.com/sh-school/shschool_mvp.git", grep="a" * 40, add_rc=0):
+        calls = []
+
+        def git(repo, *args):
+            calls.append(args)
+            if args[0] == "remote":
+                return 0, origin + "\n"
+            if args[0] == "for-each-ref":
+                return 0, "".join(f"{n} {s}\n" for n, s in branches)
+            if args[0] == "log":
+                return 0, grep + "\n"
+            if args[0] == "worktree" and args[1] == "add":
+                return add_rc, "" if not add_rc else "fatal: already checked out"
+            return 0, ""
+
+        git.calls = calls
+        return git
+
+    def run_pass(self, apply=True, states=None, find=None, **kw):
+        git = kw.pop("git", None) or self.git()
+        with mock.patch("push_watch.find_tree", return_value=find or self.NO_TREE):
+            lines = fp.tree_pass(states or self.states, apply, repos=[str(self.tmp)], git=git, platform=str(self.tmp), **kw)
+        return lines, git
+
+    def adds(self, git):
+        return [c for c in git.calls if c[:2] == ("worktree", "add")]
+
+    def test_apply_adds_a_worktree_on_the_branch_at_the_approved_head(self):
+        lines, git = self.run_pass()
+        dest = str(self.tmp / ".claude" / "worktrees" / "pump-W-1")
+        self.assertEqual(self.adds(git), [("worktree", "add", dest, "claude/w1-x")])
+        self.assertIn("✔", lines[0])
+
+    def test_dry_run_creates_nothing(self):
+        lines, git = self.run_pass(apply=False)
+        self.assertEqual(self.adds(git), [])
+        self.assertIn("(عرض)", lines[0])
+
+    def test_a_card_that_already_has_a_tree_is_untouched(self):
+        lines, git = self.run_pass(find=({"path": "C:/x", "branch": "w1", "head": "a" * 40}, ""))
+        self.assertEqual((lines, self.adds(git)), ([], []))
+
+    def test_no_local_branch_on_the_head_is_report_only(self):
+        lines, git = self.run_pass(git=self.git(branches=(("claude/w1-x", "b" * 40),)))
+        self.assertEqual(self.adds(git), [])
+        self.assertIn("تبليغ فقط", lines[0])
+        self.assertIn("W-1", lines[0])
+
+    def test_a_branch_outside_the_allowed_patterns_is_never_used(self):
+        lines, git = self.run_pass(git=self.git(branches=(("main", "a" * 40), ("feature/x", "a" * 40))))
+        self.assertEqual(self.adds(git), [])
+
+    def test_a_branch_without_the_card_code_in_its_commits_is_never_used(self):
+        lines, git = self.run_pass(git=self.git(grep=""))
+        self.assertEqual(self.adds(git), [])
+
+    def test_two_branches_on_the_head_is_ambiguous_and_nothing_is_created(self):
+        lines, git = self.run_pass(git=self.git(branches=(("claude/a", "a" * 40), ("w1-b", "a" * 40))))
+        self.assertEqual(self.adds(git), [])
+        self.assertIn("التباس", lines[0])
+
+    def test_an_existing_path_is_never_touched(self):
+        (self.tmp / ".claude" / "worktrees" / "pump-W-1").mkdir(parents=True)
+        lines, git = self.run_pass()
+        self.assertEqual(self.adds(git), [])
+        self.assertIn("لا لمس", lines[0])
+
+    def test_other_repository_or_non_approved_cards_are_skipped(self):
+        lines, git = self.run_pass(git=self.git(origin="https://github.com/x/maestro-v2.git"))
+        self.assertEqual((lines, self.adds(git)), ([], []))
+        lines, git = self.run_pass(states={"W-1": {"state": "pushed", "approved_head": "aaaaaaaa"}})
+        self.assertEqual((lines, git.calls), ([], []))
+
+    def test_the_cycle_limit_defers_the_rest(self):
+        states = {c: {"state": "approved", "approved_head": "aaaaaaaa"} for c in ("W-1", "W-2", "W-3")}
+        lines, git = self.run_pass(states=states, limit=2)
+        self.assertEqual(len(self.adds(git)), 2)
+        self.assertTrue(any("الدورة التالية" in x for x in lines))
+
+    def test_a_failed_add_is_reported_not_forced(self):
+        lines, git = self.run_pass(git=self.git(add_rc=128))
+        self.assertIn("✘", lines[0])
+        self.assertNotIn("--force", sum((list(c) for c in git.calls), []))
+
+
+class OpenPrPass(unittest.TestCase):
+    """(W-20261023-016) فتحُ الطلب لبطاقة pushed بلا طلب: gh وgit وهميّان؛ لا دمجَ ولا --auto في أيّ حال."""
+
+    HEAD = "d" * 40
+    CARD = "W-5"
+    URL = "https://github.com/sh-school/shschool_mvp/pull/321\n"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        p = mock.patch.object(fp, "LOG", self.tmp / "pump.log")
+        p.start()
+        self.addCleanup(p.stop)
+        self.states = {self.CARD: {"state": "pushed", "approved_head": "dddddddd", "problem": "مشكلةٌ عربيّة", "accept": "قبولٌ عربيّ"}}
+
+    def git(self, remote=None, rc=0):
+        remote = [("claude/w5-x", self.HEAD)] if remote is None else remote
+
+        def git(repo, *args):
+            if args[:2] == ("ls-remote", "--heads"):
+                return rc, "".join(f"{sha}\trefs/heads/{n}\n" for n, sha in remote)
+            return 0, ""
+
+        return git
+
+    def sh(self, known=(), files=("clinic/services.py", "tests/test_x.py"), create=(0, URL), compare_rc=0):
+        calls = []
+
+        def sh(cmd, cwd=None):
+            calls.append(cmd)
+            if cmd[:3] == ["gh", "pr", "list"]:
+                return 0, json.dumps(list(known))
+            if cmd[:2] == ["gh", "api"]:
+                return compare_rc, "\n".join(files) + "\n"
+            if cmd[:3] == ["gh", "pr", "create"]:
+                return create
+            return 0, ""
+
+        sh.calls = calls
+        return sh
+
+    def run_pass(self, apply=True, prs=(), approved=True, line="اعتُمد من المالك مباشرةً بلا معاينة 8500 — 2026-10-23 — الرأس dddddddd — W-5",
+                 states=None, git=None, sh=None, **kw):
+        sh = sh or self.sh()
+        with (
+            mock.patch.object(fp, "approval_ok", return_value=approved),
+            mock.patch.object(fp, "approval_line", return_value=line),
+            mock.patch.object(fp.ledger, "add_note") as note,
+            mock.patch.object(fp.ac, "security_approved", return_value=None),
+        ):
+            lines = fp.openpr_pass(states or self.states, list(prs), apply, git=git or self.git(), sh=sh, platform=str(self.tmp), **kw)
+        return lines, sh, note
+
+    def creates(self, sh):
+        return [c for c in sh.calls if c[:3] == ["gh", "pr", "create"]]
+
+    def test_apply_opens_the_pr_with_arabic_title_and_card_fields_then_notes_the_number(self):
+        bodies = []
+        base = self.sh()
+
+        def sh(cmd, cwd=None):
+            if cmd[:3] == ["gh", "pr", "create"]:
+                bodies.append(Path(cmd[cmd.index("--body-file") + 1]).read_text(encoding="utf-8"))
+            return base(cmd, cwd)
+
+        sh.calls = base.calls
+        lines, _, note = self.run_pass(sh=sh)
+        cmd = self.creates(base)[0]
+        self.assertEqual(cmd[cmd.index("--head") + 1], "claude/w5-x")
+        self.assertEqual(cmd[cmd.index("--base") + 1], "main")
+        self.assertEqual(cmd[cmd.index("--repo") + 1], "sh-school/shschool_mvp")
+        self.assertIn("W-5", cmd[cmd.index("--title") + 1])
+        self.assertTrue(bodies[0].startswith("اعتُمد من المالك"))
+        self.assertIn("مشكلةٌ عربيّة", bodies[0])
+        self.assertIn("قبولٌ عربيّ", bodies[0])
+        self.assertIn("W-5", bodies[0])
+        note.assert_called_once()
+        self.assertIn("#321", note.call_args.args[1])
+        self.assertIn("✔", lines[0])
+
+    def test_never_merges_or_arms_auto_merge(self):
+        _, sh, _ = self.run_pass()
+        self.assertFalse(any(c[:3] == ["gh", "pr", "merge"] or "--auto" in c for c in sh.calls))
+
+    def test_dry_run_opens_nothing_and_writes_nothing(self):
+        lines, sh, note = self.run_pass(apply=False)
+        self.assertEqual(self.creates(sh), [])
+        note.assert_not_called()
+        self.assertIn("(عرض)", lines[0])
+
+    def test_a_remote_head_that_differs_from_the_approved_head_is_never_opened(self):
+        lines, sh, _ = self.run_pass(git=self.git(remote=[("claude/w5-x", "e" * 40)]))
+        self.assertEqual(self.creates(sh), [])
+        self.assertIn("لا فرعَ بعيداً", lines[0])
+
+    def test_a_ledger_branch_that_moved_is_reported_as_mismatch(self):
+        states = {self.CARD: {**self.states[self.CARD], "branch": "claude/w5-x"}}
+        lines, sh, _ = self.run_pass(states=states, git=self.git(remote=[("claude/w5-x", "e" * 40)]))
+        self.assertEqual(self.creates(sh), [])
+        self.assertIn("يخالف", lines[0])
+
+    def test_unstable_approval_blocks(self):
+        lines, sh, _ = self.run_pass(approved=False)
+        self.assertEqual(self.creates(sh), [])
+        self.assertIn("بلا اعتمادٍ ثابت", lines[0])
+
+    def test_forbidden_categories_are_not_opened(self):
+        for files, word in ((("app/migrations/0001_x.py",), "هجرات"), (("core/permissions.py",), "أمن"), (("accounts/rls.py",), "أمنيّ")):
+            lines, sh, _ = self.run_pass(sh=self.sh(files=files))
+            self.assertEqual(self.creates(sh), [], files)
+            self.assertIn(word, lines[0], files)
+
+    def test_a_wide_branch_is_not_opened(self):
+        lines, sh, _ = self.run_pass(sh=self.sh(files=[f"docs/f{i}.md" for i in range(fp.MAX_FILES)]))
+        self.assertEqual(self.creates(sh), [])
+
+    def test_an_existing_open_or_merged_pr_means_no_new_one(self):
+        for known in ([{"number": 9, "state": "OPEN", "headRefOid": self.HEAD}], [{"number": 9, "state": "MERGED", "headRefOid": "f" * 40}]):
+            _, sh, _ = self.run_pass(sh=self.sh(known=known))
+            self.assertEqual(self.creates(sh), [])
+        pr = {"number": 9, "headRefName": "claude/w5-x", "headRefOid": self.HEAD, "title": "W-5", "body": "", "baseRefName": "main"}
+        _, sh, _ = self.run_pass(prs=[pr])
+        self.assertEqual(self.creates(sh), [])
+
+    def test_unreadable_remote_or_gh_or_compare_opens_nothing(self):
+        lines, sh, _ = self.run_pass(git=self.git(rc=1))
+        self.assertEqual(self.creates(sh), [])
+        lines, sh, _ = self.run_pass(sh=self.sh(compare_rc=1))
+        self.assertEqual(self.creates(sh), [])
+        self.assertIn("تعذّر", lines[0])
+
+    def test_no_approval_line_source_means_no_pr(self):
+        lines, sh, _ = self.run_pass(line=None)
+        self.assertEqual(self.creates(sh), [])
+
+    def test_a_gh_failure_is_reported_and_no_note_is_written(self):
+        lines, _, note = self.run_pass(sh=self.sh(create=(1, "GraphQL: boom")))
+        note.assert_not_called()
+        self.assertIn("✘", lines[0])
+
+    def test_only_pushed_cards_with_a_head_are_considered(self):
+        states = {"W-1": {"state": "approved", "approved_head": "dddddddd"}, "W-2": {"state": "pushed"}}
+        lines, sh, _ = self.run_pass(states=states)
+        self.assertEqual((lines, sh.calls), ([], []))
+
+    def test_the_cycle_limit_defers_the_rest(self):
+        states = {c: {**self.states[self.CARD]} for c in ("W-5", "W-6", "W-7")}
+        git = self.git(remote=[("claude/w5-x", "d" * 40)])
+        lines, sh, _ = self.run_pass(states=states, git=git, limit=1)
+        self.assertEqual(len(self.creates(sh)), 1)
+
+
 class Stages(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
-        for name in ("LOCK", "LOG", "OFF", "NO_MERGE", "NO_PREPUSH"):
+        for name in ("LOCK", "LOG", "OFF", "NO_MERGE", "NO_PREPUSH", "NO_TREE", "NO_OPENPR"):
             p = mock.patch.object(fp, name, tmp / name)
             p.start()
             self.addCleanup(p.stop)
@@ -981,8 +1229,10 @@ class Stages(unittest.TestCase):
             mock.patch.object(fp, "open_prs", side_effect=lambda: called.append("prs") or (None if prs is None else list(prs))),
             mock.patch.object(fp, "approve_pass", side_effect=stage("approve")),
             mock.patch.object(fp, "waive_pass", side_effect=stage("waive")),
+            mock.patch.object(fp, "tree_pass", side_effect=stage("tree")),
             mock.patch.object(fp, "prepush_pass", side_effect=stage("prepush")),
             mock.patch.object(fp, "push_pass", side_effect=stage("push")),
+            mock.patch.object(fp, "openpr_pass", side_effect=stage("openpr")),
             mock.patch.object(fp, "line_pass", side_effect=stage("line")),
             mock.patch.object(fp, "merge_pass", side_effect=stage("merge")),
             mock.patch.object(fp.ledger_sync, "cycle", return_value=0),
@@ -993,25 +1243,39 @@ class Stages(unittest.TestCase):
 
     def test_all_stages_run_in_order(self):
         called, _ = self.run_main(["--apply"])
-        self.assertEqual(called, ["approve", "prs", "waive", "prepush", "push", "line", "merge"])
+        self.assertEqual(called, ["approve", "prs", "waive", "tree", "prepush", "push", "openpr", "line", "merge"])
 
     def test_each_stage_can_be_switched_off(self):
-        called, _ = self.run_main(["--apply", "--no-push", "--no-line", "--no-merge"])
+        called, _ = self.run_main(["--apply", "--no-push", "--no-line", "--no-merge", "--no-open-pr"])
         self.assertEqual(called, ["approve", "prs", "waive"])
 
     def test_the_prepush_stage_has_its_own_switches(self):
         called, _ = self.run_main(["--apply", "--no-prepush"])
-        self.assertEqual(called, ["approve", "prs", "waive", "push", "line", "merge"])
+        self.assertEqual(called, ["approve", "prs", "waive", "tree", "push", "openpr", "line", "merge"])
         fp.NO_PREPUSH.write_text("")
         called, out = self.run_main(["--apply"])
-        self.assertEqual(called, ["approve", "prs", "waive", "push", "line", "merge"])
+        self.assertEqual(called, ["approve", "prs", "waive", "tree", "push", "openpr", "line", "merge"])
         self.assertIn("prepush: معطَّل", out)
 
     def test_the_no_merge_switch_skips_only_the_merge_stage(self):
         fp.NO_MERGE.write_text("")
         called, out = self.run_main(["--apply"])
-        self.assertEqual(called, ["approve", "prs", "waive", "prepush", "push", "line"])
+        self.assertEqual(called, ["approve", "prs", "waive", "tree", "prepush", "push", "openpr", "line"])
         self.assertIn("دمج: معطَّل", out)
+
+    def test_tree_and_open_pr_have_their_own_switches(self):
+        called, _ = self.run_main(["--apply", "--no-tree", "--no-open-pr"])
+        self.assertEqual(called, ["approve", "prs", "waive", "prepush", "push", "line", "merge"])
+        fp.NO_TREE.write_text("")
+        fp.NO_OPENPR.write_text("")
+        called, out = self.run_main(["--apply"])
+        self.assertEqual(called, ["approve", "prs", "waive", "prepush", "push", "line", "merge"])
+        self.assertIn("شجرة: معطَّلة", out)
+        self.assertIn("طلب: معطَّل", out)
+
+    def test_open_pr_is_skipped_when_open_prs_are_unreadable(self):
+        called, _ = self.run_main(["--apply"], prs=None)
+        self.assertNotIn("openpr", called)
 
     def test_unreadable_prs_are_reported_not_taken_as_none(self):
         called, out = self.run_main([], prs=None)
