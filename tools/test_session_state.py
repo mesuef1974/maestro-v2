@@ -144,3 +144,30 @@ def test_hook_ambiguous_candidates_same_number(tree):
     assert "<state-data>" in ss.cmd_hook(hook, tree, NOW, same)
     mixed = lambda c, i: (None, ["0108 · أ", "0102 · ب"])  # noqa: E731
     assert ss.cmd_hook(hook, tree, NOW, mixed) == ""
+
+
+def test_focus_rejects_unknown_card_and_free_text(tree):
+    with pytest.raises(ValueError):
+        ss.set_focus("0108", "W-9", 1, root=tree)
+    with pytest.raises(ValueError):
+        ss.set_focus("0108", "نص حر", 1, root=tree)
+    ss.set_focus("0108", "W-1", 2, root=tree)
+    w = _gen(tree)["work"]
+    assert w["focus"]["card"] == "W-1" and w["focus"]["step"] == 2
+    assert ss.validate(_gen(tree)) == []
+
+
+def test_work_recent_comes_from_ledger(tree):
+    rec = _gen(tree)["work"]["recent"]
+    assert [r["id"] for r in rec] == ["W-2", "W-1"] and ss.validate(_gen(tree)) == []
+
+
+def test_git_info_paths_not_truncated(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "i"], check=True)
+    (tmp_path / "decisions.md").write_text("x", encoding="utf-8")
+    g = ss._git_info(str(tmp_path))
+    assert g["dirty"] == 1 and g["paths"] == ["decisions.md"]
