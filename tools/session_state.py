@@ -344,27 +344,16 @@ def main_confirmations(root: Path | None = None) -> Path:
     return main_root(root) / "owner_confirmations.md"
 
 
-def _probe(hook: dict, note: str = "") -> None:
-    """تشخيصٌ مؤقّت: سطرٌ لكلّ إطلاقٍ (الزمن والمصدر والمعرّف) ليُعرَف هل يُطلَق الخطاف بعد المسح؛ يُحذف بعد التجربة."""
-    try:
-        with open(HERE.parent / "handover_notes" / "hook_probe_state.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps({"t": _fmt(_now()), "source": hook.get("source"), "sid": str(hook.get("session_id", ""))[:8], "note": note}, ensure_ascii=False) + "\n")
-    except Exception:  # noqa: BLE001
-        pass
-
-
 def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = None, titles=None) -> str:
     """يعيد JSON الخطاف (additionalContext) أو "" . لا يسقط الجلسةَ أبداً."""
     try:
         hook = json.loads(stdin_text or "{}")
-        _probe(hook)
         if hook.get("source") not in ("startup", "clear"):
             return ""
         import session_identity
 
         cwd, sid = hook.get("cwd", ""), str(hook.get("session_id", ""))
         title, cands = (titles or session_identity.app_title)(cwd, sid)
-        _probe(hook, f"title={title!r} candidates={len(cands)}")
         # المعرّفُ الجديد لا يُكتب في ملف الجلسة قبل إطلاق الخطاف (جُرّب 2026-10-23): فإن اشترك المرشّحون في رقمٍ واحدٍ حُسم به
         nums = {m.group(1) for m in (re.match(r"\s*(\d{4})\b", c) for c in ([title] if title else cands)) if m}
         if len(nums) != 1:
