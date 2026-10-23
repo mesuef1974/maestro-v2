@@ -587,7 +587,7 @@ def _pr_body(line: str, cid: str, item: dict) -> str:
         text = " ".join(str(item.get(key) or "").split())
         if text:
             parts += ["", f"{label}: {text}"]
-    parts += ["", "فُتح آلياً من مضخّة التدفّق بعد approval_check ✔ للرأس نفسه (W-20261023-016)."]
+    parts += ["", "فُتح آلياً من مضخّة التدفّق بعد approval_check ✔ للرأس نفسه."]
     return "\n".join(parts)[:BODY_MAX]
 
 
