@@ -247,6 +247,7 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
     try:
         alerts.extend(approved_stall_alerts())
         alerts.extend(p0_captured_alerts())
+        alerts.extend(roadmap_late_alerts())
         alerts.extend(pr_red_alerts())
         alerts.extend(deposit_alerts(project))
         alerts.extend(orphan_alerts(project))
@@ -266,6 +267,42 @@ def late_start_alerts() -> list[dict]:
     return [alert("late_start", "high" if any(i.get("priority") in ("P0", "P1") for i in late) else "warn",
                   f"{len(late)} مهمّةً حان بدؤها ولم تبدأ؛ أعلاها {worst['id']} ({worst.get('priority')}، بدء {worst.get('start','')[:16]})",
                   "وجّهها الآن أو أعِد جدولتها بقرارٍ مسجَّل")]
+
+
+ROADMAP_LATE_HOURS = 24.0
+SERIES = HERE.parent / "ledger" / "watch_series.jsonl"
+
+
+def roadmap_late_alerts(now: datetime | None = None, entries: list[dict] | None = None, served: str | None = None) -> list[dict]:
+    """طلبٌ مدموجٌ بلا سطر خارطةٍ خلال يوم (W-20261023-014): هدفُ ميثاق 0701 «كلُّ مدموجٍ منشورٍ مسجَّلٌ خلال يوم» مخالفةٌ تُرصد لا تُنسى."""
+    sys.path.insert(0, str(HERE))
+    import roadmap_queue as rq
+
+    if entries is None:
+        entries = rq.read()
+    if served is None:
+        proposals = HERE.parent / "handover_notes" / "roadmap_proposals.md"
+        served = proposals.read_text(encoding="utf-8") if proposals.exists() else ""
+    stale = rq.late(entries, served, now, ROADMAP_LATE_HOURS)
+    if not stale:
+        return []
+    oldest = min(stale, key=lambda e: e.get("merged_at") or e.get("queued_at") or "")
+    return [alert("roadmap_late", "warn", f"{len(stale)} طلباً مدموجاً بلا سطر خارطةٍ منذ أكثر من {int(ROADMAP_LATE_HOURS)} ساعة؛ أقدمُها #{oldest.get('pr')} ({oldest.get('card') or '—'})",
+                  "0701: python tools/roadmap_line.py --write ثمّ أغلق البند؛ المخالفةُ تُسجَّل")]
+
+
+def append_series(alerts: list[dict], now: datetime | None = None, path: Path | None = None) -> bool:
+    """سلسلةُ نتائج المراقب بتاريخها (سطرٌ لكلّ تشغيل): الاتجاهُ يُبنى من الملفّ لا من نقلٍ نصّيّ. فشلُ الكتابة لا يُسقط المراقب."""
+    now = now or datetime.now(DOHA)
+    row = {"ts": now.isoformat(timespec="seconds"), "count": len(alerts), "alerts": [{"code": a["code"], "severity": a["severity"]} for a in alerts]}
+    try:
+        p = path or SERIES
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + chr(10))
+        return True
+    except OSError:
+        return False
 
 
 def pr_watch_alerts(now: datetime | None = None, age_min: float | None = -1.0) -> list[dict]:
@@ -473,6 +510,7 @@ def main() -> None:
     args = ap.parse_args()
     th = json.loads((PROJECTS / args.project / "thresholds.json").read_text(encoding="utf-8"))
     alerts = collect(th, live=not args.no_live, project=args.project)
+    append_series(alerts)
     if args.json:
         print(json.dumps({"generated_doha": datetime.now(DOHA).isoformat(timespec="minutes"), "alerts": alerts}, ensure_ascii=False, indent=2))
         return
