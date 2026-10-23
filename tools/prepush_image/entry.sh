@@ -7,5 +7,4 @@ cd /src
 tar --exclude=./.git --exclude=./.venv --exclude=./node_modules --exclude=./.mypy_cache --exclude=./.ruff_cache \
     --exclude=./.pytest_cache -cf - . | tar -xf - -C /tmp/work
 cd /tmp/work
-export GIT_WORK_TREE=/tmp/work
 exec python /runner/run_prepush.py "$@"

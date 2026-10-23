@@ -322,6 +322,8 @@ PREPUSH_IMAGE = "maestro-prepush:1"
 #: بطاقةٌ واحدةٌ في الدورة: التشغيلُ يستغرق دقائق والقفلُ يُعدّ ميتاً بعد STALE_LOCK_S (900 ثانية)
 PREPUSH_MAX = 1
 PREPUSH_TIMEOUT_S = 780
+PREPUSH_DB_IMAGE = "postgres:16-alpine"  # كـCI (native-postgres: postgres 16)؛ بيانات اعتماد اختبارٍ فقط، لا منفذَ على المضيف
+PREPUSH_DB_WAIT = 40
 PREPUSH_OK_LINE = "الفحوصُ السريعةُ ناجحة"
 PREPUSH_ATTEMPTS = HERE.parent / "ledger" / "prepush_attempts.json"
 #: مفتاحُ إيقاف المرحلة وحدَها: وجودُ الملف يعطّلها من أيّ مشغِّل
@@ -346,18 +348,48 @@ def _image_present(docker) -> bool:
     return rc == 0
 
 
-def prepush_command(tree: str, gitdir: str, common: str, name: str) -> list[str]:
-    """أمرُ docker run: الشجرةُ و.git الرئيس للقراءة فقط، بلا شبكة؛ GIT_DIR نسبةً إلى المركَّب. الإيصالُ لا يُكتب من الحاوية."""
+def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str) -> list[str]:
+    """أمرُ docker run: الشجرةُ و.git الرئيس للقراءة فقط، على شبكةٍ داخليّةٍ لا خارجَ لها (فيها قاعدةُ الاختبار وحدَها)؛ GIT_DIR نسبةً إلى
+    المركَّب. الإيصالُ لا يُكتب من الحاوية."""
     rel = os.path.relpath(gitdir, common).replace("\\", "/")
     git_dir = "/gitmain" if rel == "." else f"/gitmain/{rel}"
     runner = str(HERE / "prepush_image")
     return [
-        "run", "--rm", "--name", name, "--network", "none",
+        "run", "--rm", "--name", name, "--network", net, "-e", "TEST_DB_HOST=db",
+        "-e", "DJANGO_ALLOW_ASYNC_UNSAFE=1",  # كما في وظيفة axe-a11y في CI (quality-gate.yml): Playwright يستعمل حلقة greenlet تُخطئ حارسَ Django
         "-v", f"{tree}:/src:ro", "-v", f"{common}:/gitmain:ro", "-v", f"{runner}:/runner:ro",
-        "-e", f"GIT_DIR={git_dir}", "-e", "GIT_OPTIONAL_LOCKS=0", "-e", "HOME=/tmp",
+        "-e", f"PREPUSH_GIT_DIR={git_dir}", "-e", "GIT_OPTIONAL_LOCKS=0", "-e", "HOME=/tmp",
         "-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=*",
         PREPUSH_IMAGE, "sh", "/runner/entry.sh",
     ]
+
+
+def run_with_db(docker, cmd_for, name: str, timeout: int, sleep=None) -> tuple[int, str]:
+    """يشغّل أمرَ الفحص بقاعدة postgres:16 مؤقّتةٍ (كـCI) على شبكةٍ داخليّة بلا خروج؛ ويزيلهما دائماً. تعذّرُ القاعدة = فشلٌ لا نجاح."""
+    import time  # noqa: PLC0415
+
+    sleep = sleep or time.sleep
+    net, pg = f"{name}-net", f"{name}-pg"
+    docker(["rm", "-f", name, pg], 60)  # بقايا دورةٍ انقطعت (باسمنا نحن فقط)
+    docker(["network", "rm", net], 60)
+    try:
+        rc, out = docker(["network", "create", "--internal", net], 60)
+        if rc:
+            return 1, "تعذّر إنشاءُ الشبكة الداخلية: " + out.strip()[-120:]
+        rc, out = docker(["run", "-d", "--rm", "--name", pg, "--network", net, "--network-alias", "db", "--tmpfs", "/var/lib/postgresql/data",
+                          "-e", "POSTGRES_USER=test_user", "-e", "POSTGRES_PASSWORD=test_pass", PREPUSH_DB_IMAGE], 120)
+        if rc:
+            return 1, "تعذّر تشغيلُ قاعدة الاختبار: " + out.strip()[-120:]
+        for _ in range(PREPUSH_DB_WAIT):
+            if docker(["exec", pg, "pg_isready", "-U", "test_user"], 30)[0] == 0:
+                break
+            sleep(1.5)
+        else:
+            return 1, "قاعدةُ الاختبار لم تجهز"
+        return docker(cmd_for(net), timeout)
+    finally:
+        docker(["rm", "-f", pg], 60)
+        docker(["network", "rm", net], 60)
 
 
 def _attempts() -> dict:
@@ -419,7 +451,7 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             continue
         ran += 1
         name = f"prepush-{cid.lower()}-{head[:8]}"
-        code, log = docker(prepush_command(path, gitdir.strip(), common.strip(), name), timeout)
+        code, log = run_with_db(docker, lambda net: prepush_command(path, gitdir.strip(), common.strip(), name, net), name, timeout)
         # شرطُ الإيصال: رمز 0، وسطرُ النجاح الكامل، وخلوُّ المخرَج من «غير مقيس»، وبقاءُ الرأس ونظافةُ الشجرة بعد التشغيل
         _, head_after = git(path, "rev-parse", "HEAD")
         _, dirty_after = git(path, "status", "--porcelain", "--untracked-files=no")
@@ -431,7 +463,12 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             continue
         why = "الرأس أو الشجرة تغيّر أثناء الفحص" if sound else (
             "تجاوز المهلة" if code == 124 else "غير مقيس (أداةٌ غائبة)" if code == 3 else f"رمز الخروج {code}")
-        tail = " | ".join((log or "").strip().splitlines()[-3:])[:200]
+        bad = [x.strip() for x in (log or "").splitlines() if x.lstrip().startswith(("✘", "؟"))]
+        tail = (" | ".join(bad) or " | ".join((log or "").strip().splitlines()[-3:]))[:300]
+        try:
+            (PREPUSH_ATTEMPTS.parent / f"prepush_{cid}_{head[:8]}.log").write_text(log or "", encoding="utf-8")
+        except OSError:
+            pass
         tried[key] = why
         PREPUSH_ATTEMPTS.write_text(json.dumps(tried), encoding="utf-8")
         out.append(f"{cid}: ✘ prepush لم يُنتج إيصالاً للرأس {head[:8]} — {why}: {tail}")

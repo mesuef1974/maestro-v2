@@ -704,6 +704,8 @@ class PrepushPass(unittest.TestCase):
             calls.append((cmd, timeout))
             if cmd[0] == "image":
                 return (0 if image else 1), ""
+            if cmd[0] != "run" or "-d" in cmd:
+                return 0, ""  # network/exec/rm وتشغيل قاعدة الاختبار
             return code, self.OK_LOG if log is None else log
 
         docker.calls = calls
@@ -720,7 +722,7 @@ class PrepushPass(unittest.TestCase):
         return json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
 
     def runs(self, docker):
-        return [c for c, _ in docker.calls if c[0] == "run"]
+        return [c for c, _ in docker.calls if c[0] == "run" and "-d" not in c]
 
     def test_success_writes_the_receipt_for_the_same_head_and_push_guard_accepts_it(self):
         lines, docker = self.run_pass()
@@ -729,13 +731,15 @@ class PrepushPass(unittest.TestCase):
         self.assertIn("✔ prepush", lines[0])
         self.assertEqual(len(self.runs(docker)), 1)
 
-    def test_the_container_gets_read_only_mounts_and_no_network(self):
+    def test_the_container_gets_read_only_mounts_and_only_the_internal_db_network(self):
         _, docker = self.run_pass()
         cmd = self.runs(docker)[0]
-        self.assertEqual(cmd[cmd.index("--network") + 1], "none")
+        net = cmd[cmd.index("--network") + 1]
+        self.assertIn(["network", "create", "--internal", net], [c for c, _ in docker.calls])
+        self.assertIn("TEST_DB_HOST=db", cmd)
         mounts = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-v"]
         self.assertTrue(mounts and all(m.endswith(":ro") for m in mounts), mounts)
-        self.assertIn("GIT_DIR=/gitmain/worktrees/wt1", cmd)
+        self.assertIn("PREPUSH_GIT_DIR=/gitmain/worktrees/wt1", cmd)
 
     def test_dry_run_runs_nothing_and_writes_nothing(self):
         lines, docker = self.run_pass(apply=False)
@@ -817,6 +821,25 @@ class PrepushPass(unittest.TestCase):
             lines = fp.prepush_pass(states, True, repos=[str(self.tmp)], git=self.git(), docker=docker, limit=1)
         self.assertEqual(len(self.runs(docker)), 1)
         self.assertTrue(any("الدورة التالية" in x for x in lines), (a, b, lines))
+
+    def test_db_and_network_are_removed_even_when_the_run_fails(self):
+        _, docker = self.run_pass(docker=self.docker(code=1, log="x"))
+        heads = [c[:2] for c, _ in docker.calls]
+        self.assertIn(["rm", "-f"], heads)
+        self.assertIn(["network", "rm"], heads)
+
+    def test_a_db_that_never_becomes_ready_is_a_failure_and_is_cleaned_up(self):
+        calls = []
+
+        def docker(cmd, timeout):
+            calls.append(cmd)
+            return (1, "") if cmd[0] == "exec" else (0, "")
+
+        rc, out = fp.run_with_db(docker, lambda net: ["run"], "n", 10, sleep=lambda s: None)
+        self.assertEqual(rc, 1)
+        self.assertEqual([c[0] for c in calls][-2:], ["rm", "network"])
+        self.assertEqual(calls[0][:2], ["rm", "-f"])  # تنظيفُ بقايا قبل البدء
+        self.assertNotIn(["run"], calls)
 
     def test_docker_helper_kills_the_container_on_timeout(self):
         import subprocess
