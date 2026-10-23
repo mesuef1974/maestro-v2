@@ -6,9 +6,13 @@
      (approval_check ✔ برمز 0). الدفترُ نفسُه يرفض ما لا يستوفي بوّاباتِه (أدلّة بصريّة، مواصفة) فيُبلَّغ ولا يُفرض.
   2. إعفاء — رأسٌ جديدٌ لبطاقةٍ معتمَدة (معلَنٌ، أو رأسُ طلبها المفتوح): `waive-head --kind auto` بتوقيع 0101 إن أثبت الكودُ
      أنه دمجُ main خالص أو إصلاحُ اختباراتٍ فقط أو سلسلتُهما (D-451م)؛ وما سواه يبقى اعتماداً جديداً للمالك.
+  2أ. شجرة — بطاقةٌ معتمَدة لها فرعٌ مسموحٌ محلّيٌّ على رأسها بالضبط في مستودع المنصّة ولا شجرةَ عليه: تُنشأ شجرةٌ
+     `.claude/worktrees/pump-<البطاقة>` على الفرع نفسه (لا تُعدَّل شجرةٌ قائمة)، فتتولّاها مرحلتا prepush والدفع؛ بطاقتان في الدورة (W-20261023-016).
   2ب. إيصال prepush — لبطاقةٍ معتمَدة سيرفضها الدفعُ لغياب الإيصال: scripts/prepush_check.py للمنصّة داخل صورة Docker
      (tools/prepush_image)، ويُكتب الإيصالُ من المضيف بعد خروجٍ بـ0 (كلُّ الحرّاس قيست ونجحت) وحدَه؛ بطاقةٌ واحدة في الدورة (W-20261023-016).
   3. دفع — approved ← pushed بحرّاس push_approved كلّها، على فرعٍ claude/* أو w*، وبإيصال prepush ناجحٍ للرأس نفسه (D-450م).
+  3ب. فتحُ الطلب — بطاقةٌ pushed بلا طلبٍ (مفتوحٍ أو مدموج) على فرعها: `gh pr create` إلى المنصّة بعنوانٍ ووصفٍ من حقول البطاقة وسطرِ الاعتماد،
+     شرطَ مطابقة الرأس البعيد لرأس الاعتماد وثباتِ الاعتماد وخلوِّ المسارات من الهجرات والأمن؛ ويُسجَّل رقمُه ملاحظةً على البطاقة؛ لا دمج (W-20261023-016).
   4. سطرُ الاعتماد — يُكتب أوّلَ وصف الطلب المفتوح على الرأس المعتمَد إن غاب أو لم يطابق (D-450م): قولُ المالك المباشر
      «اعتُمد من المالك مباشرةً بلا معاينة 8500 — …» أو تكليفُه «اعتُمد بتكليف المالك D-443م عبر 0101 — …»، والرأسُ يلي التاريخ.
   5. دمج — `gh pr merge --squash --auto --match-head-commit` لطلبٍ سطرُه سليم، فيدمجه GitHub عند خضرة CI (D-450م). يُستثنى
@@ -476,6 +480,225 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
     return out
 
 
+
+#: (W-20261023-016) مرحلة الشجرة: بطاقةٌ معتمَدة بلا شجرةٍ على رأسها وفرعُها المحلّيّ موجود، فتُنشأ شجرةٌ عليه تحت مستودع المنصّة
+PLATFORM_DIR = ac.REPO_DIR
+TREE_MAX = 2
+#: مفتاحُ إيقاف المرحلة وحدَها
+NO_TREE = HERE.parent / "ledger" / "flow_pump.notree"
+
+
+def _local_branches(repo: str, git) -> list[tuple[str, str]]:
+    """[(الفرع المحلّيّ، رأسه الكامل)] لمستودع المنصّة."""
+    rc, out = git(repo, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads")
+    if rc:
+        return []
+    rows = []
+    for ln in out.splitlines():
+        parts = ln.split()
+        if len(parts) == 2:
+            rows.append((parts[0], parts[1]))
+    return rows
+
+
+def tree_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = None, git=None, platform: str | None = None,
+              limit: int = TREE_MAX) -> list[str]:
+    """(W-20261023-016) بطاقةٌ approved بلا شجرةٍ هنا على رأسها: إن وُجد في مستودع المنصّة فرعٌ مسموحٌ (claude/* أو w*) رأسُه الرأسُ المعتمَد
+    بالضبط وفي إيداعاته رمزُ البطاقة ولم يُدمج، أُنشئت عليه شجرةٌ `.claude/worktrees/pump-<البطاقة>` (git worktree add بلا -b ولا تعديلٍ
+    لشجرةٍ قائمة) فتتولّاها مرحلتا prepush والدفع. لا فرعَ محلّيّاً على الرأس = تبليغٌ فقط. حدٌّ أقصى `limit` بطاقةً في الدورة، ولا رسائل."""
+    import push_watch  # noqa: PLC0415
+    import ready_mark  # noqa: PLC0415
+
+    items = {k: v for k, v in states.items() if v.get("state") == "approved" and (v.get("approved_head") or "").strip()}
+    if not items:
+        return []
+    git = git or push_approved._git
+    platform = platform or PLATFORM_DIR
+    if not _is_platform(platform, git):
+        return []
+    where_repos = repos or ready_mark.candidate_repos(None)
+    branches: list[tuple[str, str]] | None = None
+    out: list[str] = []
+    absent: list[str] = []
+    made = 0
+    for cid in sorted(items):
+        want = items[cid]["approved_head"].strip()
+        tree, why = push_watch.find_tree(cid, want, where_repos, git, push_approved.PUMP_BRANCH_RE)
+        if tree is not None or push_watch.QUIET not in why:
+            continue  # لها شجرةٌ أو التباسٌ يبلّغه حارسُ الدفع
+        if branches is None:
+            branches = _local_branches(platform, git)
+        cands = []
+        for name, sha in branches:
+            if not push_approved.PUMP_BRANCH_RE.match(name) or not push_approved.same_head(sha, want):
+                continue
+            rc, log = git(platform, "log", "-1", "--format=%H", f"--grep={cid}", name, "^origin/main")
+            if not rc and log.strip():
+                cands.append(name)
+        if not cands:
+            absent.append(cid)
+            continue
+        if len(cands) > 1:
+            out.append(f"{cid}: التباس — أكثرُ من فرعٍ محلّيٍّ على الرأس {want[:8]} ({'، '.join(cands)}) — لا شجرة")
+            continue
+        dest = Path(platform) / ".claude" / "worktrees" / f"pump-{cid}"
+        if dest.exists():
+            out.append(f"{cid}: المسار {dest.as_posix()} موجودٌ — لا لمس")
+            continue
+        if made >= limit:
+            out.append(f"{cid}: ⏸ الشجرة في الدورة التالية (الحدّ {limit} في الدورة)")
+            continue
+        made += 1
+        if not apply:
+            out.append(f"{cid}: تُنشأ شجرةٌ {dest.as_posix()} على الفرع {cands[0]} بالرأس {want[:8]} (عرض)")
+            continue
+        rc, msg = git(platform, "worktree", "add", str(dest), cands[0])
+        out.append(f"{cid}: شجرةٌ على {cands[0]} بالرأس {want[:8]}: {'✔' if rc == 0 else '✘ ' + _tail(msg)}")
+        _log_once(f"شجرة: {cid} {want[:8]} {'✔' if rc == 0 else '✘'}")
+    if absent:
+        out.append(f"{len(absent)} بطاقةً معتمَدة لا فرعَ محلّيّاً على رأسها في المنصّة — تبليغ فقط ({'، '.join(absent)})")
+    return out
+
+
+#: (W-20261023-016) مرحلة فتح الطلب: بطاقةٌ pushed بلا طلبٍ على فرعها
+PLATFORM_SLUG = "sh-school/shschool_mvp"
+OPENPR_MAX = 2
+#: مفتاحُ إيقاف المرحلة وحدَها
+NO_OPENPR = HERE.parent / "ledger" / "flow_pump.noopenpr"
+BODY_MAX = 1500
+
+
+def _remote_branches(repo: str, git) -> list[tuple[str, str]] | None:
+    """[(الفرع البعيد، رأسه الكامل)] من origin؛ None إن تعذّرت القراءة."""
+    rc, out = git(repo, "ls-remote", "--heads", "origin")
+    if rc:
+        return None
+    rows = []
+    for ln in out.splitlines():
+        parts = ln.split()
+        if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+            rows.append((parts[1][len("refs/heads/"):], parts[0]))
+    return rows
+
+
+def _pr_body(line: str, cid: str, item: dict) -> str:
+    parts = [line, "", f"البطاقة: {cid}"]
+    for label, key in (("المشكلة", "problem"), ("القبول", "accept")):
+        text = " ".join(str(item.get(key) or "").split())
+        if text:
+            parts += ["", f"{label}: {text}"]
+    parts += ["", "فُتح آلياً من مضخّة التدفّق بعد approval_check ✔ للرأس نفسه (W-20261023-016)."]
+    return "\n".join(parts)[:BODY_MAX]
+
+
+def openpr_block(cid: str, head_full: str, files: list[str]) -> str | None:
+    """سببُ منع فتح الطلب آليّاً (الفئاتُ الممنوعة: هجرات، أمن، طلبٌ واسع)؛ None إن لا مانع. يعيد استعمالَ merge_block ومحظوراتِه."""
+    from risk_tier import classify_paths  # noqa: PLC0415
+
+    why = merge_block(cid, {"files": [{"path": f} for f in files], "labels": [], "baseRefName": "main", "isDraft": False,
+                            "changedFiles": len(files), "headRefOid": head_full})
+    if why:
+        return why
+    if files and classify_paths(files)["category"] == "security" and not ac.security_approved(cid, head_full[:8]):
+        return "مسارٌ أمنيّ بلا «أقرّ أمنياً» من المالك على الرأس"
+    return None
+
+
+def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None, sh=None, platform: str | None = None,
+                limit: int = OPENPR_MAX) -> list[str]:
+    """(W-20261023-016) بطاقةٌ pushed بلا طلبٍ مفتوحٍ أو مدموج: يُفتح طلبٌ إلى المنصّة من فرعها بعنوانٍ ووصفٍ من حقول البطاقة بالعربية
+    وسطرِ الاعتماد، بشرط: رأسُ الفرع البعيد = رأسُ الاعتماد، approval_check ✔، والمساراتُ بلا هجراتٍ أو أمنٍ أو اتّساع. لا دمج ولا --auto
+    (تتولّاه مرحلةُ الدمج بعد سطر الاعتماد وخضرة CI). يُسجَّل رقمُ الطلب ملاحظةً على البطاقة (ledger_sync يربط بالرأس). حدٌّ أقصى `limit` في الدورة."""
+    import open_pr  # noqa: PLC0415
+
+    items = {k: v for k, v in states.items() if v.get("state") == "pushed" and (v.get("approved_head") or "").strip()}
+    if not items:
+        return []
+    git, sh = git or push_approved._git, sh or _sh
+    platform = platform or PLATFORM_DIR
+    pairs, _ = card_prs(states, prs)
+    remote: list[tuple[str, str]] | None = None
+    out: list[str] = []
+    done = 0
+    for cid in sorted(items):
+        item, want = items[cid], items[cid]["approved_head"].strip()
+        if cid in pairs:
+            continue  # لها طلبٌ مفتوح
+        if remote is None:
+            remote = _remote_branches(platform, git)
+            if remote is None:
+                return out + ["تعذّرت قراءةُ فروع origin — لا فتحَ طلبات في هذه الدورة"]
+        cands = [(n, sha) for n, sha in remote if push_approved.PUMP_BRANCH_RE.match(n) and push_approved.same_head(sha, want)]
+        if len(cands) != 1:
+            rmap = dict(remote)
+            if len(cands) > 1:
+                out.append(f"{cid}: التباس — أكثرُ من فرعٍ بعيدٍ على الرأس {want[:8]} ({'، '.join(n for n, _ in cands)}) — لا طلب")
+            elif item.get("branch") and item["branch"] in rmap:
+                out.append(f"{cid}: رأسُ الفرع البعيد {item['branch']} {rmap[item['branch']][:8]} يخالف رأسَ الاعتماد {want[:8]} — لا طلب")
+            else:
+                out.append(f"{cid}: لا فرعَ بعيداً مسموحاً على الرأس {want[:8]} — لا طلب")
+            continue
+        branch, full = cands[0]
+        if any(p.get("headRefName") == branch or str(p.get("headRefOid") or "")[:8] == full[:8] for p in prs):
+            continue
+        rc, text = sh(["gh", "pr", "list", "--repo", PLATFORM_SLUG, "--head", branch, "--state", "all", "--json", "number,state,headRefOid"], platform)
+        try:
+            known = json.loads(text) if rc == 0 else None
+        except ValueError:
+            known = None
+        if known is None:
+            out.append(f"{cid}: تعذّرت قراءةُ طلبات الفرع {branch} (gh) — لا فتح")
+            continue
+        if any(same_head(str(p.get("headRefOid") or ""), want) or p.get("state") in ("OPEN", "MERGED") for p in known):
+            continue  # لها طلبٌ مفتوحٌ أو مدموج (ledger_sync يتولّاه)
+        if not approval_ok(cid, want[:8]):
+            out.append(f"{cid}: رأس {want[:8]} بلا اعتمادٍ ثابت — لا طلب")
+            continue
+        rc, listing = sh(["gh", "api", f"repos/{PLATFORM_SLUG}/compare/main...{full}", "--paginate", "--jq", ".files[].filename"], platform)
+        files = [f for f in listing.splitlines() if f.strip()] if rc == 0 else None
+        if not files:
+            out.append(f"{cid}: تعذّر قياسُ مسارات الفرع {branch} أو لا فرقَ عن main — لا طلب")
+            continue
+        why = openpr_block(cid, full, files)
+        if why:
+            out.append(f"{cid}: {branch} لا يُفتح آلياً — {why}")
+            continue
+        line = approval_line(cid, want[:8], item)
+        if line is None:
+            out.append(f"{cid}: لا قولَ للمالك ولا تكليفَ مسجَّلاً على الرأس {want[:8]} — لا طلب")
+            continue
+        if done >= limit:
+            out.append(f"{cid}: ⏸ فتحُ الطلب في الدورة التالية (الحدّ {limit} في الدورة)")
+            continue
+        done += 1
+        title = open_pr.make_title(item, cid, None).strip()
+        if not apply:
+            out.append(f"{cid}: يُفتح طلبٌ من {branch} بالرأس {want[:8]} بعنوان «{title}» (عرض)")
+            continue
+        fd, tmp = tempfile.mkstemp(prefix="pump_pr_", suffix=".md")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(_pr_body(line, cid, item))
+            rc, msg = sh(["gh", "pr", "create", "--repo", PLATFORM_SLUG, "--base", "main", "--head", branch, "--title", title, "--body-file", tmp], platform)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        m = re.search(r"/pull/(\d+)", msg or "")
+        if rc != 0 or not m:
+            out.append(f"{cid}: فتحُ الطلب من {branch}: ✘ {_tail(msg)}")
+            continue
+        try:
+            ledger.add_note(cid, f"فُتح الطلب #{m.group(1)} آلياً من الفرع {branch} بالرأس {want[:8]} (مضخّة التدفّق؛ ledger_sync يربطه بالرأس)", SENDER)
+        except ledger.LedgerError as exc:
+            out.append(f"{cid}: #{m.group(1)} فُتح ✔ لكنّ تسجيلَه في الدفتر ✘ {str(exc)[:100]}")
+            continue
+        out.append(f"{cid}: #{m.group(1)} فُتح من {branch} بالرأس {want[:8]} ✔")
+        _log_once(f"طلب: {cid} #{m.group(1)} ✔")
+    return out
+
+
 def line_ok(body: str | None, head8: str, card: str) -> bool:
     """في الوصف سطرٌ بإحدى صيغ فحص المستودع يحمل هذا الرأس بعد التاريخ، ولا يخالف رمزَ البطاقة (line_card_problem)."""
     for ln in (body or "").splitlines():
@@ -759,6 +982,8 @@ def _run(argv=None) -> int:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--skip", nargs="*", default=[], help="بطاقاتٌ تُستثنى من المراحل كلّها")
     ap.add_argument("--no-push", action="store_true", help="بلا مرحلة الدفع")
+    ap.add_argument("--no-tree", action="store_true", help="بلا إنشاء شجرةٍ للبطاقات المعتمَدة بلا شجرة")
+    ap.add_argument("--no-open-pr", action="store_true", help="بلا فتح طلبٍ لبطاقات pushed بلا طلب")
     ap.add_argument("--no-prepush", action="store_true", help="بلا إنتاج إيصال prepush آليّاً في الحاوية")
     ap.add_argument("--no-line", action="store_true", help="بلا كتابة سطر الاعتماد في الطلب")
     ap.add_argument("--no-merge", action="store_true", help="بلا الدمج الآليّ")
@@ -776,16 +1001,23 @@ def _run(argv=None) -> int:
         print("اعتماد: " + line)
     states = reload(states)
     prs: list[dict] = []
+    prs_ok = True
     if any(v.get("state") in PR_STATES and v.get("approved_head") for v in states.values()):
         got = open_prs()
         if got is None:
             print("طلبات: تعذّرت قراءةُ الطلبات المفتوحة (gh) — لا إعفاءَ برأس الطلب ولا سطرَ ولا دمج في هذه الدورة")
+        prs_ok = got is not None
         prs = got or []
         for note in card_prs(states, prs)[1]:
             print("طلبات: " + note)
     for line in waive_pass(states, a.apply, prs):
         print("إعفاء: " + line)
     states = reload(states)
+    if NO_TREE.exists():
+        print(f"شجرة: معطَّلة بمفتاح ({NO_TREE.name})")
+    elif not a.no_tree and not a.no_push:
+        for line in tree_pass(states, a.apply):
+            print("شجرة: " + line)
     if NO_PREPUSH.exists():
         print(f"prepush: معطَّل بمفتاح ({NO_PREPUSH.name})")
     elif not a.no_prepush and not a.no_push:
@@ -795,6 +1027,11 @@ def _run(argv=None) -> int:
         for line in push_pass(states, a.apply, busy_fn=ci_in_flight):
             print("دفع: " + line)
         states = reload(states)
+    if NO_OPENPR.exists():
+        print(f"طلب: معطَّل بمفتاح ({NO_OPENPR.name})")
+    elif not a.no_open_pr and prs_ok:
+        for line in openpr_pass(states, prs, a.apply):
+            print("طلب: " + line)
     if not a.no_line:
         for line in line_pass(states, prs, a.apply):
             print("سطر: " + line)
