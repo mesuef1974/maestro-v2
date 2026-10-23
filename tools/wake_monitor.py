@@ -41,7 +41,7 @@ LOG = ROOT / "wake_log.jsonl"
 FINGERPRINT = ROOT / "wake_fingerprint.json"  # بصمةُ آخر حالةٍ عولجت (الإيقاظُ بالتغيير لا بالزمن، أمر المالك 10-22 لتقليل التوكنز)
 MAX_BATCH = 20
 MAX_PER_MINUTE = 3  # أقصى جلساتٍ تُوقَظ (تبدأ عملاً) في الدقيقة؛ الزائدُ يُؤجَّل لا يُسقط (أمر المالك 10-20 بند5)
-MAX_LIVE = 14
+MAX_LIVE = 6  # الموجة 0.13 (W-20261023-004): لا أكثر من 6 جلسات تعمل معاً (الحيّةُ + الموقَظةُ)؛ الزائدُ يُؤجَّل في الطابور لا يُسقط
 TEST_CHANNEL = frozenset({"0701", "0301"})  # أسبوعُ التجربة (W-20261017-007) قبل تعميم الإرسال؛ خرجت 0702 و0102 بدمجهما في 0701 و0103 (أمر المالك 2026-10-21)، ثمّ صارت 0103 ← 0301 بترقيم 01 (14:02)
 COUNTER_MARGIN = 60  # هامشٌ تحت الحصّة لا يُرسَل بعده
 COUNTER_GUARD = msg_counter.LIMIT - COUNTER_MARGIN  # فوقه (من الحصّة المقروءة) لا إرسال ويُبلَّغ 0101
@@ -121,6 +121,21 @@ def sender_count(sender: str, path: Path = COUNTER) -> int:
         return COUNTER_GUARD
 
 
+def cap_live(p: "WakePlan", live) -> None:
+    """سقفُ التزامن MAX_LIVE: الموقَظةُ الحيّةُ أصلاً لا تزيد العدّ؛ الجديدةُ تُقبل بقدر ما بقي من السقف بترتيب الخطّة، والباقي يُؤجَّل
+    (p.deferred فلا يتقدّم المؤشّر فيعاد في الدورة التالية). إن امتلأ السقفُ فلا إيقاظ وتُسجَّل halted."""
+    fresh = [h for h in p.wakes if h not in live]
+    room = max(0, MAX_LIVE - len(set(live)))
+    if len(fresh) <= room:
+        return
+    for holder in fresh[room:]:
+        for item_id, _ in p.wakes.pop(holder):
+            p.skipped.append((item_id, f"تأجيل: سقفُ {MAX_LIVE} جلساتٍ تعمل معاً"))
+    p.deferred = True
+    if not p.wakes:
+        p.halted = f"الجلساتُ الحيّةُ مع الموقَظين تتجاوز {MAX_LIVE}: لا إيقاظ"
+
+
 def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, sent=0, already=frozenset(), recent=0,
          aliases=None) -> WakePlan:
     """directory: رقم←معرّف؛ live: أرقامُ الجلسات الحيّة؛ channel: الحاملون المسموح إيقاظُهم (None = الكلّ)؛
@@ -163,9 +178,8 @@ def plan(events, cursor, directory, live, verify=ground_truth_ok, channel=None, 
     if p.wakes and sent + len(p.wakes) > COUNTER_GUARD:
         p.halted = f"حارس msg_counter: {sent} + {len(p.wakes)} رسالةً يتجاوز {COUNTER_GUARD} من {msg_counter.LIMIT}: لا إرسال، أبلغ 0101"
         p.wakes = {}
-    elif len(set(p.wakes) | set(live)) > MAX_LIVE:
-        p.halted = f"الجلساتُ الحيّةُ مع الموقَظين تتجاوز {MAX_LIVE}: لا إيقاظ"
-        p.wakes = {}
+    elif p.wakes:
+        cap_live(p, live)
     return p
 
 
@@ -284,9 +298,8 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
     elif p.wakes and sent + len(p.wakes) > COUNTER_GUARD:
         p.halted = f"حارس msg_counter: {sent} + {len(p.wakes)} يتجاوز {COUNTER_GUARD} من {msg_counter.LIMIT}: لا إرسال"
         p.wakes = {}
-    elif len(set(p.wakes) | set(live)) > MAX_LIVE:
-        p.halted = f"الجلساتُ الحيّةُ مع الموقَظين تتجاوز {MAX_LIVE}: لا إيقاظ"
-        p.wakes = {}
+    elif p.wakes:
+        cap_live(p, live)
     return p
 
 
