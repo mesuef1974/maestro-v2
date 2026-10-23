@@ -377,3 +377,24 @@ def test_watch_changed_only_prints_one_report_then_stays_silent(tmp_path, monkey
     wm.write_fingerprint(wm.fingerprint(wm.read_events(tmp_path / "events.jsonl"), datetime.now().astimezone()), tmp_path / "fp.json")
     wm.main(["--watch", "--once", "--changed-only", "--all"])
     assert capsys.readouterr().out == ""
+
+
+def test_live_cap_is_six_and_excess_sessions_are_queued_not_dropped():
+    """W-20261023-004 (0.13): لا جلسةَ سابعةً تُوقَظ؛ الزائدُ يُؤجَّل ويبقى المؤشّرُ فيُعاد."""
+    assert wm.MAX_LIVE == 6
+    ev = []
+    for n, holder in enumerate(("0201", "0301", "0501", "0601", "0701", "0801", "0901")):
+        i = f"W-20261016-{n:03d}"
+        ev += [created(i), state(i, "routed", NEW, held_by=holder)]
+    dirs = {h: f"local_{h}" for h in ("0201", "0301", "0501", "0601", "0701", "0801", "0901")}
+    live = {"0101", "0102", "0103", "0104"}  # سقفُ الدقيقة 3 يُدخل ثلاثاً فيصير المجموع 7: يُؤجَّل واحدٌ بسقف التزامن
+    p = wm.plan(ev, CUR, dirs, live, verify=ok, recent=0)
+    assert len(set(p.wakes) | live) <= 6 and p.deferred and len(p.wakes) == 2
+    assert any("سقفُ 6" in why for _i, why in p.skipped)
+
+
+def test_an_already_live_session_is_woken_even_when_the_cap_is_full():
+    ev = [created("W-20261016-001"), state("W-20261016-001", "routed", NEW, held_by="0201")]
+    live = {f"{n:04d}" for n in (201, 301, 501, 601, 701, 801)}
+    p = wm.plan(ev, CUR, DIR, live, verify=ok)
+    assert list(p.wakes) == ["0201"] and not p.halted
