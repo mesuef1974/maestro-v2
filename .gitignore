@@ -21,3 +21,6 @@ evidence/
 # حالةُ عدّاد الرسائل (تشغيليّة تتغيّر مع كلّ إرسال) — الأداةُ tools/msg_counter.py متتبَّعة وحالتُها لا
 msg_counter.json
 msg_counter.tmp
+
+# حالةُ الجلسة المولَّدة (session_state.py): مشتقّةٌ من الدفتر لا تُتبَّع
+handover_notes/state_*.json
