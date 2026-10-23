@@ -281,10 +281,11 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         cwd, sid = hook.get("cwd", ""), str(hook.get("session_id", ""))
         title, cands = (titles or session_identity.app_title)(cwd, sid)
         _probe(hook, f"title={title!r} candidates={len(cands)}")
-        m = re.match(r"\s*(\d{4})\b", title or "")
-        if not m:
+        # المعرّفُ الجديد لا يُكتب في ملف الجلسة قبل إطلاق الخطاف (جُرّب 2026-10-23): فإن اشترك المرشّحون في رقمٍ واحدٍ حُسم به
+        nums = {m.group(1) for m in (re.match(r"\s*(\d{4})\b", c) for c in ([title] if title else cands)) if m}
+        if len(nums) != 1:
             return ""
-        state = load_state(m.group(1), root)
+        state = load_state(nums.pop(), root)
         if state is None or validate(state):
             return ""
         age = (now or _now()) - datetime.fromisoformat(state["generated_at"])

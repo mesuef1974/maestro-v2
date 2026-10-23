@@ -135,3 +135,12 @@ def test_main_confirmations_points_to_main_folder():
     assert s.main_confirmations(wt) == Path("C:/x/proj/owner_confirmations.md")
     plain = Path("C:/x/proj")
     assert s.main_confirmations(plain) == plain / "owner_confirmations.md"
+
+
+def test_hook_ambiguous_candidates_same_number(tree):
+    ss.write_state("0108", _gen(tree), tree)
+    hook = json.dumps({"source": "startup", "cwd": "x", "session_id": "new"})
+    same = lambda c, i: (None, ["0108 · أ", "0108-ب · ب"])  # noqa: E731
+    assert "<state-data>" in ss.cmd_hook(hook, tree, NOW, same)
+    mixed = lambda c, i: (None, ["0108 · أ", "0102 · ب"])  # noqa: E731
+    assert ss.cmd_hook(hook, tree, NOW, mixed) == ""
