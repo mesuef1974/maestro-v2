@@ -125,3 +125,13 @@ def test_hook_injects_after_clear_only(tree):
 def test_bad_session_number():
     with pytest.raises(ValueError):
         ss.state_path("../x")
+
+
+def test_main_confirmations_points_to_main_folder():
+    import session_state as s
+    from pathlib import Path
+
+    wt = Path("C:/x/proj/.claude/worktrees/abc")
+    assert s.main_confirmations(wt) == Path("C:/x/proj/owner_confirmations.md")
+    plain = Path("C:/x/proj")
+    assert s.main_confirmations(plain) == plain / "owner_confirmations.md"
