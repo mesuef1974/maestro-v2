@@ -24,3 +24,4 @@ msg_counter.tmp
 
 # حالةُ الجلسة المولَّدة (session_state.py): مشتقّةٌ من الدفتر لا تُتبَّع
 handover_notes/state_*.json
+handover_notes/hook_probe_state.log
