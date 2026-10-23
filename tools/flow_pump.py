@@ -6,6 +6,8 @@
      (approval_check ✔ برمز 0). الدفترُ نفسُه يرفض ما لا يستوفي بوّاباتِه (أدلّة بصريّة، مواصفة) فيُبلَّغ ولا يُفرض.
   2. إعفاء — رأسٌ جديدٌ لبطاقةٍ معتمَدة (معلَنٌ، أو رأسُ طلبها المفتوح): `waive-head --kind auto` بتوقيع 0101 إن أثبت الكودُ
      أنه دمجُ main خالص أو إصلاحُ اختباراتٍ فقط أو سلسلتُهما (D-451م)؛ وما سواه يبقى اعتماداً جديداً للمالك.
+  2ب. إيصال prepush — لبطاقةٍ معتمَدة سيرفضها الدفعُ لغياب الإيصال: scripts/prepush_check.py للمنصّة داخل صورة Docker
+     (tools/prepush_image)، ويُكتب الإيصالُ من المضيف بعد خروجٍ بـ0 (كلُّ الحرّاس قيست ونجحت) وحدَه؛ بطاقةٌ واحدة في الدورة (W-20261023-016).
   3. دفع — approved ← pushed بحرّاس push_approved كلّها، على فرعٍ claude/* أو w*، وبإيصال prepush ناجحٍ للرأس نفسه (D-450م).
   4. سطرُ الاعتماد — يُكتب أوّلَ وصف الطلب المفتوح على الرأس المعتمَد إن غاب أو لم يطابق (D-450م): قولُ المالك المباشر
      «اعتُمد من المالك مباشرةً بلا معاينة 8500 — …» أو تكليفُه «اعتُمد بتكليف المالك D-443م عبر 0101 — …»، والرأسُ يلي التاريخ.
@@ -314,6 +316,166 @@ def push_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = No
     return out
 
 
+#: (W-20261023-016) إيصالُ prepush الآليّ: صورةُ Docker المشتقّة (tools/prepush_image/Dockerfile) تشغّل scripts/prepush_check.py للمنصّة
+#: على نسخةٍ مركّبةٍ للقراءة، والمضخّةُ تكتب الإيصالَ من المضيف بعد رمز خروج 0 وحدَه (لا «غير مقيس» ولا فشل).
+PREPUSH_IMAGE = "maestro-prepush:1"
+#: بطاقةٌ واحدةٌ في الدورة: التشغيلُ يستغرق دقائق والقفلُ يُعدّ ميتاً بعد STALE_LOCK_S (900 ثانية)
+PREPUSH_MAX = 1
+PREPUSH_TIMEOUT_S = 780
+PREPUSH_DB_IMAGE = "postgres:16-alpine"  # كـCI (native-postgres: postgres 16)؛ بيانات اعتماد اختبارٍ فقط، لا منفذَ على المضيف
+PREPUSH_DB_WAIT = 40
+PREPUSH_OK_LINE = "الفحوصُ السريعةُ ناجحة"
+PREPUSH_ATTEMPTS = HERE.parent / "ledger" / "prepush_attempts.json"
+#: مفتاحُ إيقاف المرحلة وحدَها: وجودُ الملف يعطّلها من أيّ مشغِّل
+NO_PREPUSH = HERE.parent / "ledger" / "flow_pump.noprepush"
+
+
+def _docker(cmd: list[str], timeout: int) -> tuple[int, str]:
+    """(رمز الخروج، المخرَج)؛ عند المهلة تُقتل الحاويةُ باسمها ويعاد 124."""
+    try:
+        p = subprocess.run(["docker", *cmd], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if "--name" in cmd:
+            subprocess.run(["docker", "rm", "-f", cmd[cmd.index("--name") + 1]], capture_output=True, timeout=60)
+        return 124, "تجاوز المهلة"
+    except OSError as exc:
+        return 127, f"docker غير متاح: {exc}"
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def _image_present(docker) -> bool:
+    rc, _ = docker(["image", "inspect", "--format", "ok", PREPUSH_IMAGE], 60)
+    return rc == 0
+
+
+def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str) -> list[str]:
+    """أمرُ docker run: الشجرةُ و.git الرئيس للقراءة فقط، على شبكةٍ داخليّةٍ لا خارجَ لها (فيها قاعدةُ الاختبار وحدَها)؛ GIT_DIR نسبةً إلى
+    المركَّب. الإيصالُ لا يُكتب من الحاوية."""
+    rel = os.path.relpath(gitdir, common).replace("\\", "/")
+    git_dir = "/gitmain" if rel == "." else f"/gitmain/{rel}"
+    runner = str(HERE / "prepush_image")
+    return [
+        "run", "--rm", "--name", name, "--network", net, "-e", "TEST_DB_HOST=db",
+        "-e", "DJANGO_ALLOW_ASYNC_UNSAFE=1",  # كما في وظيفة axe-a11y في CI (quality-gate.yml): Playwright يستعمل حلقة greenlet تُخطئ حارسَ Django
+        "-v", f"{tree}:/src:ro", "-v", f"{common}:/gitmain:ro", "-v", f"{runner}:/runner:ro",
+        "-e", f"PREPUSH_GIT_DIR={git_dir}", "-e", "GIT_OPTIONAL_LOCKS=0", "-e", "HOME=/tmp",
+        "-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=*",
+        PREPUSH_IMAGE, "sh", "/runner/entry.sh",
+    ]
+
+
+def run_with_db(docker, cmd_for, name: str, timeout: int, sleep=None) -> tuple[int, str]:
+    """يشغّل أمرَ الفحص بقاعدة postgres:16 مؤقّتةٍ (كـCI) على شبكةٍ داخليّة بلا خروج؛ ويزيلهما دائماً. تعذّرُ القاعدة = فشلٌ لا نجاح."""
+    import time  # noqa: PLC0415
+
+    sleep = sleep or time.sleep
+    net, pg = f"{name}-net", f"{name}-pg"
+    docker(["rm", "-f", name, pg], 60)  # بقايا دورةٍ انقطعت (باسمنا نحن فقط)
+    docker(["network", "rm", net], 60)
+    try:
+        rc, out = docker(["network", "create", "--internal", net], 60)
+        if rc:
+            return 1, "تعذّر إنشاءُ الشبكة الداخلية: " + out.strip()[-120:]
+        rc, out = docker(["run", "-d", "--rm", "--name", pg, "--network", net, "--network-alias", "db", "--tmpfs", "/var/lib/postgresql/data",
+                          "-e", "POSTGRES_USER=test_user", "-e", "POSTGRES_PASSWORD=test_pass", PREPUSH_DB_IMAGE], 120)
+        if rc:
+            return 1, "تعذّر تشغيلُ قاعدة الاختبار: " + out.strip()[-120:]
+        for _ in range(PREPUSH_DB_WAIT):
+            if docker(["exec", pg, "pg_isready", "-U", "test_user"], 30)[0] == 0:
+                break
+            sleep(1.5)
+        else:
+            return 1, "قاعدةُ الاختبار لم تجهز"
+        return docker(cmd_for(net), timeout)
+    finally:
+        docker(["rm", "-f", pg], 60)
+        docker(["network", "rm", net], 60)
+
+
+def _attempts() -> dict:
+    try:
+        return json.loads(PREPUSH_ATTEMPTS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = None, git=None, docker=None,
+                 limit: int = PREPUSH_MAX, timeout: int = PREPUSH_TIMEOUT_S) -> list[str]:
+    """(W-20261023-016) بطاقةٌ approved سيرفضها حارسُ الدفع لغياب إيصال prepush: يُشغَّل prepush_check في الحاوية، وإن خرج بـ0
+    (كلُّ الحرّاس قيست ونجحت) كُتب الإيصالُ للرأس نفسه في مجلّد git للشجرة. غيرُ ذلك لا إيصال: الفشلُ وغيرُ المقيس يبقيان ظاهرَين.
+    رأسٌ جُرِّب وفشل لا يُعاد تجريبُه حتى يتغيّر الرأس (prepush_attempts.json). حدٌّ أقصى `limit` بطاقةً في الدورة، ولا رسائل."""
+    import push_watch  # noqa: PLC0415
+    import ready_mark  # noqa: PLC0415
+
+    items = {k: v for k, v in states.items() if v.get("state") == "approved" and (v.get("approved_head") or "").strip()}
+    if not items:
+        return []
+    git = git or push_approved._git
+    docker = docker or _docker
+    where_repos = repos or ready_mark.candidate_repos(None)
+    tried, out, ran = _attempts(), [], 0
+    for cid in sorted(items):
+        want = items[cid]["approved_head"].strip()
+        tree, _why = push_watch.find_tree(cid, want, where_repos, git, push_approved.PUMP_BRANCH_RE)
+        if tree is None or not _is_platform(tree["path"], git):
+            continue
+        path = tree["path"]
+        rc, head = git(path, "rev-parse", "HEAD")
+        head = head.strip()
+        rc2, dirty = git(path, "status", "--porcelain", "--untracked-files=no")
+        if rc or rc2 or not head or dirty.strip() or not same_head(head, want):
+            continue  # حارسُ الدفع سيرفضه بسببه؛ لا إيصالَ لرأسٍ غير الرأس المعتمَد أو لشجرةٍ متسخة
+        if push_approved.receipt_problem(path, head, git) is None:
+            continue  # الإيصالُ قائم
+        key = f"{cid}:{head[:8]}"
+        if tried.get(key):
+            out.append(f"{cid}: prepush لم يُعَد للرأس {head[:8]} — {tried[key]} (يُعاد حين يتغيّر الرأس)")
+            continue
+        if ran >= limit:
+            out.append(f"{cid}: ⏸ prepush في الدورة التالية (الحدّ {limit} في الدورة)")
+            continue
+        if not (Path(path) / "scripts" / "prepush_check.py").is_file():
+            continue
+        if not apply:
+            out.append(f"{cid}: يُشغَّل prepush في الحاوية للرأس {head[:8]} (عرض)")
+            ran += 1
+            continue
+        if not _image_present(docker):
+            _log_once(f"prepush: الصورة {PREPUSH_IMAGE} غائبة — docker build -t {PREPUSH_IMAGE} tools/prepush_image")
+            out.append(f"{cid}: ✘ صورة {PREPUSH_IMAGE} غائبة — docker build -t {PREPUSH_IMAGE} tools/prepush_image")
+            break
+        rc, gitdir = git(path, "rev-parse", "--absolute-git-dir")
+        rc3, common = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if rc or rc3 or not gitdir.strip() or not common.strip():
+            out.append(f"{cid}: ✘ تعذّرت قراءةُ مجلّد git للشجرة — لا prepush")
+            continue
+        ran += 1
+        name = f"prepush-{cid.lower()}-{head[:8]}"
+        code, log = run_with_db(docker, lambda net: prepush_command(path, gitdir.strip(), common.strip(), name, net), name, timeout)
+        # شرطُ الإيصال: رمز 0، وسطرُ النجاح الكامل، وخلوُّ المخرَج من «غير مقيس»، وبقاءُ الرأس ونظافةُ الشجرة بعد التشغيل
+        _, head_after = git(path, "rev-parse", "HEAD")
+        _, dirty_after = git(path, "status", "--porcelain", "--untracked-files=no")
+        sound = code == 0 and PREPUSH_OK_LINE in log and "غير مقيس" not in log
+        if sound and head_after.strip() == head and not dirty_after.strip():
+            (Path(gitdir.strip()) / ledger.RECEIPT_NAME).write_text(json.dumps({"head": head[:8], "ok": True}), encoding="utf-8")
+            out.append(f"{cid}: ✔ prepush نجح كاملاً للرأس {head[:8]} — كُتب الإيصال")
+            _log_once(f"prepush: {cid} {head[:8]} ✔")
+            continue
+        why = "الرأس أو الشجرة تغيّر أثناء الفحص" if sound else (
+            "تجاوز المهلة" if code == 124 else "غير مقيس (أداةٌ غائبة)" if code == 3 else f"رمز الخروج {code}")
+        bad = [x.strip() for x in (log or "").splitlines() if x.lstrip().startswith(("✘", "؟"))]
+        tail = (" | ".join(bad) or " | ".join((log or "").strip().splitlines()[-3:]))[:300]
+        try:
+            (PREPUSH_ATTEMPTS.parent / f"prepush_{cid}_{head[:8]}.log").write_text(log or "", encoding="utf-8")
+        except OSError:
+            pass
+        tried[key] = why
+        PREPUSH_ATTEMPTS.write_text(json.dumps(tried), encoding="utf-8")
+        out.append(f"{cid}: ✘ prepush لم يُنتج إيصالاً للرأس {head[:8]} — {why}: {tail}")
+        _log_once(f"prepush: {cid} {head[:8]} ✘ {why}")
+    return out
+
+
 def line_ok(body: str | None, head8: str, card: str) -> bool:
     """في الوصف سطرٌ بإحدى صيغ فحص المستودع يحمل هذا الرأس بعد التاريخ، ولا يخالف رمزَ البطاقة (line_card_problem)."""
     for ln in (body or "").splitlines():
@@ -597,6 +759,7 @@ def _run(argv=None) -> int:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--skip", nargs="*", default=[], help="بطاقاتٌ تُستثنى من المراحل كلّها")
     ap.add_argument("--no-push", action="store_true", help="بلا مرحلة الدفع")
+    ap.add_argument("--no-prepush", action="store_true", help="بلا إنتاج إيصال prepush آليّاً في الحاوية")
     ap.add_argument("--no-line", action="store_true", help="بلا كتابة سطر الاعتماد في الطلب")
     ap.add_argument("--no-merge", action="store_true", help="بلا الدمج الآليّ")
     ap.add_argument("--no-ci", action="store_true", help="بلا إعادة الفحوص العالقة")
@@ -623,6 +786,11 @@ def _run(argv=None) -> int:
     for line in waive_pass(states, a.apply, prs):
         print("إعفاء: " + line)
     states = reload(states)
+    if NO_PREPUSH.exists():
+        print(f"prepush: معطَّل بمفتاح ({NO_PREPUSH.name})")
+    elif not a.no_prepush and not a.no_push:
+        for line in prepush_pass(states, a.apply):
+            print("prepush: " + line)
     if not a.no_push:
         for line in push_pass(states, a.apply, busy_fn=ci_in_flight):
             print("دفع: " + line)

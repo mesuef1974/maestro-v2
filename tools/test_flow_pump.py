@@ -653,6 +653,211 @@ class PushPass(unittest.TestCase):
         repos.assert_not_called()
 
 
+class PrepushPass(unittest.TestCase):
+    """(W-20261023-016) إيصال prepush آليّاً: حاويةٌ وهميّة، ولا إيصالَ إلا بخروج 0 وسطر النجاح الكامل وبلا «غير مقيس»."""
+
+    OK_LOG = "=== النتيجة ===\n✔ ruff check: نجح\n\nالفحوصُ السريعةُ ناجحة — الدفعُ مسموح (الاختبارات الكاملة تبقى في CI)."
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.path = str(self.tmp / "e.jsonl")
+        self.tree = self.tmp / "wt1"
+        (self.tree / "scripts").mkdir(parents=True)
+        (self.tree / "scripts" / "prepush_check.py").write_text("", encoding="utf-8")
+        self.gitdir = self.tmp / "common" / "worktrees" / "wt1"
+        self.gitdir.mkdir(parents=True)
+        p = mock.patch.object(fp, "PREPUSH_ATTEMPTS", self.tmp / "attempts.json")
+        p.start()
+        self.addCleanup(p.stop)
+        p = mock.patch.object(fp, "LOG", self.tmp / "pump.log")
+        p.start()
+        self.addCleanup(p.stop)
+        self.card = fp.ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-10-20T08:00", priority="P2", path=self.path, held_by="0702")
+        fp.ledger.move(self.card, "approved", path=self.path, note="اعتمد المالك على 8500", head="aaaaaaaa", by="0501", waive_spec="اختبار")
+
+    def git(self, branch="w20261020-001-x", origin="https://github.com/x/shschool_mvp.git", dirty="", head="a" * 40):
+        porcelain = f"worktree {self.tree.as_posix()}\nHEAD {'a' * 40}\nbranch refs/heads/{branch}\n"
+
+        def git(repo, *args):
+            if args[0] == "worktree":
+                return 0, porcelain
+            if args[:2] == ("rev-parse", "--absolute-git-dir"):
+                return 0, str(self.gitdir) + "\n"
+            if args[:2] == ("rev-parse", "--path-format=absolute"):
+                return 0, str(self.gitdir.parent.parent) + "\n"
+            if args[0] == "rev-parse":
+                return 0, head + "\n"
+            if args[0] == "log":
+                return 0, "a" * 40 + "\n"
+            if args[0] == "remote":
+                return 0, origin + "\n"
+            if args[0] == "status":
+                return 0, dirty
+            return 0, ""
+
+        return git
+
+    def docker(self, code=0, log=None, image=True):
+        calls = []
+
+        def docker(cmd, timeout):
+            calls.append((cmd, timeout))
+            if cmd[0] == "image":
+                return (0 if image else 1), ""
+            if cmd[0] != "run" or "-d" in cmd:
+                return 0, ""  # network/exec/rm وتشغيل قاعدة الاختبار
+            return code, self.OK_LOG if log is None else log
+
+        docker.calls = calls
+        return docker
+
+    def run_pass(self, apply=True, docker=None, git=None, **kw):
+        docker = docker or self.docker()
+        states = fp.ledger.reduce_state(fp.ledger.load_events(self.path))
+        lines = fp.prepush_pass(states, apply, repos=[str(self.tmp)], git=git or self.git(), docker=docker, **kw)
+        return lines, docker
+
+    def receipt(self):
+        f = self.gitdir / fp.ledger.RECEIPT_NAME
+        return json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
+
+    def runs(self, docker):
+        return [c for c, _ in docker.calls if c[0] == "run" and "-d" not in c]
+
+    def test_success_writes_the_receipt_for_the_same_head_and_push_guard_accepts_it(self):
+        lines, docker = self.run_pass()
+        self.assertEqual(self.receipt(), {"head": "aaaaaaaa", "ok": True})
+        self.assertIsNone(fp.push_approved.receipt_problem(str(self.tree), "a" * 40, self.git()))
+        self.assertIn("✔ prepush", lines[0])
+        self.assertEqual(len(self.runs(docker)), 1)
+
+    def test_the_container_gets_read_only_mounts_and_only_the_internal_db_network(self):
+        _, docker = self.run_pass()
+        cmd = self.runs(docker)[0]
+        net = cmd[cmd.index("--network") + 1]
+        self.assertIn(["network", "create", "--internal", net], [c for c, _ in docker.calls])
+        self.assertIn("TEST_DB_HOST=db", cmd)
+        mounts = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-v"]
+        self.assertTrue(mounts and all(m.endswith(":ro") for m in mounts), mounts)
+        self.assertIn("PREPUSH_GIT_DIR=/gitmain/worktrees/wt1", cmd)
+
+    def test_dry_run_runs_nothing_and_writes_nothing(self):
+        lines, docker = self.run_pass(apply=False)
+        self.assertEqual(docker.calls, [])
+        self.assertIsNone(self.receipt())
+        self.assertIn("عرض", lines[0])
+
+    def test_failure_writes_no_receipt_and_is_not_retried_for_the_same_head(self):
+        lines, docker = self.run_pass(docker=self.docker(code=1, log="✘ ruff check: فشل"))
+        self.assertIsNone(self.receipt())
+        self.assertIn("✘ prepush لم يُنتج", lines[0])
+        lines, docker = self.run_pass()
+        self.assertEqual(self.runs(docker), [])
+        self.assertIn("لم يُعَد", lines[0])
+
+    def test_unmeasured_exit_3_is_never_a_receipt(self):
+        lines, _ = self.run_pass(docker=self.docker(code=3, log="؟ التعقيد: غير مقيس"))
+        self.assertIsNone(self.receipt())
+        self.assertIn("غير مقيس", lines[0])
+
+    def test_exit_0_with_an_unmeasured_line_is_still_no_receipt(self):
+        self.run_pass(docker=self.docker(code=0, log=self.OK_LOG + "\n؟ x: غير مقيس"))
+        self.assertIsNone(self.receipt())
+
+    def test_exit_0_without_the_full_success_line_is_no_receipt(self):
+        self.run_pass(docker=self.docker(code=0, log="شيءٌ آخر"))
+        self.assertIsNone(self.receipt())
+
+    def test_timeout_is_a_failure_not_a_receipt(self):
+        lines, _ = self.run_pass(docker=self.docker(code=124, log="تجاوز المهلة"))
+        self.assertIsNone(self.receipt())
+        self.assertIn("المهلة", lines[0])
+
+    def test_an_existing_receipt_means_no_run(self):
+        (self.gitdir / fp.ledger.RECEIPT_NAME).write_text(json.dumps({"head": "aaaaaaaa", "ok": True}), encoding="utf-8")
+        lines, docker = self.run_pass()
+        self.assertEqual((lines, docker.calls), ([], []))
+
+    def test_missing_image_is_reported_and_nothing_runs(self):
+        lines, docker = self.run_pass(docker=self.docker(image=False))
+        self.assertEqual(self.runs(docker), [])
+        self.assertIn("docker build", lines[0])
+
+    def test_a_dirty_tree_or_other_branch_or_other_repository_is_skipped(self):
+        for git in (self.git(dirty=" M x.py\n"), self.git(branch="main"), self.git(origin="https://github.com/x/maestro-v2.git"),
+                    self.git(head="b" * 40)):
+            lines, docker = self.run_pass(git=git)
+            self.assertEqual((lines, docker.calls), ([], []))
+        self.assertIsNone(self.receipt())
+
+    def test_head_changed_during_the_run_gives_no_receipt(self):
+        heads = iter(["a" * 40, "b" * 40])
+        base = self.git()
+
+        def git(repo, *args):
+            if args == ("rev-parse", "HEAD"):
+                return 0, next(heads, "b" * 40) + "\n"
+            return base(repo, *args)
+
+        self.run_pass(git=git)
+        self.assertIsNone(self.receipt())
+
+    def test_only_approved_cards_with_one_run_per_cycle(self):
+        states = {"W-1": {"state": "ready_for_review", "approved_head": "aaaaaaaa"}}
+        docker = self.docker()
+        self.assertEqual(fp.prepush_pass(states, True, repos=[str(self.tmp)], git=self.git(), docker=docker), [])
+        self.assertEqual(docker.calls, [])
+
+    def test_the_limit_defers_the_second_card(self):
+        import push_watch
+
+        a = self.card
+        b = fp.ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-10-20T08:00", priority="P2", path=self.path, held_by="0702")
+        fp.ledger.move(b, "approved", path=self.path, note="اعتمد المالك على 8500", head="aaaaaaaa", by="0501", waive_spec="اختبار")
+        docker = self.docker(code=1, log="✘ فشل")
+        states = fp.ledger.reduce_state(fp.ledger.load_events(self.path))
+        with mock.patch.object(push_watch, "find_tree",
+                               return_value=({"path": str(self.tree), "branch": "w1", "head": "a" * 40}, "")):
+            lines = fp.prepush_pass(states, True, repos=[str(self.tmp)], git=self.git(), docker=docker, limit=1)
+        self.assertEqual(len(self.runs(docker)), 1)
+        self.assertTrue(any("الدورة التالية" in x for x in lines), (a, b, lines))
+
+    def test_db_and_network_are_removed_even_when_the_run_fails(self):
+        _, docker = self.run_pass(docker=self.docker(code=1, log="x"))
+        heads = [c[:2] for c, _ in docker.calls]
+        self.assertIn(["rm", "-f"], heads)
+        self.assertIn(["network", "rm"], heads)
+
+    def test_a_db_that_never_becomes_ready_is_a_failure_and_is_cleaned_up(self):
+        calls = []
+
+        def docker(cmd, timeout):
+            calls.append(cmd)
+            return (1, "") if cmd[0] == "exec" else (0, "")
+
+        rc, out = fp.run_with_db(docker, lambda net: ["run"], "n", 10, sleep=lambda s: None)
+        self.assertEqual(rc, 1)
+        self.assertEqual([c[0] for c in calls][-2:], ["rm", "network"])
+        self.assertEqual(calls[0][:2], ["rm", "-f"])  # تنظيفُ بقايا قبل البدء
+        self.assertNotIn(["run"], calls)
+
+    def test_docker_helper_kills_the_container_on_timeout(self):
+        import subprocess
+
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            if cmd[1] == "run":
+                raise subprocess.TimeoutExpired(cmd, 1)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(fp.subprocess, "run", side_effect=run):
+            rc, _ = fp._docker(["run", "--name", "n1", "img"], 1)
+        self.assertEqual(rc, 124)
+        self.assertEqual(calls[-1], ["docker", "rm", "-f", "n1"])
+
+
 def _rollup(*entries):
     return {"number": 1, "isDraft": False, "statusCheckRollup": list(entries)}
 
@@ -759,7 +964,7 @@ class CiLimitPush(PushPass):
 class Stages(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
-        for name in ("LOCK", "LOG", "OFF", "NO_MERGE"):
+        for name in ("LOCK", "LOG", "OFF", "NO_MERGE", "NO_PREPUSH"):
             p = mock.patch.object(fp, name, tmp / name)
             p.start()
             self.addCleanup(p.stop)
@@ -776,6 +981,7 @@ class Stages(unittest.TestCase):
             mock.patch.object(fp, "open_prs", side_effect=lambda: called.append("prs") or (None if prs is None else list(prs))),
             mock.patch.object(fp, "approve_pass", side_effect=stage("approve")),
             mock.patch.object(fp, "waive_pass", side_effect=stage("waive")),
+            mock.patch.object(fp, "prepush_pass", side_effect=stage("prepush")),
             mock.patch.object(fp, "push_pass", side_effect=stage("push")),
             mock.patch.object(fp, "line_pass", side_effect=stage("line")),
             mock.patch.object(fp, "merge_pass", side_effect=stage("merge")),
@@ -787,16 +993,24 @@ class Stages(unittest.TestCase):
 
     def test_all_stages_run_in_order(self):
         called, _ = self.run_main(["--apply"])
-        self.assertEqual(called, ["approve", "prs", "waive", "push", "line", "merge"])
+        self.assertEqual(called, ["approve", "prs", "waive", "prepush", "push", "line", "merge"])
 
     def test_each_stage_can_be_switched_off(self):
         called, _ = self.run_main(["--apply", "--no-push", "--no-line", "--no-merge"])
         self.assertEqual(called, ["approve", "prs", "waive"])
 
+    def test_the_prepush_stage_has_its_own_switches(self):
+        called, _ = self.run_main(["--apply", "--no-prepush"])
+        self.assertEqual(called, ["approve", "prs", "waive", "push", "line", "merge"])
+        fp.NO_PREPUSH.write_text("")
+        called, out = self.run_main(["--apply"])
+        self.assertEqual(called, ["approve", "prs", "waive", "push", "line", "merge"])
+        self.assertIn("prepush: معطَّل", out)
+
     def test_the_no_merge_switch_skips_only_the_merge_stage(self):
         fp.NO_MERGE.write_text("")
         called, out = self.run_main(["--apply"])
-        self.assertEqual(called, ["approve", "prs", "waive", "push", "line"])
+        self.assertEqual(called, ["approve", "prs", "waive", "prepush", "push", "line"])
         self.assertIn("دمج: معطَّل", out)
 
     def test_unreadable_prs_are_reported_not_taken_as_none(self):
