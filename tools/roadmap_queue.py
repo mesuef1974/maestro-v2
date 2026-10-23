@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,10 +45,32 @@ def read(path: Path | None = None) -> list[dict]:
     return out
 
 
+def same_entry(a: dict, b: dict) -> bool:
+    """نفسُ الطلب: رقمٌ واحد في مستودعٍ واحد (W-20261023-014: أرقامُ المنصّة وmaestro-v2 تتصادم)؛ سطرٌ قديمٌ بلا repo يُعدّ مطابقاً."""
+    if str(a.get("pr")) != str(b.get("pr")):
+        return False
+    return not (a.get("repo") and b.get("repo")) or a["repo"] == b["repo"]
+
+
+def late(entries: list[dict], served: str, now: datetime | None = None, max_hours: float = 24.0) -> list[dict]:
+    """سطورُ الطابور التي مضى على دمجها أكثرُ من max_hours ولا أثرَ لها (رمزُ البطاقة أو #الطلب) في نصّ مقترحات الخارطة `served`."""
+    now = now or datetime.now(timezone.utc)
+    out = []
+    for e in entries:
+        d = _parse(e.get("merged_at") or e.get("queued_at"))
+        if d is None or (now - d).total_seconds() / 3600 <= max_hours:
+            continue
+        card, pr = str(e.get("card") or ""), e.get("pr")
+        if (card and card in served) or re.search("#" + str(pr) + "(?![0-9])", served):
+            continue
+        out.append(e)
+    return out
+
+
 def enqueue(entry: dict, path: Path | None = None, now: datetime | None = None) -> bool:
     """يُلحق السطر إن لم يكن الطلبُ فيه من قبل؛ يُرجع True إن أُلحق."""
     p = path or QUEUE
-    if any(str(e.get("pr")) == str(entry.get("pr")) for e in read(p)):
+    if any(same_entry(e, entry) for e in read(p)):
         return False
     row = {**entry, "queued_at": (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")}
     p.parent.mkdir(parents=True, exist_ok=True)

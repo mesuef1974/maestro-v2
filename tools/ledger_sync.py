@@ -146,6 +146,31 @@ def orphans(
     return out
 
 
+def queue_rows(states: dict, merged: dict[str, dict[str, dict]]) -> list[dict]:
+    """سطورُ طابور الخارطة (W-20261023-014): لكلّ بطاقةٍ رأسُها (approved…published) يقابل طلباً مدموجاً؛ الحقيقةُ الدفترُ وgh لا رسالةٌ.
+    تُلحَق بلا تكرار (roadmap_queue.enqueue) فيعاد الحسابُ كلَّ دورةٍ ويلتقط ما سقط سابقاً."""
+    rows = []
+    for cid, st in sorted(states.items()):
+        if st.get("state") not in ORDER:
+            continue
+        head = ps.card_head(st)
+        if not head:
+            continue
+        for slug, _ in REPOS:
+            pr = merged.get(slug, {}).get(head)
+            if pr:
+                rows.append({"pr": pr["number"], "repo": slug, "card": cid, "commit": pr["merge"][:8], "merged_at": pr.get("at", "")})
+                break
+    return rows
+
+
+def enqueue_roadmap(rows: list[dict], enqueue=None) -> list[str]:
+    import roadmap_queue as rq
+
+    add = enqueue or rq.enqueue
+    return [f"{r['card']} #{r['pr']} ({r['repo'].split('/')[1]})" for r in rows if add(r)]
+
+
 def apply_rows(rows: list[dict], prod: str | None, move=None) -> list[str]:
     """ينقل كلَّ صفٍّ بالتسلسل؛ فشلُ بطاقةٍ يُسجَّل ولا يوقف الباقي. لا `by` (لا ينتحل 0601)."""
     move = move or ledger.move
@@ -224,6 +249,9 @@ def cycle(apply: bool, limit: int, commit: str | None = None) -> int:
     if apply:
         for line in apply_rows(rows, prod):
             print("  " + line)
+        queued = enqueue_roadmap(queue_rows(ledger.reduce_state(ledger.load_events()), merged))
+        if queued:
+            print(f"  طابورُ الخارطة: أُلحق {len(queued)}: " + "؛ ".join(queued[:8]))
     elif rows:
         print("عرض فقط — أضف --apply للنقل")
     for line in report(rows, orph):
