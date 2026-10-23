@@ -1324,3 +1324,9 @@ class CiPass(unittest.TestCase):
         out, _, note = self._run([{"name": "e2e", "bucket": "pending", "startedAt": "2026-10-23T11:50:00Z", "link": ""}])
         self.assertEqual(out, [])
         note.assert_not_called()
+
+
+def test_pr_body_names_only_its_own_card():
+    """وصفُ الطلب يذكر بطاقتَه وحدها: رقمُ بطاقة المضخّة فيه كان يُوهم مضخّةَ التدفّق بتعارضٍ فترفض الطلب."""
+    body = fp._pr_body("سطر الاعتماد", "W-20261013-004", {"problem": "م", "accept": "ق"})
+    assert body.count("W-") == 1 and "W-20261013-004" in body
