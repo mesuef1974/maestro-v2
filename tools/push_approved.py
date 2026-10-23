@@ -118,7 +118,7 @@ def push(card: str, branch: str, repo: str, apply: bool = False, path=None, git=
         raise PushRefused(f"البعيدُ لا يطابق بعد الدفع: {remote.strip()[:80]}")
     ledger.add_note(card, f"دُفع الفرع {branch} بالرأس {head[:8]} آلياً (push_approved) بعد approval_check ✔ وحارس الرأس", by or "0701", path)
     # فحصُ البعيد جرى أعلاه في شجرة البطاقة (قد تكون مستودعاً غير مستودع المنصّة) فنمرّر نتيجتَه لا فحصَ ledger الافتراضيّ
-    ledger.move(card, "pushed", path=path, by=by, head=head[:8], branch=branch, remote_lookup=lambda _b: head)
+    ledger.move(card, "pushed", path=path, by=by, head=head[:8], branch=branch, remote_lookup=lambda _b: head, via_pump=True)
     return f"دُفع {head[:8]} إلى origin/{branch}؛ دُوّن pushed. سلّم البطاقة والفرع لـ0501 ثمّ 0601."
 
 

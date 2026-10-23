@@ -954,8 +954,22 @@ def check_not_repeat(item_id: str, current: str, state: str, head: str | None, h
         raise LedgerError(f"حدثٌ مكرَّر: البطاقةُ في «{state}» أصلاً بالرأس نفسه — لا يُعاد تسجيلُه (أعد القراءةَ بـshow)")
 
 
+def check_pump_only_push(item: dict, state: str, via_pump: bool, waived: str | None) -> str | None:
+    """الموجة 0.8 (W-20261023-003): الدفعُ لبطاقةٍ معتمَدةٍ يجري من push_approved/المضخّة وحدها (حارس الرأس + إيصال prepush)؛ تدوينُ
+    pushed يدوياً من الجلسة يفتح ازدواجَ الدفع (حالة 019). الظلُّ أوّلاً: إنذارٌ، ورفضٌ مع PUMP_ONLY_PUSH_ENFORCE=1 (يُفعَّل
+    عند فكّ تجميد المضخّة). --waive-pump-only "<سبب>" استثناءٌ مسجَّل."""
+    if state != "pushed" or item.get("state") != "approved" or via_pump:
+        return None
+    if waived:
+        return f"استثناءُ الدفع من المضخّة وحدها: {waived}"
+    problem = "تدوينُ pushed لبطاقةٍ معتمَدةٍ يدوياً: استعمل push_approved.py <بطاقة> --repo <شجرة> --branch <فرع> --apply (أو المضخّة)، أو --waive-pump-only <سبب>"
+    if os.environ.get("PUMP_ONLY_PUSH_ENFORCE") == "1":
+        raise LedgerError(problem)
+    return f"إنذار (الظلّ): {problem}"
+
+
 def move(item_id: str, state: str, path=None, note: str | None = None, by: str | None = None, head: str | None = None,
-         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None, preflight_repo: str | None = None, waive_preflight: str | None = None, premerge_sha: str | None = None, head_now: str | None = None) -> None:
+         branch: str | None = None, waive_remote_check: str | None = None, held_by: str | None = None, remote_lookup=None, waive_spec: str | None = None, waive_wip: str | None = None, preflight_repo: str | None = None, waive_preflight: str | None = None, premerge_sha: str | None = None, head_now: str | None = None, via_pump: bool = False, waive_pump_only: str | None = None) -> None:
     if state not in STATES:
         raise LedgerError(f"حالةٌ غيرُ معروفة: {state}")
     if held_by is not None and held_by != "-":
@@ -969,6 +983,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     check_not_repeat(item_id, items[item_id]["state"], state, push_head or head, held_by, path)
     check_holder_on_route(items[item_id], state, held_by)
     check_recorder(state, by)
+    pump_note = check_pump_only_push(items[item_id], state, via_pump, waive_pump_only)
+    if pump_note:
+        print(pump_note, file=sys.stderr)
+        note = f"{note + ' — ' if note else ''}{pump_note}"
     history = {e["data"].get("state") for e in load_events(path) if e["id"] == item_id and e["kind"] == "state"}
     spec_warning = check_spec_gate(items[item_id], state, history, waive_spec)
     if waive_spec and state in ("routed", "in_progress") and spec_missing(items[item_id]) and (
@@ -1594,6 +1612,7 @@ def main() -> None:
     m.add_argument("--preflight-repo", help="لـready_for_review: مجلّدُ شجرتك لتشغيل الفحص المسبق (pr_open_prep --preflight)")
     m.add_argument("--premerge-sha", help="لـready_for_review: بصمةُ make premerge بصيغة <head8>:<sha16> (إنذارٌ في الظلّ ثم إلزام)")
     m.add_argument("--head-now", help="رأسُ الفرع الحاليّ للمطابقة مع البصمة (sha8)")
+    m.add_argument("--waive-pump-only", help="لـpushed: استثناءٌ مسجَّل لقاعدة «الدفع من المضخّة وحدها» (السبب)")
     m.add_argument("--waive-preflight", help="استثناءٌ مسجَّل للفحص المسبق (السبب)")
     sp = sub.add_parser("spec", help="يضبط حقولَ المواصفة الكاملة")
     sp.add_argument("id"); sp.add_argument("--tier", choices=SPEC_TIERS); sp.add_argument("--ref"); sp.add_argument("--roles-states")
@@ -1636,7 +1655,7 @@ def main() -> None:
                            owner_order=args.owner_order, parent=args.parent, evidence=args.evidence))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
-                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight, premerge_sha=args.premerge_sha, head_now=args.head_now); print("ok")
+                 waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight, premerge_sha=args.premerge_sha, head_now=args.head_now, waive_pump_only=args.waive_pump_only); print("ok")
         elif args.cmd == "spec":
             set_spec(args.id, args.tier, args.ref, args.roles_states, args.allowed_diffs, args.assumption, args.source_of_truth,
                      args.files_allowed, args.files_forbidden, args.accept, args.step, args.by, basic_ok=args.basic_ok); print("ok")
