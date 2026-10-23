@@ -244,7 +244,20 @@ def render(state: dict) -> str:
 def check_owner_quote(quote: str) -> str:
     import ledger
 
-    return ledger.find_owner_order(quote)
+    return ledger.find_owner_order(quote, main_confirmations())
+
+
+def main_root(root: Path | None = None) -> Path:
+    """المجلّدُ الرئيس: في شجرة عملٍ (.claude/worktrees/<اسم>) هو ثلاثةُ مستوياتٍ فوقها، وإلا الجذرُ نفسُه."""
+    r = root or ROOT
+    if r.parent.name == "worktrees" and r.parent.parent.name == ".claude":
+        return r.parent.parent.parent
+    return r
+
+
+def main_confirmations(root: Path | None = None) -> Path:
+    """سجلُّ أوامر المالك الحيّ في المجلّد الرئيس؛ نسخةُ الشجرة قد تتقادم."""
+    return main_root(root) / "owner_confirmations.md"
 
 
 def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = None, titles=None) -> str:
