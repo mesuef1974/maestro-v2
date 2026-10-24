@@ -214,8 +214,170 @@ def test_prepare_clear_blocked_by_guard_unless_owner_override(tree, monkeypatch,
     assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح"]) == 5
     assert not ss.state_path("0108", tree).exists()  # الرفضُ قبل أي كتابة
     assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح", "--skip-guard-quote", "مزيّف"]) == 3
+    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح", "--skip-guard-quote", "تجاوز"]) == 7  # الواجباتُ غيرُ مسجَّلة
+    assert not ss.state_path("0108", tree).exists()
+    ss.set_duties("0108", none=True, root=tree, now=NOW)
     assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح", "--skip-guard-quote", "تجاوز"]) == 0
     assert ss.state_path("0108", tree).exists()
     ss.set_focus("0108", "W-1", 1, root=tree)
     assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح"]) == 0
     assert ss.main(["guard", "0108"]) == 0
+
+
+# ---- W-20261024-005: علامةُ المسح المعلَّق لكلّ شجرة ----
+TREE = "D:/shschool_mvp/.claude/worktrees/abc"
+HOOK = json.dumps({"source": "clear", "cwd": TREE, "session_id": "new"})
+
+
+def UNKNOWN(cwd, sid):  # عنوانٌ مجهول ولا مرشّحين: لا يُحسم إلا بالعلامة
+    return None, []
+
+
+def _ready(tree, num="0108"):
+    ss.set_duties(num, none=True, root=tree, now=NOW)
+    ss.write_state(num, ss.derive(num, num, NOW, tree), tree)
+
+
+def _ctx(out):
+    return json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_pending_resolves_when_title_unknown_and_is_single_use(tree):
+    _ready(tree)
+    ss.write_pending("0108", TREE, tree, NOW)
+    ctx = _ctx(ss.cmd_hook(HOOK, tree, NOW, UNKNOWN))
+    assert "مستنتج من ملف معلَّق" in ctx and "<state-data>" in ctx
+    assert ss.cmd_hook(HOOK, tree, NOW, UNKNOWN) == ""  # استُهلكت
+    assert not list((tree / "handover_notes").glob("pending_clear_*"))
+
+
+def test_pending_expired_or_other_tree_or_two_sessions_gives_empty(tree):
+    _ready(tree)
+    ss.write_pending("0108", TREE, tree, NOW - timedelta(seconds=ss.PENDING_TTL_S + 5))
+    assert ss.cmd_hook(HOOK, tree, NOW, UNKNOWN) == ""  # منتهية
+    ss.write_pending("0108", "D:/other/tree", tree, NOW)
+    assert ss.cmd_hook(HOOK, tree, NOW, UNKNOWN) == ""  # شجرةٌ أخرى
+    ss.write_pending("0108", TREE, tree, NOW)
+    _ready(tree, "0109")
+    ss.write_pending("0109", TREE, tree, NOW)
+    assert ss.cmd_hook(HOOK, tree, NOW, UNKNOWN) == ""  # علامتان صالحتان: لا حسم
+
+
+def test_pending_ignored_when_state_stale_or_invalid(tree):
+    _ready(tree)
+    later = NOW + timedelta(days=2)
+    ss.write_pending("0108", TREE, tree, later)
+    assert ss.cmd_hook(HOOK, tree, later, UNKNOWN) == ""  # الحالةُ أقدمُ من 24 ساعة
+    p = ss.state_path("0108", tree)
+    st = json.loads(p.read_text(encoding="utf-8"))
+    st["queue"] = [{"n": "x"}]
+    p.write_text(json.dumps(st), encoding="utf-8")
+    assert ss.cmd_hook(HOOK, tree, NOW, UNKNOWN) == ""
+
+
+def test_title_wins_over_pending_and_pending_is_consumed(tree):
+    _ready(tree)
+    ss.write_pending("0108", TREE, tree, NOW)
+    ctx = _ctx(ss.cmd_hook(HOOK, tree, NOW, lambda c, i: ("0108 · س", [])))
+    assert "مستنتج" not in ctx
+    assert not list((tree / "handover_notes").glob("pending_clear_*"))
+
+
+def test_injection_logged_in_ledger_without_staling_focus(tree):
+    _ready(tree)
+    ss.set_focus("0108", "W-1", 1, root=tree)
+    ss.write_pending("0108", TREE, tree, NOW)
+    assert ss.cmd_hook(HOOK, tree, NOW, UNKNOWN)
+    evs = [json.loads(x) for x in (tree / "ledger" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(e["kind"] == "note" and ss.INJECT_MARK in e["data"]["text"] for e in evs)
+    assert ss.focus_guard("0108", tree) == []  # ملاحظةُ الحقن لا تُبطل focus
+
+
+# ---- W-20261024-006: الواجباتُ الدائمة ----
+def test_duties_register_validate_and_render(tree):
+    assert ss.duties_guard("0108", tree)  # غيرُ مسجَّلة = رفض
+    ss.set_duties("0108", add={"id": "poll-pr", "every_min": 30, "what": "فحص طلبات الدمج المفتوحة"}, root=tree, now=NOW)
+    assert ss.duties_guard("0108", tree) == []
+    s = _gen(tree)
+    assert s["duties"][0]["id"] == "poll-pr" and ss.validate(s) == []
+    assert "فحص طلبات الدمج" in ss.render(s) and "30" in ss.render(s)
+    ss.set_duties("0108", add={"id": "poll-pr", "every_min": 60, "what": "فحص أبطأ"}, root=tree, now=NOW)  # استبدالٌ بالمعرّف
+    assert [d["every_min"] for d in _gen(tree)["duties"]] == [60]
+
+
+def test_duties_reject_bad_input(tree):
+    for bad in ({"id": "x", "every_min": 5000, "what": "ok"}, {"id": "x", "every_min": 5, "what": "اعتمد المالك كذا"},
+                {"id": "x", "every_min": True, "what": "ok"}, {"id": "نص حر", "every_min": 5, "what": "ok"}):
+        with pytest.raises(ValueError):
+            ss.set_duties("0108", add=bad, root=tree, now=NOW)
+    for i in range(ss.DUTIES_MAX):
+        ss.set_duties("0108", add={"id": f"d{i}", "every_min": 0, "what": "ok"}, root=tree, now=NOW)
+    with pytest.raises(ValueError):
+        ss.set_duties("0108", add={"id": "extra", "every_min": 0, "what": "ok"}, root=tree, now=NOW)
+
+
+def test_duties_none_declares_empty_and_clear_removes(tree):
+    ss.set_duties("0108", none=True, root=tree, now=NOW)
+    assert ss.duties_guard("0108", tree) == [] and _gen(tree)["duties"] == []
+    ss.set_duties("0108", clear=True, root=tree)
+    assert ss.duties_guard("0108", tree)
+
+
+def test_duties_cli_needs_owner_quote(tree, monkeypatch):
+    monkeypatch.setattr(ss, "ROOT", tree)
+    monkeypatch.setattr(ss, "check_owner_quote", lambda q: "سطر" if q == "أمر" else (_ for _ in ()).throw(ValueError("لا")))
+    assert ss.main(["duties", "0108", "--add", "d1", "--every", "10", "--what", "واجب", "--owner-quote", "مزيّف"]) == 3
+    assert ss.main(["duties", "0108", "--add", "d1", "--every", "10", "--what", "واجب", "--owner-quote", "أمر"]) == 0
+    assert ss.load_duties("0108", tree)["items"][0]["id"] == "d1"
+
+
+# ---- clear_all والسيناريو الحاسم ----
+def test_clear_all_ready_list_and_shared_tree(tree):
+    ss.set_focus("0108", "W-1", 1, root=tree)
+    ss.set_duties("0108", none=True, root=tree, now=NOW)
+    ss.set_duties("0109", none=True, root=tree, now=NOW)
+    rows = ss.clear_all([{"num": "0108", "title": "0108 · التقييم", "tree": TREE},
+                         {"num": "0109", "title": "0109 · ب", "tree": TREE},
+                         {"num": "0110", "title": "0110 · ج", "tree": "D:/x"}], root=tree, now=NOW)
+    by = {r["num"]: r for r in rows}
+    assert by["0108"]["ok"] and by["0108"]["pending"]
+    assert not by["0109"]["ok"] and "مشتركة" in by["0109"]["reasons"][0]
+    assert not by["0110"]["ok"] and "واجبات" in by["0110"]["reasons"][0]
+    assert len(list((tree / "handover_notes").glob("pending_clear_*"))) == 1
+
+
+def test_clear_all_blocked_by_guard_and_skip(tree):
+    ss.set_duties("0108", none=True, root=tree, now=NOW)
+    r = ss.clear_all([{"num": "0108", "title": "0108", "tree": TREE}], root=tree, now=NOW)[0]
+    assert not r["ok"] and "focus" in r["reasons"][0]
+    r = ss.clear_all([{"num": "0108", "title": "0108", "tree": TREE}], skip_guard=True, root=tree, now=NOW)[0]
+    assert r["ok"], r
+
+
+def test_live_sessions_skips_archived_and_dedups(tmp_path):
+    d = tmp_path / "a" / "b"
+    d.mkdir(parents=True)
+    rows = [("local_1", {"title": "0201 · ق", "cwd": "D:/m", "isArchived": False, "lastActivityAt": 1}),
+            ("local_2", {"title": "0201 · ق", "cwd": "D:/new", "isArchived": False, "lastActivityAt": 9}),
+            ("local_3", {"title": "0202 · ر", "cwd": "D:/m", "isArchived": True}),
+            ("local_4", {"title": "بلا رقم", "cwd": "D:/m"})]
+    for n, v in rows:
+        (d / f"{n}.json").write_text(json.dumps(v, ensure_ascii=False), encoding="utf-8")
+    out = ss.live_sessions(tmp_path)
+    assert [(x["num"], x["tree"]) for x in out] == [("0201", "D:/new")]
+
+
+def test_decisive_clear_again_injects_identity_and_duties_by_itself(tree):
+    """0201 يُمسح مرةً ثانية: الخطّافُ يحقن هويّتَه وواجباتِه وحدَه بلا عنوانٍ معروف."""
+    ss.set_focus("0108", "W-1", 1, root=tree)
+    ss.set_duties("0108", add={"id": "poll-ci", "every_min": 20, "what": "راقب حالة CI"}, root=tree, now=NOW)
+    rows = ss.clear_all([{"num": "0108", "title": "0108 · التقييم", "tree": TREE}], root=tree, now=NOW)
+    assert rows[0]["ok"], rows
+    ctx = _ctx(ss.cmd_hook(HOOK, tree, NOW, UNKNOWN))
+    assert '"role"' in ctx or "0108" in ctx
+    assert "poll-ci" in ctx and "راقب حالة CI" in ctx
+    # مسحٌ ثانٍ بعد الحقن: يمرّ الحارسُ (ملاحظةُ الحقن لا تُبطل focus) وتعود الدورةُ كاملة
+    t2 = NOW + timedelta(minutes=1)
+    rows = ss.clear_all([{"num": "0108", "title": "0108 · التقييم", "tree": TREE}], root=tree, now=t2)
+    assert rows[0]["ok"], rows
+    assert "poll-ci" in _ctx(ss.cmd_hook(HOOK, tree, t2, UNKNOWN))
