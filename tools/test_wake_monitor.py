@@ -431,3 +431,11 @@ def test_after_clear_watch_lines_use_session_number():
     p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, cleared={"0201": "x"})
     out = wm.watch_lines(p, DIR, set())
     assert len(out) == 1 and "role_cards/0201.md" in out[0]
+
+
+def test_cleared_session_not_live_by_window_but_running_wins():
+    """W-20261025-001: علامةُ مسحٍ معلَّقةٌ تُسقط الحياةَ المقدَّرةَ بالنافذة؛ و`--running` الفعليُّ يحكم وحدَه."""
+    assert wm.live_minus_cleared({"0301", "0501"}, {"0301": "x"}, None) == {"0501"}
+    assert wm.live_minus_cleared({"0301"}, {"0301": "x"}, {"0301"}) == {"0301"}
+    p = wm.stale_plan([], DIR, wm.live_minus_cleared({"0201"}, {"0201": "x"}, None), _NOW, verify=lambda *_: True, cleared={"0201": "x"})
+    assert "0201" in p.wakes

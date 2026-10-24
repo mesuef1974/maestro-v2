@@ -482,3 +482,74 @@ class TestReconcileAndHeartbeat:
             later = dict(st, generated_at=(t0 + timedelta(minutes=30)).isoformat())
             assert (ss.write_state("0701", later, root, heartbeat=timedelta(minutes=10))[1])
             assert not (ss.write_state("0701", later, root)[1])
+
+
+class TestOutboxWaiting:
+    """W-20261025-001 (متابعة): المنتظَرُ يُشتقّ من نصّ المحادثة، ويبقى بعد المسح، وغيابُه بعد العودة = ناقص."""
+
+    T0 = "2026-10-25T10:00:00Z"   # 13:00 بتوقيت الدوحة
+    T1 = "2026-10-25T10:05:00Z"
+
+    def _line(self, kind, ts, **kw):
+        if kind == "send":
+            return {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "tool_use", "name": "SendMessage", "input": kw}]}}
+        if kind == "mcp":
+            return {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "tool_use", "name": "mcp__ccd_session_mgmt__send_message", "input": kw}]}}
+        return {"type": "user", "timestamp": ts, "message": {"content": f'<cross-session-message from="{kw["frm"]}" name="{kw["name"]}">x</cross-session-message>'}}
+
+    def _write(self, p, rows):
+        p.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+
+    def test_sent_without_reply_is_waiting_and_reply_clears(self, tmp_path):
+        tp = tmp_path / "t.jsonl"
+        ids = {"local_aaa": "0501"}
+        self._write(tp, [self._line("send", self.T0, to="0701 · س", message="m"), self._line("mcp", self.T0, session_id="local_aaa", message="m")])
+        assert ss.scan_transcript("0301", tp, tmp_path, ids=ids)
+        now = datetime(2026, 10, 25, 13, 30, tzinfo=timezone(timedelta(hours=3)))
+        w = ss.outbox_waiting("0301", now, tmp_path)
+        assert {x["to"] for x in w} == {"0701", "0501"} and all(x["n"] == 0 for x in w)
+        with tp.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(self._line("recv", self.T1, frm="local_zzz", name="0701 · الجودة"), ensure_ascii=False) + "\n")
+        ss.scan_transcript("0301", tp, tmp_path, ids=ids)
+        assert {x["to"] for x in ss.outbox_waiting("0301", now, tmp_path)} == {"0501"}
+
+    def test_survives_new_transcript_after_clear_and_is_incremental(self, tmp_path):
+        a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+        self._write(a, [self._line("send", self.T0, to="0701 · س", message="m")])
+        ss.scan_transcript("0301", a, tmp_path, ids={})
+        self._write(b, [])  # محادثةٌ جديدةٌ بعد المسح بلا شيء
+        ss.scan_transcript("0301", b, tmp_path, ids={})
+        now = datetime(2026, 10, 25, 13, 30, tzinfo=timezone(timedelta(hours=3)))
+        assert [x["to"] for x in ss.outbox_waiting("0301", now, tmp_path)] == ["0701"]
+        assert ss.scan_transcript("0301", b, tmp_path, ids={}) is False  # لا جديدَ: لا كتابة
+
+    def test_stale_and_self_are_ignored(self, tmp_path):
+        tp = tmp_path / "t.jsonl"
+        self._write(tp, [self._line("send", self.T0, to="0301 · أنا", message="m"), self._line("send", self.T0, to="0701", message="m")])
+        ss.scan_transcript("0301", tp, tmp_path, ids={})
+        late = datetime(2026, 10, 27, 13, 0, tzinfo=timezone(timedelta(hours=3)))
+        assert ss.outbox_waiting("0301", late, tmp_path) == []
+
+    def test_derive_merges_outbox_without_duplicating_pending(self, tmp_path):
+        tp = tmp_path / "t.jsonl"
+        self._write(tp, [self._line("send", self.T0, to="0701", message="m")])
+        ss.scan_transcript("0301", tp, tmp_path, ids={})
+        (tmp_path / "ledger").mkdir()
+        (tmp_path / "ledger" / "events.jsonl").write_text("", encoding="utf-8")
+        now = datetime(2026, 10, 25, 13, 30, tzinfo=timezone(timedelta(hours=3)))
+        st = ss.derive("0301", "x", now, tmp_path, ledger_path=tmp_path / "ledger" / "events.jsonl")
+        assert [(w["n"], w["to"]) for w in st["waiting"]] == [(0, "0701")]
+        assert ss.validate(st) == []
+        assert "رسالةٌ إلى 0701" in ss.render(st)
+
+    def test_reconcile_flags_vanished_waiting_and_queue(self):
+        b = {"held_cards": [], "work": {}, "waiting": [{"n": 0, "to": "0701", "at": "t"}], "queue": [{"n": 5, "at": "t"}]}
+        a = {"held_cards": [], "work": {}, "waiting": [], "queue": []}
+        v, issues = ss.reconcile(b, a)
+        assert v == "عودة ناقصة" and len(issues) == 2
+        assert ss.reconcile(b, b)[0] == "عودة سليمة"
+
+    def test_resume_head_starts_with_focus_and_waiting(self):
+        st = {"work": {"focus": {"card": "W-9", "step": 2}}, "waiting": [{"n": 0, "to": "0701", "at": "2026-10-25T13:00:00+03:00"}]}
+        h = ss.resume_head(st)
+        assert h.splitlines()[0].startswith("[استأنِف فوراً]") and "W-9" in h and "0701" in h

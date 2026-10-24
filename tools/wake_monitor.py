@@ -399,6 +399,12 @@ def running_from_arg(text: str | None) -> set[str] | None:
     return {t for t in re.split(r"[,\s]+", text.strip()) if SESSION_NUM.match(t) and len(t) == 4}
 
 
+def live_minus_cleared(live: set[str], cleared, running: set[str] | None) -> set[str]:
+    """جلسةٌ عليها علامةُ مسحٍ معلَّقةٍ لم تُستهلك لا تُعدّ حيّةً بنافذة النشاط: المسحُ نفسُه يجدّد ختمَ نشاطها فتبدو عاملةً وهي خاملة
+    (تجربة 0101 على 0301: تُخطّيَت «حيّةً تعمل»). أمّا إن قُدِّم `--running` الفعليُّ فيُحكَم به وحدَه."""
+    return set(live) if running is not None else set(live) - set(cleared)
+
+
 def live_for(a) -> set[str]:
     running = running_from_arg(getattr(a, "running", None))
     return running if running is not None else live_sessions()
@@ -430,8 +436,9 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
         now = datetime.now().astimezone()
         import session_state
 
-        return stale_plan(events, directory, live_for(a), now, log=read_log(), channel=channel, sent=sender_count(a.sender),
-                          aliases=aliases, cleared=session_state.pending_markers(ROOT, now))
+        cleared = session_state.pending_markers(ROOT, now)
+        return stale_plan(events, directory, live_minus_cleared(live_for(a), cleared, running_from_arg(getattr(a, "running", None))), now,
+                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared)
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
