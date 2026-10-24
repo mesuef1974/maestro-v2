@@ -441,3 +441,44 @@ def test_waiting_command_records_from_and_rejects_forbidden(tree, monkeypatch):
     assert pr.add("0501", "x", path=tree / "ledger" / "pending_replies.jsonl", now=NOW, from_="0108") >= 1
     rows = [json.loads(line) for line in (tree / "ledger" / "pending_replies.jsonl").read_text(encoding="utf-8").splitlines()]
     assert rows[-1]["from"] == "0108"
+
+
+class TestReconcileAndHeartbeat:
+    """W-20261025-001: نبضُ الختم ومطابقةُ العودة بعد المسح."""
+
+    def _st(self, held=(("W-1", "ready_for_review"),), branch="b", head="aaaa1111", focus="W-1"):
+        return {
+            "held_cards": [{"id": i, "state": s, "at": "x"} for i, s in held],
+            "work": {"focus": {"card": focus}, "git": {"branch": branch, "head": head, "dirty": 0, "paths": []}},
+            "queue": [], "waiting": [],
+        }
+
+    def test_same_state_is_sound(self):
+        v, issues = ss.reconcile(self._st(), self._st())
+        assert (v, issues) == ("عودة سليمة", [])
+
+    def test_missing_before_is_incomplete(self):
+        assert ss.reconcile(None, self._st())[0] == "عودة ناقصة"
+
+    def test_card_lost_or_changed_and_git_moved(self):
+        v, issues = ss.reconcile(self._st(), self._st(held=(), head="bbbb2222"))
+        assert v == "عودة ناقصة"
+        assert any("W-1" in i for i in issues) and any("الرأس" in i for i in issues)
+        v2, i2 = ss.reconcile(self._st(), self._st(held=(("W-1", "approved"),)))
+        assert v2 == "عودة ناقصة"
+        assert "approved" in i2[0]
+
+    def test_heartbeat_refreshes_only_when_old(self):
+        import tempfile
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2026, 10, 25, 10, 0, tzinfo=timezone(timedelta(hours=3)))
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "handover_notes").mkdir()
+            st = ss.derive("0701", "t", now=t0, root=root, ledger_path=root / "e.jsonl")
+            ss.write_state("0701", st, root)
+            newer = dict(st, generated_at=(t0 + timedelta(minutes=5)).isoformat())
+            assert not (ss.write_state("0701", newer, root, heartbeat=timedelta(minutes=10))[1])
+            later = dict(st, generated_at=(t0 + timedelta(minutes=30)).isoformat())
+            assert (ss.write_state("0701", later, root, heartbeat=timedelta(minutes=10))[1])
+            assert not (ss.write_state("0701", later, root)[1])

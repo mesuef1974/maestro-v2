@@ -40,6 +40,7 @@ HELD_MAX = 12
 RECENT_MAX = 8
 DIRTY_MAX = 8
 PATH_RE = re.compile(r"^[\w./\-]{1,120}$")
+HEARTBEAT_AFTER = timedelta(minutes=10)  # خطّاف Stop يجدّد ختمَ generated_at ولو لم يتغيّر المحتوى (W-20261025-001: ملفٌّ ساكنٌ لا يُحسب ميّتاً)
 STALE_AFTER = timedelta(hours=24)  # حالةٌ أقدمُ لا تُحقن: الدفتر أصدق
 NEXT_DUE = timedelta(hours=1)  # قاعدةٌ ثابتة: التقييمُ التالي بعد ساعة
 SESSION_RE = re.compile(r"^\d{4}(-[ء-ي])?$")  # رقمٌ أو رقمٌ فرعيّ مثل 0101-أ
@@ -443,7 +444,7 @@ def pending_markers(root: Path | None = None, now: datetime | None = None) -> di
     return out
 
 
-def _log_injection(num: str, root: Path | None, via_pending: bool) -> None:
+def _log_injection(num: str, root: Path | None, via_pending: bool, verdict: str = "", issues: list[str] | None = None) -> None:
     """حدثٌ في الدفتر على بطاقة تركيز الجلسة (أو أوّل بطاقةٍ تحجزها)؛ لا يُسقط الحقنَ إن فشل."""
     try:
         import ledger
@@ -451,7 +452,7 @@ def _log_injection(num: str, root: Path | None, via_pending: bool) -> None:
         st = load_state(num, root) or {}
         card = ((st.get("work") or {}).get("focus") or {}).get("card") or next((h["id"] for h in st.get("held_cards", [])), None)
         if card:
-            ledger.add_note(card, INJECT_MARK + (" بعلامة مسحٍ معلَّقة للشجرة" if via_pending else ""), num, main_root(root) / "ledger" / "events.jsonl")
+            ledger.add_note(card, (INJECT_MARK + (" بعلامة مسحٍ معلَّقة للشجرة" if via_pending else "") + (f"؛ {verdict}" if verdict else "") + (": " + "؛ ".join(issues or [])[:90] if issues else ""))[:230], num, main_root(root) / "ledger" / "events.jsonl")
     except Exception:  # noqa: BLE001, S110
         pass
 
@@ -522,17 +523,20 @@ def _stable(state: dict, with_git: bool = True) -> dict:
     return s
 
 
-def write_state(num: str, state: dict, root: Path | None = None) -> tuple[Path, bool]:
-    """يكتب UTF-8 ذرّياً؛ idempotent: إن تطابق المحتوى (عدا الأختام الزمنيّة) لا يُعاد الكتابة. يعيد (المسار، هل كُتب)."""
+def write_state(num: str, state: dict, root: Path | None = None, heartbeat: timedelta | None = None) -> tuple[Path, bool]:
+    """يكتب UTF-8 ذرّياً؛ idempotent: إن تطابق المحتوى (عدا الأختام الزمنيّة) لا يُعاد الكتابة، إلا إن أعطي `heartbeat`
+    وتجاوز عمرُ generated_at المخزَّن فيُجدَّد الختمُ وحدَه. يعيد (المسار، هل كُتب)."""
     errs = validate(state)
     if errs:
         raise ValueError("؛ ".join(errs))
     p = state_path(num, root)
     if p.exists():
         try:
-            if _stable(json.loads(p.read_text(encoding="utf-8"))) == _stable(state):
-                return p, False
-        except ValueError:
+            cur = json.loads(p.read_text(encoding="utf-8"))
+            if _stable(cur) == _stable(state):
+                if heartbeat is None or datetime.fromisoformat(state["generated_at"]) - datetime.fromisoformat(cur["generated_at"]) <= heartbeat:
+                    return p, False
+        except (ValueError, KeyError, TypeError):
             pass
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
@@ -613,6 +617,44 @@ def local_session_id(cli_sid: str, base: Path | None = None) -> str:
     return cli_sid
 
 
+def reconcile(before: dict | None, after: dict) -> tuple[str, list[str]]:
+    """مطابقةُ العودة بعد المسح: لقطةُ ما قبل المسح (الملفُّ المحفوظ) مقابل ما يشتقّه الدفترُ وgit الآن (الحكمُ لهما).
+    يعيد («عودة سليمة»/«عودة ناقصة»، الفروق)؛ بلا لقطةٍ سابقةٍ لا حكمَ."""
+    if not before:
+        return "عودة ناقصة", ["لا لقطةَ سابقةٌ للمقارنة"]
+    issues: list[str] = []
+    now_held = {h["id"]: h for h in after.get("held_cards", [])}
+    for h in before.get("held_cards", []):
+        cur = now_held.get(h["id"])
+        if cur is None:
+            issues.append(f"{h['id']} لم تعد محجوزةً لك")
+        elif cur["state"] != h["state"]:
+            issues.append(f"{h['id']} تغيّرت من {h['state']} إلى {cur['state']}")
+    fb = ((before.get("work") or {}).get("focus") or {}).get("card")
+    fa = ((after.get("work") or {}).get("focus") or {}).get("card")
+    if fb and fa and fb != fa:
+        issues.append(f"التركيزُ تحوّل من {fb} إلى {fa}")
+    gb, ga = (before.get("work") or {}).get("git"), (after.get("work") or {}).get("git")
+    if gb and ga:
+        if gb["branch"] != ga["branch"]:
+            issues.append(f"الفرعُ تغيّر من {gb['branch']} إلى {ga['branch']}")
+        elif gb["head"] != ga["head"]:
+            issues.append(f"الرأسُ تغيّر من {gb['head']} إلى {ga['head']}")
+        elif gb["head"] == ga["head"] and set(gb.get("paths", [])) - set(ga.get("paths", [])):
+            issues.append("ملفّاتٌ معدَّلةٌ قبل المسح اختفت من الشجرة")
+    return ("عودة ناقصة" if issues else "عودة سليمة"), issues
+
+
+def log_return(num: str, verdict: str, issues: list[str], root: Path | None = None, now: datetime | None = None) -> None:
+    """سطرٌ في handover_notes/return_log.jsonl (للقياس) وملاحظةٌ على بطاقة التركيز؛ لا يُسقط شيئاً إن فشل."""
+    try:
+        p = state_path(num, root).with_name("return_log.jsonl")
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": _fmt(now or _now()), "num": num, "verdict": verdict, "issues": issues}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = None, titles=None) -> str:
     """يعيد JSON الخطاف (additionalContext) أو "" . لا يسقط الجلسةَ أبداً."""
     try:
@@ -644,7 +686,9 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         extra = session_identity.directory_lines() if hasattr(session_identity, "directory_lines") else []  # جلساتُ مجلّد delivery_manager_work لا يطبع لها session_identity
         if num == "0101":
             extra = extra[2:]  # قاعدةُ «أرسل إلى 0101» وبروتوكولُ الإحالة لغير المايسترو؛ دليلُ العناوين وحدَه لها
-        text = "\n".join([ident, *extra, render(state)])
+        verdict, issues = reconcile(state, derive(num, state.get("session_label", ""), now, root, cwd=cwd or None))
+        verdict_line = f"[مطابقة العودة مع الدفتر وgit] {verdict}" + ("؛ " + "؛ ".join(issues[:5]) if issues else "")
+        text = "\n".join([ident, *extra, render(state), verdict_line])
         if via_pending:
             text = "[مستنتج من ملف معلَّق: الجلسةُ مجهولةُ العنوان فحُسمت بعلامة مسحٍ معلَّقةٍ لهذه الشجرة]\n" + text
         for f in pend_files:  # استعمالٌ واحد
@@ -653,7 +697,8 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
                     f.unlink(missing_ok=True)
             except (OSError, ValueError):
                 pass
-        _log_injection(num, root, via_pending)
+        _log_injection(num, root, via_pending, verdict, issues)
+        log_return(num, verdict, issues, root, now)
         return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}, ensure_ascii=False)
     except Exception:  # noqa: BLE001
         return ""
@@ -672,9 +717,13 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
             return ""
         num = nums.pop()
         label = (load_state(num, root) or {}).get("session_label", "")
-        write_state(num, derive(num, label, cwd=cwd or None, root=root), root)
-    except Exception:  # noqa: BLE001
-        pass
+        write_state(num, derive(num, label, cwd=cwd or None, root=root), root, heartbeat=HEARTBEAT_AFTER)
+    except Exception as exc:  # noqa: BLE001
+        try:  # لا يسقط الجلسةَ، لكنّ الفشلَ يُسجَّل ليُعرف أنّ الخطّاف يعمل في شجرات worktree
+            with state_path("0000", root).with_name("stop_hook_errors.log").open("a", encoding="utf-8") as f:
+                f.write(f"{_fmt(_now())} {type(exc).__name__}: {str(exc)[:150]}\n")
+        except OSError:
+            pass
     return ""
 
 
