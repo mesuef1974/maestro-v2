@@ -42,7 +42,7 @@ DIRTY_MAX = 8
 PATH_RE = re.compile(r"^[\w./\-]{1,120}$")
 STALE_AFTER = timedelta(hours=24)  # حالةٌ أقدمُ لا تُحقن: الدفتر أصدق
 NEXT_DUE = timedelta(hours=1)  # قاعدةٌ ثابتة: التقييمُ التالي بعد ساعة
-SESSION_RE = re.compile(r"^\d{4}$")
+SESSION_RE = re.compile(r"^\d{4}(-[ء-ي])?$")  # رقمٌ أو رقمٌ فرعيّ مثل 0101-أ
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
 TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?\+03:00$")
 LABEL_RE = re.compile(r"^[\w ·\-]{1,60}$")
@@ -56,9 +56,10 @@ RULES = (  # قواعدُ حكمٍ ثابتة تُحمَل مع الحالة و�
     "الاعتمادُ من approval_check لا من هذا الملف",
     "استأنِف من work: focus ثمّ recent ثمّ git.dirty؛ وما غاب عنها فاقرأه من الدفتر",
 )
-TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "duties", "next_due", "rules"}
+TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "duties", "waiting", "next_due", "rules"}
 PENDING_TTL_S = 900  # علامةُ «مسح قيد الانتظار»: 15 دقيقةً ثمّ تُهمَل (W-20261024-005)
 DUTIES_MAX = 6
+WAITING_MAX = 8  # الإحالاتُ الصادرة المنتظَرة في الحالة
 INJECT_MARK = "حُقنت الحالةُ بعد المسح"
 DUTY_WHAT_RE = re.compile(r"^[\w ·\-]{1,60}$")
 
@@ -181,13 +182,18 @@ def derive(num: str, label: str = "", now: datetime | None = None, root: Path | 
                 break
 
     open_q: dict[int, dict] = {}
+    open_w: dict[int, dict] = {}
     for ev in _read_jsonl(base / "ledger" / "pending_replies.jsonl"):
         n = ev.get("n")
         if ev.get("kind") == "add" and ev.get("to") == num:
             open_q[n] = {"n": n, "at": ev.get("ts", "")}
+        elif ev.get("kind") == "add" and ev.get("from") == num and SESSION_RE.match(str(ev.get("to", ""))):
+            open_w[n] = {"n": n, "to": ev["to"], "at": ev.get("ts", "")}  # إحالةٌ صادرةٌ منتظَرٌ ردُّها
         elif ev.get("kind") == "done":
             open_q.pop(n, None)
+            open_w.pop(n, None)
     queue = sorted(open_q.values(), key=lambda q: q["at"])[-QUEUE_MAX:]
+    waiting = sorted(open_w.values(), key=lambda q: q["at"])[-WAITING_MAX:]
 
     counter = {}
     cp = base / "msg_counter.json"
@@ -216,6 +222,7 @@ def derive(num: str, label: str = "", now: datetime | None = None, root: Path | 
         "last_measure": {"counter": counter, "held_count": len(held), "open_queue": len(open_q)},
         "work": {"focus": focus, "recent": recent, "git": _git_info(cwd)},
         "duties": (load_duties(num, root) or {}).get("items", []),
+        "waiting": waiting,
         "next_due": _fmt(now + NEXT_DUE),
         "rules": list(RULES),
     }
@@ -288,6 +295,12 @@ def validate(state: dict) -> list[str]:
         errs.append("duties تجاوزت السقف")
     elif not all(_duty_ok(x) for x in d):
         errs.append("عنصرُ duties خارج المخطّط")
+    wt = state["waiting"]
+    if not isinstance(wt, list) or len(wt) > WAITING_MAX:
+        errs.append("waiting تجاوزت السقف")
+    elif not all(isinstance(x, dict) and set(x) == {"n", "to", "at"} and isinstance(x["n"], int) and SESSION_RE.match(str(x["to"]))
+                 and (x["at"] == "" or TS_RE.match(str(x["at"]))) for x in wt):
+        errs.append("عنصرُ waiting خارج المخطّط")
     if FORBIDDEN.search(str(state["session_label"])):  # الرموزُ والحالات مقيَّدةٌ بصيغتها؛ النصُّ الوحيد هو العنوان
         errs.append("كلمةٌ ممنوعة في session_label")
     for s in _strings({k: v for k, v in state.items() if k != "rules"}):
@@ -412,6 +425,22 @@ def find_pending(cwd: str, root: Path | None = None, now: datetime | None = None
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return (next(iter(valid)) if len(valid) == 1 else None), files
+
+
+def pending_markers(root: Path | None = None, now: datetime | None = None) -> dict[str, Path]:
+    """{الرقم: ملفُّ علامة المسح المعلَّق} للعلامات الصالحة غيرِ المنتهية (يستعملها wake_monitor لإيقاظ الجلسة الخاملة بعد المسح)."""
+    now = now or _now()
+    out: dict[str, Path] = {}
+    for f in sorted(state_path("0000", root).parent.glob("pending_clear_*.json")):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            if not (isinstance(d, dict) and set(d) == {"num", "cwd", "created_at", "ttl_s"} and SESSION_RE.match(str(d["num"])) and isinstance(d["ttl_s"], int)):
+                continue
+            if now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=d["ttl_s"]):
+                out[d["num"]] = f
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return out
 
 
 def _log_injection(num: str, root: Path | None, via_pending: bool) -> None:
@@ -541,6 +570,10 @@ def render(state: dict) -> str:
     if state.get("duties"):
         lines = [f"- {x['id']}: {x['what']}" + (f" (كلَّ {x['every_min']} دقيقة)" if x["every_min"] else "") for x in state["duties"]]
         out += "\n[واجباتٌ دائمةٌ سجّلتها الجلسةُ قبل المسح بأمرٍ موثَّق — أعِد تفعيلها فور الاستئناف ما لم يُلغِها المالك]\n" + "\n".join(lines)
+    if state.get("waiting"):
+        lines = [f"- #{x['n']} إلى {x['to']} منذ {x['at'][5:16]}" for x in state["waiting"]]
+        out += ("\n[إحالاتٌ صادرةٌ منتظَرٌ ردُّها قبل المسح — لا تُعِدها؛ تحقّق من pending_replies ثمّ تابِع ما تأخّر]\n"
+                + "\n".join(lines))
     return out
 
 
@@ -563,6 +596,23 @@ def main_confirmations(root: Path | None = None) -> Path:
     return main_root(root) / "owner_confirmations.md"
 
 
+def local_session_id(cli_sid: str, base: Path | None = None) -> str:
+    """معرّفُ الواجهة local_… للجلسة (الذي تُراسَل به) من معرّف CLI الذي يمرّره الخطّاف؛ وإلا فمعرّف CLI نفسُه."""
+    try:
+        import session_identity
+
+        for f in (base or session_identity.SESSIONS).glob("*/*/local_*.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if cli_sid and cli_sid in {d.get("cliSessionId"), *(d.get("priorCliSessionIds") or [])} and d.get("sessionId"):
+                return str(d["sessionId"])
+    except Exception:  # noqa: BLE001
+        pass
+    return cli_sid
+
+
 def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = None, titles=None) -> str:
     """يعيد JSON الخطاف (additionalContext) أو "" . لا يسقط الجلسةَ أبداً."""
     try:
@@ -574,7 +624,7 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         cwd, sid = hook.get("cwd", ""), str(hook.get("session_id", ""))
         title, cands = (titles or session_identity.app_title)(cwd, sid)
         # المعرّفُ الجديد لا يُكتب في ملف الجلسة قبل إطلاق الخطاف (جُرّب 2026-10-23): فإن اشترك المرشّحون في رقمٍ واحدٍ حُسم به
-        nums = {m.group(1) for m in (re.match(r"\s*(\d{4})\b", c) for c in ([title] if title else cands)) if m}
+        nums = {m.group(1) for m in (re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", c) for c in ([title] if title else cands)) if m}
         via_pending = False
         only, pend_files = find_pending(cwd, root, now) if cwd else (None, [])
         if len(nums) != 1:  # شجرةٌ مشتركة: يُحسم بعلامة «مسح قيد الانتظار» لا بالمعرّف الجديد المجهول (W-20261024-005)
@@ -588,7 +638,13 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         age = (now or _now()) - datetime.fromisoformat(state["generated_at"])
         if age > STALE_AFTER:
             return ""
-        text = render(state)
+        card_num = ("04" if not (main_root(root) / "role_cards" / f"{num}.md").exists() else num) if num.startswith("04") and "-" not in num else num  # 0702 جلسةٌ حيّةٌ مستقلّة ببطاقتها
+        card = main_root(root) / "role_cards" / f"{card_num}.md"
+        ident = f"هويّتك: الجلسة {num}؛ معرّف الجلسة للمراسلة {local_session_id(sid)}؛ ملفُّ حالتك المعياريّ handover_notes/state_{num}.json وتركيزك handover_notes/focus_{num}.json" + (f"؛ بطاقتك role_cards/{card_num}.md" if card.exists() else "")
+        extra = session_identity.directory_lines() if hasattr(session_identity, "directory_lines") else []  # جلساتُ مجلّد delivery_manager_work لا يطبع لها session_identity
+        if num == "0101":
+            extra = extra[2:]  # قاعدةُ «أرسل إلى 0101» وبروتوكولُ الإحالة لغير المايسترو؛ دليلُ العناوين وحدَه لها
+        text = "\n".join([ident, *extra, render(state)])
         if via_pending:
             text = "[مستنتج من ملف معلَّق: الجلسةُ مجهولةُ العنوان فحُسمت بعلامة مسحٍ معلَّقةٍ لهذه الشجرة]\n" + text
         for f in pend_files:  # استعمالٌ واحد
@@ -601,6 +657,25 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}, ensure_ascii=False)
     except Exception:  # noqa: BLE001
         return ""
+
+
+def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str:
+    """Stop: يجدّد ملفَّ حالة الجلسة بعد كلّ دورٍ (idempotent) حتى لا يُطلب منها كتابتُه برسالة. لا يسقط الجلسةَ أبداً."""
+    try:
+        hook = json.loads(stdin_text or "{}")
+        import session_identity
+
+        cwd, sid = hook.get("cwd", ""), str(hook.get("session_id", ""))
+        title, cands = (titles or session_identity.app_title)(cwd, sid)
+        nums = {m.group(1) for m in (re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", c) for c in ([title] if title else cands)) if m}
+        if len(nums) != 1:
+            return ""
+        num = nums.pop()
+        label = (load_state(num, root) or {}).get("session_label", "")
+        write_state(num, derive(num, label, cwd=cwd or None, root=root), root)
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -616,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument("--owner-quote", required=True)
             sp.add_argument("--skip-guard-quote", default="", help="نصُّ أمر المالك الصريح بتجاوز حارس focus (يُطابَق بـowner_confirmations.md)")
     sub.add_parser("hook")
+    sub.add_parser("stop-hook")
     gp = sub.add_parser("guard", help="يفحص حارسَ المسح دون كتابة")
     gp.add_argument("num")
     fp = sub.add_parser("focus", help="يحفظ تركيزَ الجلسة: بطاقةٌ وخطوة")
@@ -631,6 +707,11 @@ def main(argv: list[str] | None = None) -> int:
     dp.add_argument("--every", type=int, default=0, help="الدورةُ بالدقائق (0 = بلا دورة)")
     dp.add_argument("--what", default="")
     dp.add_argument("--owner-quote", default="")
+    wp = sub.add_parser("waiting", help="يدوّن إحالةً صادرةً منتظَرَ ردّها (تظهر في waiting بعد المسح)")
+    wp.add_argument("num")
+    wp.add_argument("--add", action="store_true", required=True)
+    wp.add_argument("--to", required=True)
+    wp.add_argument("--about", required=True)
     ca = sub.add_parser("clear_all", help="يُعدّ كلَّ الجلسات الحيّة للمسح ويطبع قائمةً جاهزة")
     ca.add_argument("--owner-quote", required=True)
     ca.add_argument("--skip-guard-quote", default="")
@@ -638,6 +719,9 @@ def main(argv: list[str] | None = None) -> int:
     ca.add_argument("--exclude", nargs="*", default=[])
     a = ap.parse_args(argv)
 
+    if a.cmd == "stop-hook":
+        cmd_stop_hook(sys.stdin.read())
+        return 0
     if a.cmd == "hook":
         out = cmd_hook(sys.stdin.read())
         if out:
@@ -657,6 +741,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{'جاهزة' if r['ok'] else 'مرفوضة'} {r['num']}" + ("" if r["ok"] else ": " + "؛ ".join(r["reasons"])))
         print(f"القائمةُ الجاهزة للمسح ({len(ready)}/{len(rows)}): " + " ".join(r["num"] for r in ready))
         return 0 if len(ready) == len(rows) else 6
+    if a.cmd == "waiting" and SESSION_RE.match(a.num):
+        if not SESSION_RE.match(a.to) or a.to == a.num or FORBIDDEN.search(a.about):
+            print("رُفض: وجهةٌ غيرُ صالحة أو وصفٌ بكلماتِ اعتمادٍ", file=sys.stderr)
+            return 3
+        import pending_replies
+
+        print(f"سُجّل #{pending_replies.add(a.to, a.about, from_=a.num)}")
+        return 0
     if a.cmd == "duties" and SESSION_RE.match(a.num):
         try:
             if a.add:
@@ -730,4 +822,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
     sys.exit(main())

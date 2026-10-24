@@ -398,3 +398,36 @@ def test_an_already_live_session_is_woken_even_when_the_cap_is_full():
     live = {f"{n:04d}" for n in (201, 301, 501, 601, 701, 801)}
     p = wm.plan(ev, CUR, DIR, live, verify=ok)
     assert list(p.wakes) == ["0201"] and not p.halted
+
+
+# ===== إيقاظ ما بعد المسح (W-20261025-001) =====
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+_NOW = datetime(2026, 10, 25, 12, 0, tzinfo=timezone(timedelta(hours=3)))
+
+
+def test_after_clear_wakes_idle_session_with_card_reading_message():
+    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, cleared={"0201": "x"})
+    assert p.wakes == {"0201": [(wm.CLEAR_ID, "pending_clear")]}
+    msg = wm.message_for("0201", p.wakes["0201"])
+    assert "role_cards/0201.md" in msg and "my_state.py 0201" in msg
+
+
+def test_after_clear_skips_live_or_outside_channel_or_unknown():
+    assert wm.stale_plan([], DIR, {"0201"}, _NOW, verify=ok, cleared={"0201": "x"}).wakes == {}
+    assert wm.stale_plan([], DIR, set(), _NOW, verify=ok, channel={"0301"}, cleared={"0201": "x"}).wakes == {}
+    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, cleared={"0999": "x"})
+    assert p.wakes == {} and p.skipped
+
+
+def test_after_clear_payload_needs_valid_number():
+    with pytest.raises(ValueError):
+        wm.payload(wm.CLEAR_ID, "pending_clear", "")
+    with pytest.raises(ValueError):
+        wm.payload(wm.CLEAR_ID, "pending_clear", "rm -rf")
+
+
+def test_after_clear_watch_lines_use_session_number():
+    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, cleared={"0201": "x"})
+    out = wm.watch_lines(p, DIR, set())
+    assert len(out) == 1 and "role_cards/0201.md" in out[0]
