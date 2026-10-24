@@ -151,6 +151,118 @@ def _git_info(cwd: str | None) -> dict | None:
     return {"branch": branch, "head": head, "dirty": len(lines), "paths": paths}
 
 
+OUTBOX_KEEP = 30  # أقصى عددٍ من المستقبِلين المحفوظين في صندوق الصادر
+NAME_NUM_RE = re.compile(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])")
+XSESSION_RE = re.compile(r'<cross-session-message[^>]*?from(?:-session)?="([^"]*)"(?:[^>]*?name="([^"]*)")?')
+
+
+def outbox_path(num: str, root: Path | None = None) -> Path:
+    return state_path(num, root).with_name(f"outbox_{num}.json")
+
+
+def _load_outbox(num: str, root: Path | None) -> dict:
+    try:
+        d = json.loads(outbox_path(num, root).read_text(encoding="utf-8"))
+        if isinstance(d, dict) and isinstance(d.get("sent"), dict) and isinstance(d.get("recv"), dict):
+            return d
+    except (OSError, ValueError):
+        pass
+    return {"transcript": "", "offset": 0, "sent": {}, "recv": {}}
+
+
+def _ts_doha(raw: str) -> str:
+    try:
+        return _fmt(datetime.fromisoformat(str(raw).replace("Z", "+00:00")).astimezone(DOHA))
+    except ValueError:
+        return ""
+
+
+def _id_to_num() -> dict[str, str]:
+    try:
+        import session_directory
+
+        return {e["id"]: n for n, e in session_directory.entries().items()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _is_send(item: object) -> bool:
+    return isinstance(item, dict) and item.get("type") == "tool_use" and (
+        item.get("name") == "SendMessage" or str(item.get("name", "")).endswith("__send_message"))
+
+
+def scan_transcript(num: str, transcript: str | Path, root: Path | None = None, ids: dict[str, str] | None = None) -> bool:
+    """يقرأ ما استجدّ في نصّ محادثة الجلسة (jsonl) ويحدّث صندوقَ الصادر handover_notes/outbox_NNNN.json:
+    آخرُ رسالةٍ صادرةٍ لكلّ جلسةٍ وآخرُ رسالةٍ واردةٍ منها. لا يعتمد على خطّافٍ جديدٍ ولا على عملٍ يدويّ، ويبقى بعد المسح
+    (نصُّ المحادثة يتبدّل بالمسح فلا يُعاد اشتقاقُ المنتظَر منه). يعيد هل تغيّر الملف."""
+    tp = Path(transcript)
+    box = _load_outbox(num, root)
+    start = box["offset"] if box.get("transcript") == str(tp) else 0
+    try:
+        size = tp.stat().st_size
+    except OSError:
+        return False
+    if size < start:
+        start = 0
+    ids = _id_to_num() if ids is None else ids
+    sent, recv = dict(box["sent"]), dict(box["recv"])
+
+    def who(name: str, sid: str) -> str | None:
+        m = NAME_NUM_RE.match(name or "")
+        return m.group(1) if m else ids.get(sid)
+
+    with tp.open("rb") as f:
+        f.seek(start)
+        data = f.read()
+    cut = data.rfind(b"\n") + 1  # سطرٌ ناقصٌ في الآخر يُترك للمرّة التالية
+    for line in data[:cut].splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        ts = _ts_doha(ev.get("timestamp", ""))
+        content = (ev.get("message") or {}).get("content")
+        if not ts:
+            continue
+        if ev.get("type") == "assistant" and isinstance(content, list):
+            for it in content:
+                if _is_send(it):
+                    inp = it.get("input") or {}
+                    to = who(str(inp.get("to", "")), str(inp.get("session_id") or inp.get("to") or ""))
+                    if to and to != num:
+                        sent[to] = max(sent.get(to, ""), ts)
+        elif ev.get("type") == "user":
+            text = content if isinstance(content, str) else " ".join(str(x.get("text", "")) for x in (content or []) if isinstance(x, dict))
+            for m in XSESSION_RE.finditer(text):
+                frm = who(m.group(2) or "", m.group(1))
+                if frm and frm != num:
+                    recv[frm] = max(recv.get(frm, ""), ts)
+    new = {"transcript": str(tp), "offset": start + cut,
+           "sent": dict(sorted(sent.items(), key=lambda kv: kv[1])[-OUTBOX_KEEP:]),
+           "recv": dict(sorted(recv.items(), key=lambda kv: kv[1])[-OUTBOX_KEEP:])}
+    if new == box:
+        return False
+    p = outbox_path(num, root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(new, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
+    return True
+
+
+def outbox_waiting(num: str, now: datetime, root: Path | None = None) -> list[dict]:
+    """إحالاتٌ صادرةٌ لم يَرِد بعدها ردٌّ من المستقبِل (n=0 يدلّ أنّها من الرسائل لا من pending_replies)، بلا ما تجاوز STALE_AFTER."""
+    box = _load_outbox(num, root)
+    out = []
+    for to, at in box["sent"].items():
+        if not (SESSION_RE.match(to) and TS_RE.match(at or "")):
+            continue
+        if box["recv"].get(to, "") >= at or now - datetime.fromisoformat(at) > STALE_AFTER:
+            continue
+        out.append({"n": 0, "to": to, "at": at})
+    return out
+
+
 def derive(num: str, label: str = "", now: datetime | None = None, root: Path | None = None,
            ledger_path: Path | None = None, cwd: str | None = None) -> dict:
     """يشتقّ الحالةَ من الدفتر وpending_replies وmsg_counter.json؛ لا يقرأ شيئاً من ذاكرة النموذج."""
@@ -194,6 +306,9 @@ def derive(num: str, label: str = "", now: datetime | None = None, root: Path | 
             open_q.pop(n, None)
             open_w.pop(n, None)
     queue = sorted(open_q.values(), key=lambda q: q["at"])[-QUEUE_MAX:]
+    for item in outbox_waiting(num, now, root):  # رسائلُ الجلسة الصادرة لا تمرّ على pending_replies: تُشتقّ من نصّ المحادثة (W-20261025-001)
+        if not any(w["to"] == item["to"] for w in open_w.values()):
+            open_w[-1 - len(open_w)] = item
     waiting = sorted(open_w.values(), key=lambda q: q["at"])[-WAITING_MAX:]
 
     counter = {}
@@ -575,7 +690,7 @@ def render(state: dict) -> str:
         lines = [f"- {x['id']}: {x['what']}" + (f" (كلَّ {x['every_min']} دقيقة)" if x["every_min"] else "") for x in state["duties"]]
         out += "\n[واجباتٌ دائمةٌ سجّلتها الجلسةُ قبل المسح بأمرٍ موثَّق — أعِد تفعيلها فور الاستئناف ما لم يُلغِها المالك]\n" + "\n".join(lines)
     if state.get("waiting"):
-        lines = [f"- #{x['n']} إلى {x['to']} منذ {x['at'][5:16]}" for x in state["waiting"]]
+        lines = [(f"- #{x['n']} إلى {x['to']}" if x["n"] else f"- رسالةٌ إلى {x['to']}") + f" منذ {x['at'][5:16]}" for x in state["waiting"]]
         out += ("\n[إحالاتٌ صادرةٌ منتظَرٌ ردُّها قبل المسح — لا تُعِدها؛ تحقّق من pending_replies ثمّ تابِع ما تأخّر]\n"
                 + "\n".join(lines))
     return out
@@ -634,6 +749,11 @@ def reconcile(before: dict | None, after: dict) -> tuple[str, list[str]]:
     fa = ((after.get("work") or {}).get("focus") or {}).get("card")
     if fb and fa and fb != fa:
         issues.append(f"التركيزُ تحوّل من {fb} إلى {fa}")
+    for key, label in (("waiting", "إحالةٌ صادرةٌ منتظَرة"), ("queue", "طلبٌ وارد")):  # معلَّقٌ في اللقطة لا يظهر بعد العودة = ناقص (W-20261025-001)
+        now_keys = {(x.get("n"), x.get("to")) for x in after.get(key, [])}
+        for x in before.get(key, []):
+            if (x.get("n"), x.get("to")) not in now_keys:
+                issues.append(f"{label} #{x.get('n')}" + (f" إلى {x['to']}" if x.get("to") else "") + " كانت معلَّقةً قبل المسح ولا تظهر الآن؛ تحقّق أنّها رُدّ عليها")
     gb, ga = (before.get("work") or {}).get("git"), (after.get("work") or {}).get("git")
     if gb and ga:
         if gb["branch"] != ga["branch"]:
@@ -653,6 +773,15 @@ def log_return(num: str, verdict: str, issues: list[str], root: Path | None = No
             f.write(json.dumps({"at": _fmt(now or _now()), "num": num, "verdict": verdict, "issues": issues}, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+def resume_head(state: dict) -> str:
+    """أوّلُ ما تقرؤه الجلسةُ بعد المسح: تركيزُها والمنتظَر ردُّه، قبل أيّ قائمةٍ أخرى (فلا تكتفي بعرض بطاقاتها الموجَّهة)."""
+    f = (state.get("work") or {}).get("focus")
+    lines = ["[استأنِف فوراً] " + (f"تركيزُك: {f['card']}" + (f" الخطوة {f['step']}" if f.get("step") else "") if f else "لا تركيزَ مُعلَناً؛ اقرأ بطاقتك")]
+    for x in state.get("waiting", []):
+        lines.append("  منتظَر: " + (f"#{x['n']} " if x["n"] else "رسالةٌ ") + f"إلى {x['to']} منذ {x['at'][5:16]}")
+    return "\n".join(lines)
 
 
 def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = None, titles=None) -> str:
@@ -688,7 +817,7 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
             extra = extra[2:]  # قاعدةُ «أرسل إلى 0101» وبروتوكولُ الإحالة لغير المايسترو؛ دليلُ العناوين وحدَه لها
         verdict, issues = reconcile(state, derive(num, state.get("session_label", ""), now, root, cwd=cwd or None))
         verdict_line = f"[مطابقة العودة مع الدفتر وgit] {verdict}" + ("؛ " + "؛ ".join(issues[:5]) if issues else "")
-        text = "\n".join([ident, *extra, render(state), verdict_line])
+        text = "\n".join([resume_head(state), ident, *extra, render(state), verdict_line])
         if via_pending:
             text = "[مستنتج من ملف معلَّق: الجلسةُ مجهولةُ العنوان فحُسمت بعلامة مسحٍ معلَّقةٍ لهذه الشجرة]\n" + text
         for f in pend_files:  # استعمالٌ واحد
@@ -717,6 +846,9 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
             return ""
         num = nums.pop()
         label = (load_state(num, root) or {}).get("session_label", "")
+        tpath = hook.get("transcript_path")
+        if tpath:
+            scan_transcript(num, tpath, root)
         write_state(num, derive(num, label, cwd=cwd or None, root=root), root, heartbeat=HEARTBEAT_AFTER)
     except Exception as exc:  # noqa: BLE001
         try:  # لا يسقط الجلسةَ، لكنّ الفشلَ يُسجَّل ليُعرف أنّ الخطّاف يعمل في شجرات worktree
