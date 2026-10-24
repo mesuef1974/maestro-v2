@@ -9,6 +9,8 @@
     session_state.py prepare-clear NNNN --owner-quote "<نصّ أمر المالك>"
                                           # يطابق الأمرَ بـowner_confirmations.md ثمّ يولّد ويتحقّق ويطبع تعليمة المسح لـ0101
     session_state.py restore NNNN         # يطبع الحالةَ موسومةً «بيانات» لا أوامر
+    session_state.py focus NNNN --card ID --step N   # يعلن تركيزَ الجلسة (بطاقةٌ في الدفتر وخطوة)
+    session_state.py guard NNNN           # حارسُ المسح: يفشل إن غاب focus معلَنٌ أو أقدمُ من آخر حدثٍ للجلسة وللجلسة بطاقةٌ محجوزة
     session_state.py hook < hook.json     # SessionStart: يحقن الحالةَ بعد المسح (source=startup|clear) إن وُجدت وكانت حديثة
 
 المسحُ نفسُه (`clear_session`) أداةُ التطبيق ويصدرها 0101 بأمر المالك؛ لا تمسح جلسةٌ نفسَها ولا يمسح السكربتُ شيئاً.
@@ -77,6 +79,11 @@ def _read_jsonl(p: Path) -> list[dict]:
         except ValueError:
             continue
     return out
+
+
+def _mine(ev: dict, num: str) -> bool:
+    d = ev.get("data", {})
+    return d.get("by") == num or (ev.get("kind") == "note" and str(d.get("text", "")).startswith(f"({num})"))
 
 
 def focus_path(num: str, root: Path | None = None) -> Path:
@@ -156,9 +163,7 @@ def derive(num: str, label: str = "", now: datetime | None = None, root: Path | 
     recent: list[dict] = []
     seen: set[str] = set()
     for ev in reversed(events):
-        d = ev.get("data", {})
-        mine = d.get("by") == num or (ev.get("kind") == "note" and str(d.get("text", "")).startswith(f"({num})"))
-        if mine and ev.get("id") not in seen and ID_RE.match(str(ev.get("id", ""))):
+        if _mine(ev, num) and ev.get("id") not in seen and ID_RE.match(str(ev.get("id", ""))):
             seen.add(ev["id"])
             recent.append({"id": ev["id"], "kind": str(ev.get("kind", "")), "at": ev.get("ts", "")})
             if len(recent) >= RECENT_MAX:
@@ -183,6 +188,12 @@ def derive(num: str, label: str = "", now: datetime | None = None, root: Path | 
         except (ValueError, TypeError):
             counter = {}
 
+    focus = _load_focus(num, root)
+    if focus is None:  # احتياطٌ: لم تُعلن الجلسةُ تركيزَها فيُستنتج من آخر حدثٍ لها ثمّ من أحدث بطاقةٍ تحجزها، ويُوسَم «مستنتج»
+        pick = recent[0] if recent else (held[0] if held else None)
+        if pick is not None and (pick["at"] == "" or TS_RE.match(pick["at"])):
+            focus = {"card": pick["id"], "step": 0, "at": pick["at"] or _fmt(now), "inferred": True}
+
     return {
         "role": num,
         "session_label": label or num,
@@ -192,7 +203,7 @@ def derive(num: str, label: str = "", now: datetime | None = None, root: Path | 
         "queue": queue,
         "held_cards": held[:HELD_MAX],
         "last_measure": {"counter": counter, "held_count": len(held), "open_queue": len(open_q)},
-        "work": {"focus": _load_focus(num, root), "recent": recent, "git": _git_info(cwd)},
+        "work": {"focus": focus, "recent": recent, "git": _git_info(cwd)},
         "next_due": _fmt(now + NEXT_DUE),
         "rules": list(RULES),
     }
@@ -252,7 +263,7 @@ def validate(state: dict) -> list[str]:
         errs.append("work خارج المخطّط")
     else:
         f = w["focus"]
-        if f is not None and not (isinstance(f, dict) and set(f) == {"card", "step", "at"} and ID_RE.match(str(f["card"])) and isinstance(f["step"], int) and TS_RE.match(str(f["at"]))):
+        if f is not None and not (isinstance(f, dict) and set(f) in ({"card", "step", "at"}, {"card", "step", "at", "inferred"}) and f.get("inferred", True) is True and ID_RE.match(str(f["card"])) and isinstance(f["step"], int) and TS_RE.match(str(f["at"]))):
             errs.append("work.focus خارج المخطّط")
         r = w["recent"]
         if not isinstance(r, list) or len(r) > RECENT_MAX or not all(isinstance(x, dict) and set(x) == {"id", "kind", "at"} and ID_RE.match(str(x["id"])) and ID_RE.match(str(x["kind"])) and (x["at"] == "" or TS_RE.match(str(x["at"]))) for x in r):
@@ -269,6 +280,25 @@ def validate(state: dict) -> list[str]:
     if len(json.dumps(state, ensure_ascii=False, indent=1).encode("utf-8")) > MAX_BYTES:
         errs.append(f"الحجمُ يتجاوز {MAX_BYTES} بايت")
     return errs
+
+
+def focus_guard(num: str, root: Path | None = None, ledger_path: Path | None = None) -> list[str]:
+    """حارسُ المسح (W-20261024-001): لجلسةٍ تحجز بطاقةً يجب أن يكون focus معلَناً وأحدثَ من آخر حدثٍ لها في الدفتر.
+    الاستنتاجُ الاحتياطيّ لا يُسقط الحارس: يحمي الحالةَ لا الإعلان."""
+    import ledger
+
+    base = main_root(root)
+    events = ledger.load_events(ledger_path or (base / "ledger" / "events.jsonl"))
+    items = ledger.reduce_state(events)
+    if not any(it.get("held_by") == num and it.get("state") not in ledger.RELEASING_STATES for it in items.values()):
+        return []
+    focus = _load_focus(num, root)
+    if focus is None:
+        return [f"لا focus معلَنٌ للجلسة {num}؛ أعلنه بـ: session_state.py focus {num} --card ID --step N"]
+    last = max((datetime.fromisoformat(ev["ts"]) for ev in events if _mine(ev, num) and ev.get("ts")), default=None)
+    if last is not None and datetime.fromisoformat(focus["at"]) < last:
+        return [f"focus الجلسة {num} أقدمُ من آخر حدثٍ لها في الدفتر ({_fmt(last)}؛ focus عند {focus['at']})؛ جدّده بـ focus"]
+    return []
 
 
 def _stable(state: dict, with_git: bool = True) -> dict:
@@ -380,7 +410,10 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument("--cwd", default="", help="شجرةُ عمل الجلسة لالتقاط فرعها وملفّاتها المعدَّلة")
         if name == "prepare-clear":
             sp.add_argument("--owner-quote", required=True)
+            sp.add_argument("--skip-guard-quote", default="", help="نصُّ أمر المالك الصريح بتجاوز حارس focus (يُطابَق بـowner_confirmations.md)")
     sub.add_parser("hook")
+    gp = sub.add_parser("guard", help="يفحص حارسَ المسح دون كتابة")
+    gp.add_argument("num")
     fp = sub.add_parser("focus", help="يحفظ تركيزَ الجلسة: بطاقةٌ وخطوة")
     fp.add_argument("num")
     fp.add_argument("--card", required=True)
@@ -395,6 +428,10 @@ def main(argv: list[str] | None = None) -> int:
     if not SESSION_RE.match(a.num):
         print("رقمُ جلسةٍ غيرُ صالح", file=sys.stderr)
         return 2
+    if a.cmd == "guard":
+        errs = focus_guard(a.num)
+        print("سليم" if not errs else "فشل: " + "؛ ".join(errs))
+        return 0 if not errs else 5
     if a.cmd == "focus":
         try:
             print(f"كُتب: {set_focus(a.num, a.card, a.step)}")
@@ -410,6 +447,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"رُفض: أمرُ المالك غيرُ موثَّق في owner_confirmations.md ({e})", file=sys.stderr)
                 return 3
             print(f"أمرُ المالك موثَّق: {found}")
+            gerrs = focus_guard(a.num)
+            if gerrs and a.skip_guard_quote:
+                try:
+                    print(f"تجاوزُ الحارس بأمر المالك: {check_owner_quote(a.skip_guard_quote)}")
+                    gerrs = []
+                except Exception as e:  # noqa: BLE001
+                    print(f"رُفض: أمرُ تجاوز الحارس غيرُ موثَّق في owner_confirmations.md ({e})", file=sys.stderr)
+                    return 3
+            if gerrs:
+                print("رُفض المسح (الحارس): " + "؛ ".join(gerrs), file=sys.stderr)
+                return 5
         label = a.label or (load_state(a.num) or {}).get("session_label", "")
         p, wrote = write_state(a.num, derive(a.num, label, cwd=a.cwd or None))
         print(f"{'كُتب' if wrote else 'بلا تغيير'}: {p}")

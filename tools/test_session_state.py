@@ -171,3 +171,51 @@ def test_git_info_paths_not_truncated(tmp_path):
     (tmp_path / "decisions.md").write_text("x", encoding="utf-8")
     g = ss._git_info(str(tmp_path))
     assert g["dirty"] == 1 and g["paths"] == ["decisions.md"]
+
+
+def test_inferred_focus_marked_and_overridden_by_declared(tree):
+    f = _gen(tree)["work"]["focus"]
+    assert f == {"card": "W-2", "step": 0, "at": "2026-10-23T12:30:00+03:00", "inferred": True}
+    assert ss.validate(_gen(tree)) == []
+    ss.set_focus("0108", "W-1", 3, root=tree)
+    f = _gen(tree)["work"]["focus"]
+    assert f["card"] == "W-1" and "inferred" not in f
+
+
+def test_inferred_flag_cannot_be_false_or_extra(tree):
+    s = _gen(tree)
+    s["work"]["focus"]["inferred"] = False
+    assert ss.validate(s) != []
+    s["work"]["focus"] = {"card": "W-1", "step": 1, "at": "2026-10-23T12:30:00+03:00", "extra": True}
+    assert ss.validate(s) != []
+
+
+def test_guard_refuses_without_declared_focus(tree):
+    errs = ss.focus_guard("0108", tree)
+    assert errs and "focus" in errs[0]
+
+
+def test_guard_refuses_stale_and_passes_when_fresh(tree):
+    fp = ss.focus_path("0108", tree)
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(json.dumps({"card": "W-1", "step": 1, "at": "2026-10-23T12:00:00+03:00"}), encoding="utf-8")
+    assert "أقدمُ" in ss.focus_guard("0108", tree)[0]  # آخر حدثٍ للجلسة 12:30
+    ss.set_focus("0108", "W-1", 2, root=tree)
+    assert ss.focus_guard("0108", tree) == []
+
+
+def test_guard_skips_session_without_held_card(tree):
+    assert ss.focus_guard("0999", tree) == []
+
+
+def test_prepare_clear_blocked_by_guard_unless_owner_override(tree, monkeypatch, capsys):
+    monkeypatch.setattr(ss, "ROOT", tree)
+    monkeypatch.setattr(ss, "check_owner_quote", lambda q: "سطر 1" if q in ("مسح", "تجاوز") else (_ for _ in ()).throw(ValueError("لا")))
+    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح"]) == 5
+    assert not ss.state_path("0108", tree).exists()  # الرفضُ قبل أي كتابة
+    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح", "--skip-guard-quote", "مزيّف"]) == 3
+    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح", "--skip-guard-quote", "تجاوز"]) == 0
+    assert ss.state_path("0108", tree).exists()
+    ss.set_focus("0108", "W-1", 1, root=tree)
+    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح"]) == 0
+    assert ss.main(["guard", "0108"]) == 0
