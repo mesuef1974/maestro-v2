@@ -100,6 +100,34 @@ class WatchOnceIntegration(unittest.TestCase):
         self.assertEqual(out[0]["code"], "pr_watch_dead")
 
 
+class MonitorOfMonitor(unittest.TestCase):
+    def setUp(self):
+        global wo
+        import watch_once as wo
+    DAY = datetime(2026, 9, 29, 9, 0, tzinfo=timezone.utc)      # 12:00 الدوحة
+    NIGHT = datetime(2026, 9, 29, 21, 30, tzinfo=timezone.utc)  # 00:30 الدوحة
+
+    def test_fresh_traces_give_no_alert(self):
+        ages = {"wake_monitor": 5.0, "flow_pump": 10.0, "pr_watch": 12.0}
+        self.assertEqual(wo.monitor_of_monitor_alerts(self.DAY, ages), [])
+
+    def test_stale_or_missing_trace_alerts_by_name(self):
+        ages = {"wake_monitor": 45.0, "flow_pump": None, "pr_watch": 1.0}
+        out = wo.monitor_of_monitor_alerts(self.DAY, ages)
+        self.assertEqual([a["code"] for a in out], ["monitor_silent", "monitor_silent"])
+        self.assertIn("45", out[0]["message"])
+        self.assertIn("لا أثرَ", out[1]["message"])
+
+    def test_boundary_and_night_silence(self):
+        self.assertEqual(wo.monitor_of_monitor_alerts(self.DAY, {"flow_pump": float(wo.MONITOR_STALE_MIN)}), [])
+        self.assertEqual(wo.monitor_of_monitor_alerts(self.NIGHT, {"flow_pump": 500.0}), [])
+
+    def test_live_ages_read_mtime_and_do_not_use_dead_loop_log(self):
+        out = wo.monitor_of_monitor_alerts(self.DAY)  # أعمارٌ حيّةٌ: لا استثناءَ حتى لو غابت الملفّات
+        self.assertTrue(all(a["code"] == "monitor_silent" for a in out))
+        self.assertNotIn("pr_watch_loop", "".join(w for _, _, w in wo.WATCHED_ARTIFACTS))
+
+
 def node(num, state, pos=1):
     return {"position": pos, "state": state, "pullRequest": {"number": num}}
 

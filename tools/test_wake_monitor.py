@@ -427,3 +427,36 @@ def test_changed_state_is_woken_despite_old_fingerprint():
     now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
     log = [{"ts": "2026-10-16T12:00:00+03:00", "wakes": {"0701": ["W-20261016-001"]}, "fps": [["W-20261016-001", "routed", "0701"]]}]
     assert wm.stale_plan(ev, DIR, set(), now, log=log, verify=ok).wakes
+
+
+# ---- W-20261024-007: الشروط العالقة المسمّاة من flow_pump ----
+def _pend(card, cond, owner, st="approved", ts="2026-10-16T13:00:00+03:00"):
+    return {"ts": ts, "owner": owner, "card": card, "cond": cond, "state": st}
+
+
+def test_pending_row_wakes_named_owner_with_payload_ok_format():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T13:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    p = wm.stale_plan(ev, DIR, set(), now, verify=lambda *_: False, pending=[_pend("W-20261016-001", "prepush", "0501")])
+    assert p.wakes == {"0501": [("W-20261016-001", "prepush")]}  # verify لا يمنع صفَّ pending (الحالةُ فيه رمزُ شرط)
+    assert wm.PAYLOAD_OK.match(wm.payload("W-20261016-001", "prepush"))
+
+
+def test_pending_row_ignored_when_card_state_changed_or_stale():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "pushed", "2026-10-16T13:00:00+03:00")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    assert wm.stale_plan(ev, DIR, set(), now, pending=[_pend("W-20261016-001", "prepush", "0501")]).wakes == {}
+
+
+def test_pending_wakes_reader_filters_old_bad_and_unnamed(tmp_path):
+    import json
+    from datetime import datetime
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    f = tmp_path / "p.jsonl"
+    rows = [_pend("W-1", "prepush", "0501"), _pend("W-2", "prepush", "0501", ts="2026-10-14T10:00:00+03:00"),
+            _pend("W-3", "bad cond!", "0501"), _pend("W-4", "prepush", "؟")]
+    f.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\nتالف\n", encoding="utf-8")
+    assert [r["card"] for r in wm.pending_wakes(now, f)] == ["W-1"]
+    assert wm.pending_wakes(now, tmp_path / "none.jsonl") == []

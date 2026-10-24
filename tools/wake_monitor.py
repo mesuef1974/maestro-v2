@@ -237,7 +237,23 @@ def read_log(path: Path = LOG) -> list[dict]:
     return out
 
 
-def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None) -> WakePlan:
+def pending_wakes(now: datetime, path: Path | None = None) -> list[dict]:
+    """صفوفُ ledger/pending_wakes.jsonl التي كتبتها flow_pump (شرطٌ عالقٌ باسم مالكه)؛ الأحدثُ من 24 ساعة فقط، والتالفُ يُهمَل."""
+    path = path or (ROOT / "ledger" / "pending_wakes.jsonl")
+    out: list[dict] = []
+    if not path.is_file():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+            if now - _dt(r["ts"]) <= timedelta(hours=24) and re.fullmatch(r"[a-z_]+", r["cond"]) and SESSION_NUM.match(r["owner"]):
+                out.append(r)
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, pending=()) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
     aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
     دالّةٌ نقيّةٌ إلّا ما يفعله verify. الحالةُ هي المُطلِق لا الحدث."""
@@ -276,6 +292,13 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
             continue
         target = sa.canonical(target, aliases)
         cands.setdefault(target, []).append((since[item_id], item_id, st))
+    # شروطٌ عالقةٌ سمّتها flow_pump (W-20261024-007): الرمزُ حروفٌ لاتينيّة فيطابق PAYLOAD_OK؛ والبطاقةُ يجب أن تبقى في حالتها
+    for r in pending:
+        it = items.get(r.get("card"))
+        if it is None or it.get("state") != r.get("state"):
+            continue
+        t = sa.canonical(r["owner"], aliases)
+        cands.setdefault(t, []).append((_dt(r["ts"]), r["card"], r["cond"]))
     for num in sorted(cands):
         if channel is not None and num not in channel:
             p.skipped.append((num, "خارج القناة"))
@@ -289,7 +312,7 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         fresh = [c for c in sorted(cands[num])
                  if (c[1], c[2], num) not in last_fp or now - last_fp[(c[1], c[2], num)] >= timedelta(hours=REPEAT_HOURS)]
         for _t, item_id, st in fresh[:STALE_PER_MSG]:
-            if verify(item_id, st):
+            if st in STALE_RULES and verify(item_id, st) or st not in STALE_RULES:
                 p.wakes.setdefault(num, []).append((item_id, st))
             else:
                 p.skipped.append((item_id, "فشل ground_truth: لا إرسال"))
@@ -417,7 +440,7 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
     if a.stale:
         now = datetime.now().astimezone()
         return stale_plan(events, directory, live_for(a), now, log=read_log(), channel=channel, sent=sender_count(a.sender),
-                          aliases=aliases)
+                          aliases=aliases, pending=pending_wakes(now))
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
@@ -440,7 +463,6 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     import session_directory as sd
 
-    hist = woken_history()
     if a.watch:
         seen: set = set()
         last_fp = read_fingerprint() if a.changed_only else ""

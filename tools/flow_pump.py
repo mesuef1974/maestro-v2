@@ -91,6 +91,67 @@ def approval_ok(card: str, head: str) -> bool:
     return p.returncode == 0
 
 
+#: (W-20261024-007) جدولٌ ثابتٌ شرطٌ عالقٌ ← مالكُ حلّه. «holder» = حاملُ البطاقة في الدفتر. الرمزُ حروفٌ لاتينيّةٌ صغيرة لأنّه يدخل حمولةَ الإيقاظ (PAYLOAD_OK).
+OWNER_BY_COND = {
+    "visual_evidence": "0502",   # دليلٌ بصريّ ناقص
+    "head_unapproved": "0101",   # رأسٌ بلا اعتمادٍ ثابت
+    "migrations": "0601",        # هجراتٌ/أمنٌ تمنع الآليّ: الدمجُ والنشر لـ0601
+    "pushed_no_pr": "holder",    # pushed بلا طلبٍ يُفتح: صاحبُ البطاقة
+    "prepush": "0501",           # إيصالُ prepush لا يُنتَج
+}
+PENDING = HERE.parent / "ledger" / "pending_wakes.jsonl"
+PENDING_DEDUPE_H = 6
+
+
+def owner_of(cond: str, item: dict) -> str:
+    who = OWNER_BY_COND[cond]
+    return str(item.get("held_by") or "") if who == "holder" else who
+
+
+def hand_off(cid: str, cond: str, item: dict, apply: bool, path: Path | None = None, now=None) -> str:
+    """يُنسب الشرطُ العالقُ إلى مالكه: يُكتب صفٌّ في pending_wakes.jsonl باسمه فيلتقطه wake_monitor، ويعيد وسمَ «[مالك=XXXX]» للسطر.
+    في العرض (apply=False) لا كتابة. لا يتكرّر صفُّ (بطاقة، شرط، حالة) خلال PENDING_DEDUPE_H ساعات. بلا مالكٍ معروفٍ يُوسَم «[مالك=؟]»."""
+    owner = owner_of(cond, item)
+    if not re.match(r"^\d{4}", owner):
+        return "[مالك=؟]"
+    if not apply:
+        return f"[مالك={owner}]"
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    path = path or PENDING
+    now = now or datetime.now().astimezone()
+    state = str(item.get("state") or "")
+    try:
+        rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()] if path.is_file() else []
+    except (OSError, ValueError):
+        rows = []
+    for r in rows:
+        try:
+            fresh = now - datetime.fromisoformat(r["ts"]) < timedelta(hours=PENDING_DEDUPE_H)
+        except (KeyError, ValueError, TypeError):
+            continue
+        if fresh and (r.get("card"), r.get("cond"), r.get("state")) == (cid, cond, state):
+            return f"[مالك={owner}]"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps({"ts": now.isoformat(timespec="seconds"), "owner": owner, "card": cid, "cond": cond, "state": state},
+                               ensure_ascii=False) + "\n")
+    except OSError:
+        return f"[مالك={owner}]"
+    return f"[مالك={owner}]"
+
+
+def approval_why(card: str, head: str) -> str:
+    """نصُّ approval_check لرأسٍ بلا اعتماد، ليُفرَّق الدليلُ البصريّ (0502) عن غياب الاعتماد (0101)؛ تعذّرُه = غيابُ اعتماد."""
+    try:
+        p = subprocess.run([sys.executable, str(HERE / "approval_check.py"), "card", card, "--head", head],
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+        return (p.stdout or "") + (p.stderr or "")
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
 def _sh(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
     """مشغّلُ أوامر gh (قابلٌ للحقن في الاختبار): (الرمز، الخرج؛ ومعه الخطأ عند الفشل)."""
     try:
@@ -114,7 +175,8 @@ def approve_pass(states: dict[str, dict], apply: bool) -> list[str]:
             out.append(f"{cid}: بلا رأسٍ معلَن في المذكّرات — لا نقل")
             continue
         if not approval_ok(cid, head):
-            out.append(f"{cid}: رأس {head} بلا اعتمادٍ ثابت (أو ينقصه دليلٌ بصريّ) — ينتظر")
+            cond = "visual_evidence" if "بصري" in approval_why(cid, head) else "head_unapproved"
+            out.append(f"{cid}: رأس {head} بلا اعتمادٍ ثابت (أو ينقصه دليلٌ بصريّ) — {hand_off(cid, cond, item, apply)}")
             continue
         if not apply:
             out.append(f"{cid}: رأس {head} معتمَد ← approved (عرض)")
@@ -436,7 +498,7 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             continue  # الإيصالُ قائم
         key = f"{cid}:{head[:8]}"
         if tried.get(key):
-            out.append(f"{cid}: prepush لم يُعَد للرأس {head[:8]} — {tried[key]} (يُعاد حين يتغيّر الرأس)")
+            out.append(f"{cid}: prepush لم يُعَد للرأس {head[:8]} — {tried[key]} (يُعاد حين يتغيّر الرأس) {hand_off(cid, 'prepush', items[cid], apply)}")
             continue
         if ran >= limit:
             out.append(f"{cid}: ⏸ prepush في الدورة التالية (الحدّ {limit} في الدورة)")
@@ -479,7 +541,7 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             pass
         tried[key] = why
         PREPUSH_ATTEMPTS.write_text(json.dumps(tried), encoding="utf-8")
-        out.append(f"{cid}: ✘ prepush لم يُنتج إيصالاً للرأس {head[:8]} — {why}: {tail}")
+        out.append(f"{cid}: ✘ prepush لم يُنتج إيصالاً للرأس {head[:8]} — {why}: {tail} {hand_off(cid, 'prepush', items[cid], apply)}")
         _log_once(f"prepush: {cid} {head[:8]} ✘ {why}")
     return out
 
@@ -640,7 +702,7 @@ def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None,
             elif item.get("branch") and item["branch"] in rmap:
                 out.append(f"{cid}: رأسُ الفرع البعيد {item['branch']} {rmap[item['branch']][:8]} يخالف رأسَ الاعتماد {want[:8]} — لا طلب")
             else:
-                out.append(f"{cid}: لا فرعَ بعيداً مسموحاً على الرأس {want[:8]} — لا طلب")
+                out.append(f"{cid}: لا فرعَ بعيداً مسموحاً على الرأس {want[:8]} — لا طلب {hand_off(cid, 'pushed_no_pr', item, apply)}")
             continue
         branch, full = cands[0]
         if any(p.get("headRefName") == branch or str(p.get("headRefOid") or "")[:8] == full[:8] for p in prs):
@@ -665,7 +727,7 @@ def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None,
             continue
         why = openpr_block(cid, full, files)
         if why:
-            out.append(f"{cid}: {branch} لا يُفتح آلياً — {why}")
+            out.append(f"{cid}: {branch} لا يُفتح آلياً — {why} {hand_off(cid, 'migrations', item, apply)}")
             continue
         line = approval_line(cid, want[:8], item)
         if line is None:

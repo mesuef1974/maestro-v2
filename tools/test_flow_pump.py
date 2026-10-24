@@ -7,6 +7,7 @@ import re
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -47,11 +48,14 @@ class ApprovePass(unittest.TestCase):
     def test_a_card_without_approval_proof_waits_and_is_never_moved(self):
         with (
             mock.patch.object(fp, "approval_ok", return_value=False),
+            mock.patch.object(fp, "approval_why", return_value="لا اعتماد"),
+            mock.patch.object(fp, "PENDING", Path(tempfile.mkdtemp()) / "p.jsonl"),
             mock.patch.object(fp.subprocess, "run") as run,
         ):
             lines = fp.approve_pass({"W-1": self.STATES["W-1"]}, apply=True)
         run.assert_not_called()
-        self.assertIn("ينتظر", lines[0])
+        self.assertNotIn("ينتظر", lines[0])  # يُسمّى المالكُ بدل «ينتظر» (W-20261024-007)
+        self.assertIn("[مالك=0101]", lines[0])
 
     def test_dry_run_reports_but_does_not_move(self):
         with (
@@ -1352,3 +1356,35 @@ def test_pr_body_names_only_its_own_card():
     """وصفُ الطلب يذكر بطاقتَه وحدها: رقمُ بطاقة المضخّة فيه كان يُوهم مضخّةَ التدفّق بتعارضٍ فترفض الطلب."""
     body = fp._pr_body("سطر الاعتماد", "W-20261013-004", {"problem": "م", "accept": "ق"})
     assert body.count("W-") == 1 and "W-20261013-004" in body
+
+
+class HandOff(unittest.TestCase):
+    """جدولُ شرط←مالك: يسمّي المالك، ويكتب صفَّ إيقاظٍ عند التطبيق فقط، ولا يكرّره خلال ست ساعات."""
+
+    def setUp(self):
+        self.path = Path(tempfile.mkdtemp()) / "pending_wakes.jsonl"
+        self.item = {"state": "approved", "held_by": "0408"}
+
+    def _rows(self):
+        return [json.loads(x) for x in self.path.read_text(encoding="utf-8").splitlines()] if self.path.is_file() else []
+
+    def test_owner_table(self):
+        for cond, owner in (("visual_evidence", "0502"), ("head_unapproved", "0101"), ("migrations", "0601"), ("prepush", "0501")):
+            self.assertEqual(fp.hand_off("W-1", cond, self.item, False, self.path), f"[مالك={owner}]")
+
+    def test_pushed_no_pr_goes_to_card_holder_and_unknown_is_marked(self):
+        self.assertEqual(fp.hand_off("W-1", "pushed_no_pr", self.item, False, self.path), "[مالك=0408]")
+        self.assertEqual(fp.hand_off("W-1", "pushed_no_pr", {"state": "approved"}, False, self.path), "[مالك=؟]")
+
+    def test_dry_run_writes_nothing(self):
+        fp.hand_off("W-1", "prepush", self.item, False, self.path)
+        self.assertEqual(self._rows(), [])
+
+    def test_apply_writes_row_once_within_six_hours(self):
+        t0 = datetime(2026, 10, 24, 10, 0).astimezone()
+        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0)
+        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0 + timedelta(hours=5))
+        self.assertEqual(len(self._rows()), 1)
+        self.assertEqual(self._rows()[0]["owner"], "0501")
+        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0 + timedelta(hours=7))
+        self.assertEqual(len(self._rows()), 2)
