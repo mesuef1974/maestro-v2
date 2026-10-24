@@ -36,9 +36,13 @@ def _now() -> datetime:
     return datetime.now(DOHA)
 
 
-def add(to: str, about: str, path: Path = FILE, now: datetime | None = None) -> int:
+def add(to: str, about: str, path: Path = FILE, now: datetime | None = None, from_: str = "") -> int:
+    """from_ (اختياري): الجلسةُ المنتظِرة، فتظهر في حقل waiting من حالتها (W-20261025-001)."""
     n = sum(1 for r in _rows(path) if r["kind"] == "add") + 1
-    _append({"kind": "add", "n": n, "ts": (now or _now()).isoformat(timespec="minutes"), "to": to, "about": about.strip()}, path)
+    row = {"kind": "add", "n": n, "ts": (now or _now()).isoformat(timespec="minutes"), "to": to, "about": about.strip()}
+    if from_:
+        row["from"] = from_
+    _append(row, path)
     return n
 
 
@@ -78,14 +82,14 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    a = sub.add_parser("add"); a.add_argument("--to", required=True); a.add_argument("--about", required=True)
+    a = sub.add_parser("add"); a.add_argument("--to", required=True); a.add_argument("--about", required=True); a.add_argument("--from", dest="from_", default="", help="الجلسةُ المنتظِرة (تُدوَّن في waiting)")
     sub.add_parser("list")
     o = sub.add_parser("overdue"); o.add_argument("--minutes", type=float, default=30.0)
     d = sub.add_parser("done"); d.add_argument("n", type=int); d.add_argument("--note", default="")
     k = sub.add_parser("asked"); k.add_argument("n", type=int)
     x = ap.parse_args()
     if x.cmd == "add":
-        print(f"سُجّل #{add(x.to, x.about)}")
+        print(f"سُجّل #{add(x.to, x.about, from_=x.from_)}")
     elif x.cmd in ("list", "overdue"):
         items = open_items() if x.cmd == "list" else overdue(x.minutes)
         for r in items:

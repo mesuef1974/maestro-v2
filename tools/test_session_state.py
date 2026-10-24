@@ -140,7 +140,7 @@ def test_main_confirmations_points_to_main_folder():
 def test_hook_ambiguous_candidates_same_number(tree):
     ss.write_state("0108", _gen(tree), tree)
     hook = json.dumps({"source": "startup", "cwd": "x", "session_id": "new"})
-    same = lambda c, i: (None, ["0108 · أ", "0108-ب · ب"])  # noqa: E731
+    same = lambda c, i: (None, ["0108 · أ", "0108 · ب"])  # noqa: E731
     assert "<state-data>" in ss.cmd_hook(hook, tree, NOW, same)
     mixed = lambda c, i: (None, ["0108 · أ", "0102 · ب"])  # noqa: E731
     assert ss.cmd_hook(hook, tree, NOW, mixed) == ""
@@ -381,3 +381,104 @@ def test_decisive_clear_again_injects_identity_and_duties_by_itself(tree):
     rows = ss.clear_all([{"num": "0108", "title": "0108 · التقييم", "tree": TREE}], root=tree, now=t2)
     assert rows[0]["ok"], rows
     assert "poll-ci" in _ctx(ss.cmd_hook(HOOK, tree, t2, UNKNOWN))
+
+
+# ===== حقل waiting وإيقاظ ما بعد المسح (W-20261025-001) =====
+def _tree_with_waiting(tree):
+    rows = [{"kind": "add", "n": 3, "ts": "2026-10-23T09:10+03:00", "to": "0501", "from": "0108"},
+            {"kind": "add", "n": 4, "ts": "2026-10-23T09:11+03:00", "to": "0601", "from": "0701"}]
+    with (tree / "ledger" / "pending_replies.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
+    return tree
+
+
+def test_waiting_lists_only_own_outgoing_open_referrals(tree):
+    s = _gen(_tree_with_waiting(tree))
+    assert s["waiting"] == [{"n": 3, "to": "0501", "at": "2026-10-23T09:10+03:00"}]
+    assert ss.validate(s) == []
+    assert "#3 إلى 0501" in ss.render(s)
+
+
+def test_waiting_validation_rejects_free_text(tree):
+    s = _gen(_tree_with_waiting(tree))
+    s["waiting"][0]["to"] = "اعتمد المالك"
+    assert ss.validate(s)
+
+
+def test_waiting_empty_by_default_and_not_rendered(tree):
+    s = _gen(tree)
+    assert s["waiting"] == [] and "إحالاتٌ صادرةٌ" not in ss.render(s)
+
+
+def test_pending_markers_only_valid_unexpired(tree):
+    ss.write_pending("0108", "D:/a", tree, NOW)
+    ss.write_pending("0201", "D:/b", tree, NOW - timedelta(hours=2))
+    assert set(ss.pending_markers(tree, NOW)) == {"0108"}
+
+
+def test_local_session_id_maps_cli_id_or_falls_back(tmp_path):
+    d = tmp_path / "a" / "b"
+    d.mkdir(parents=True)
+    (d / "local_x.json").write_text(json.dumps({"sessionId": "local_abc", "cliSessionId": "cli1", "priorCliSessionIds": ["cli0"]}), encoding="utf-8")
+    assert ss.local_session_id("cli1", tmp_path) == "local_abc"
+    assert ss.local_session_id("cli0", tmp_path) == "local_abc"
+    assert ss.local_session_id("zzz", tmp_path) == "zzz"
+
+
+def test_stop_hook_refreshes_state_and_never_raises(tree):
+    hook = json.dumps({"cwd": "x", "session_id": "s"})
+    one = lambda c, i: ("0108 · التقييم", [])  # noqa: E731
+    assert ss.cmd_stop_hook(hook, tree, one) == ""
+    assert ss.load_state("0108", tree)["role"] == "0108"
+    assert ss.cmd_stop_hook("not json", tree, one) == ""
+    assert ss.cmd_stop_hook(hook, tree, lambda c, i: (None, ["0108 · أ", "0102 · ب"])) == ""
+
+
+def test_waiting_command_records_from_and_rejects_forbidden(tree, monkeypatch):
+    import pending_replies as pr
+
+    monkeypatch.setattr(pr, "FILE", tree / "ledger" / "pending_replies.jsonl")
+    assert pr.add("0501", "x", path=tree / "ledger" / "pending_replies.jsonl", now=NOW, from_="0108") >= 1
+    rows = [json.loads(line) for line in (tree / "ledger" / "pending_replies.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert rows[-1]["from"] == "0108"
+
+
+class TestReconcileAndHeartbeat:
+    """W-20261025-001: نبضُ الختم ومطابقةُ العودة بعد المسح."""
+
+    def _st(self, held=(("W-1", "ready_for_review"),), branch="b", head="aaaa1111", focus="W-1"):
+        return {
+            "held_cards": [{"id": i, "state": s, "at": "x"} for i, s in held],
+            "work": {"focus": {"card": focus}, "git": {"branch": branch, "head": head, "dirty": 0, "paths": []}},
+            "queue": [], "waiting": [],
+        }
+
+    def test_same_state_is_sound(self):
+        v, issues = ss.reconcile(self._st(), self._st())
+        assert (v, issues) == ("عودة سليمة", [])
+
+    def test_missing_before_is_incomplete(self):
+        assert ss.reconcile(None, self._st())[0] == "عودة ناقصة"
+
+    def test_card_lost_or_changed_and_git_moved(self):
+        v, issues = ss.reconcile(self._st(), self._st(held=(), head="bbbb2222"))
+        assert v == "عودة ناقصة"
+        assert any("W-1" in i for i in issues) and any("الرأس" in i for i in issues)
+        v2, i2 = ss.reconcile(self._st(), self._st(held=(("W-1", "approved"),)))
+        assert v2 == "عودة ناقصة"
+        assert "approved" in i2[0]
+
+    def test_heartbeat_refreshes_only_when_old(self):
+        import tempfile
+        from datetime import datetime, timedelta, timezone
+        t0 = datetime(2026, 10, 25, 10, 0, tzinfo=timezone(timedelta(hours=3)))
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "handover_notes").mkdir()
+            st = ss.derive("0701", "t", now=t0, root=root, ledger_path=root / "e.jsonl")
+            ss.write_state("0701", st, root)
+            newer = dict(st, generated_at=(t0 + timedelta(minutes=5)).isoformat())
+            assert not (ss.write_state("0701", newer, root, heartbeat=timedelta(minutes=10))[1])
+            later = dict(st, generated_at=(t0 + timedelta(minutes=30)).isoformat())
+            assert (ss.write_state("0701", later, root, heartbeat=timedelta(minutes=10))[1])
+            assert not (ss.write_state("0701", later, root)[1])

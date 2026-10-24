@@ -62,6 +62,8 @@ DAILY_CAP = 60  # أقصى رسائل إيقاظٍ في 24 ساعة (حدُّ ا
 MAX_SESSIONS_PER_RUN = 5  # لا انفجارَ رسائل: أقدمُ خمسِ جلساتٍ في الدورة والباقي في الساعة التالية
 STALE_PER_MSG = 5  # أقدمُ خمس بطاقاتٍ لكلّ رسالة
 PAYLOAD = "{id} {state} — اقرأ: python tools/ledger.py show {id}"
+CLEAR_ID = "after_clear"  # معرّفٌ خاصٌّ لإيقاظ ما بعد المسح: لا بطاقةَ له
+CLEAR_MSG = "بعد المسح — اقرأ بطاقتك role_cards/{num}.md ثمّ شغّل: python tools/my_state.py {num}"
 PAYLOAD_OK = re.compile(r"^W-\d{8}-\d{3} [a-z_]+ — اقرأ: python tools/ledger\.py show W-\d{8}-\d{3}$")
 
 
@@ -88,7 +90,11 @@ def read_events(path: Path) -> list[dict]:
     return out
 
 
-def payload(item_id: str, state: str) -> str:
+def payload(item_id: str, state: str, num: str = "") -> str:
+    if item_id == CLEAR_ID:
+        if not SESSION_NUM.match(num):
+            raise ValueError("إيقاظُ ما بعد المسح بلا رقم جلسة")
+        return CLEAR_MSG.format(num=num)
     text = PAYLOAD.format(id=item_id, state=state)
     if not PAYLOAD_OK.match(text):
         raise ValueError(f"حمولةٌ خارج الصيغة المسموحة: {text!r}")
@@ -237,7 +243,7 @@ def read_log(path: Path = LOG) -> list[dict]:
     return out
 
 
-def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None) -> WakePlan:
+def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=()) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
     aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
     دالّةٌ نقيّةٌ إلّا ما يفعله verify. الحالةُ هي المُطلِق لا الحدث."""
@@ -287,8 +293,20 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
                 p.wakes.setdefault(num, []).append((item_id, st))
             else:
                 p.skipped.append((item_id, "فشل ground_truth: لا إرسال"))
+    for num in sorted(set(cleared)):  # جلسةٌ عليها علامةُ «مسح معلّق» ورُصدت خاملةً: تُوقَظ لتقرأ بطاقتها (W-20261025-001)
+        if num in live:
+            p.skipped.append((num, "علامةُ مسحٍ لجلسةٍ حيّةٍ تعمل: لا إيقاظ"))
+        elif channel is not None and num not in channel:
+            p.skipped.append((num, "خارج القناة"))
+        elif num not in directory:
+            p.skipped.append((num, f"لا معرّفَ للجلسة {num}"))
+        elif num in last_wake and now - last_wake[num] < timedelta(minutes=REWAKE_MIN):
+            p.skipped.append((num, f"أُوقظت قبل أقلّ من {REWAKE_MIN} دقيقة"))
+        else:
+            p.wakes.setdefault(num, []).append((CLEAR_ID, "pending_clear"))
+            since[CLEAR_ID + num] = now
     if len(p.wakes) > MAX_SESSIONS_PER_RUN:
-        oldest = sorted(p.wakes, key=lambda n: min(since[i] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
+        oldest = sorted(p.wakes, key=lambda n: min(since[i if i != CLEAR_ID else CLEAR_ID + n] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
         for num in [n for n in p.wakes if n not in oldest]:
             p.skipped.append((num, "يُؤجَّل إلى الدورة التالية (حدُّ الجلسات في الدورة)"))
             del p.wakes[num]
@@ -387,7 +405,7 @@ def live_for(a) -> set[str]:
 
 
 def message_for(session: str, rows: list[tuple[str, str]]) -> str:
-    return "\n".join(payload(i, s) for i, s in rows)
+    return "\n".join(payload(i, s, session) for i, s in rows)
 
 
 def watch_lines(p: WakePlan, directory: dict[str, str], seen: set) -> list[str]:
@@ -395,7 +413,7 @@ def watch_lines(p: WakePlan, directory: dict[str, str], seen: set) -> list[str]:
     ما أُعلن بالنصّ نفسِه لا يُعاد؛ لا خرجَ إن لم يتغيّر شيء. توقّفُ الخطّة (halted) يُعلن مرّةً بنصّه."""
     out = []
     for num, rows in sorted(p.wakes.items()):
-        text = " ؛ ".join(payload(i, s) for i, s in rows)
+        text = " ؛ ".join(payload(i, s, num) for i, s in rows)
         if (num, text) not in seen:
             seen.add((num, text))
             out.append(f"إيقاظ\t{num}\t{directory.get(num, '—')}\t{text}")
@@ -410,8 +428,10 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
     aliases = sa.number_map()
     if a.stale:
         now = datetime.now().astimezone()
+        import session_state
+
         return stale_plan(events, directory, live_for(a), now, log=read_log(), channel=channel, sent=sender_count(a.sender),
-                          aliases=aliases)
+                          aliases=aliases, cleared=session_state.pending_markers(ROOT, now))
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
