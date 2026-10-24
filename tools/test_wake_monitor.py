@@ -77,9 +77,15 @@ def _routed(holder, n=1):
     return ev
 
 
-def test_test_channel_wakes_only_the_two_receivers():
-    ch = wm.TEST_CHANNEL
-    assert ch == {"0701", "0301"}  # 0702 و0102 دُمجتا في 0701 و0103 (2026-10-21)، ثمّ 0103 ← 0301 بترقيم 01
+def test_no_test_channel_any_session_is_woken_by_default():
+    assert not hasattr(wm, "TEST_CHANNEL")
+    dirs = {"0701": "local_a", "0403": "local_b"}
+    out = wm.plan(_routed("0403"), CUR, dirs, set(), verify=ok)
+    assert list(out.wakes) == ["0403"]
+
+
+def test_channel_param_still_filters_when_given_explicitly():
+    ch = frozenset({"0701", "0301"})
     dirs = {**DIR, "0701": "local_a", "0403": "local_b"}
     ok_plan = wm.plan(_routed("0701"), CUR, dirs, set(), verify=ok, channel=ch)
     assert list(ok_plan.wakes) == ["0701"]
@@ -202,22 +208,23 @@ def test_stale_does_not_rewake_within_rewake_window():
     assert wm.stale_plan(ev, DIR, set(), now, log=log, verify=ok).wakes == {}
 
 
+CH = frozenset({"0701", "0301"})
 MERGED = {"0702": "0701", "0102": "0301", "0103": "0301", "0204": "0202", "0202": "0101"}
 
 
 def test_merged_holder_wakes_its_receiver_inside_the_channel():
     dirs = {"0701": "local_a", "0301": "local_c"}
-    p = wm.plan(_routed("0702"), CUR, dirs, set(), verify=ok, channel=wm.TEST_CHANNEL, aliases=MERGED)
+    p = wm.plan(_routed("0702"), CUR, dirs, set(), verify=ok, channel=CH, aliases=MERGED)
     assert p.wakes == {"0701": [("W-20261016-001", "routed")]}
-    q = wm.plan(_routed("0102"), CUR, dirs, set(), verify=ok, channel=wm.TEST_CHANNEL, aliases=MERGED)
+    q = wm.plan(_routed("0102"), CUR, dirs, set(), verify=ok, channel=CH, aliases=MERGED)
     assert list(q.wakes) == ["0301"], "الإحالةُ تسبق فحصَ القناة"
-    r = wm.plan(_routed("0103"), CUR, dirs, set(), verify=ok, channel=wm.TEST_CHANNEL, aliases=MERGED)
+    r = wm.plan(_routed("0103"), CUR, dirs, set(), verify=ok, channel=CH, aliases=MERGED)
     assert list(r.wakes) == ["0301"], "الرقمُ القديمُ للحوكمة يوقظ 0301"
 
 
 def test_without_aliases_merged_holder_is_outside_channel_and_never_woken():
     dirs = {"0701": "local_a", "0702": "local_b"}
-    p = wm.plan(_routed("0702"), CUR, dirs, set(), verify=ok, channel=wm.TEST_CHANNEL)
+    p = wm.plan(_routed("0702"), CUR, dirs, set(), verify=ok, channel=CH)
     assert p.wakes == {} and "خارج قناة التجربة" in p.skipped[0][1]
 
 
@@ -248,7 +255,7 @@ def test_make_plan_passes_registry_aliases(monkeypatch):
     monkeypatch.setattr(wm, "stale_plan", lambda *a, **k: seen.setdefault("stale", k))
     wm.make_plan(argparse.Namespace(all=False, stale=False, sender="0701"), [], "", {})
     wm.make_plan(argparse.Namespace(all=True, stale=True, sender="0701"), [], "", {})
-    assert seen["plan"]["aliases"] == {"0702": "0701"} and seen["plan"]["channel"] == wm.TEST_CHANNEL
+    assert seen["plan"]["aliases"] == {"0702": "0701"} and seen["plan"]["channel"] is None
     assert seen["stale"]["aliases"] == {"0702": "0701"} and seen["stale"]["channel"] is None
 
 
@@ -398,3 +405,25 @@ def test_an_already_live_session_is_woken_even_when_the_cap_is_full():
     live = {f"{n:04d}" for n in (201, 301, 501, 601, 701, 801)}
     p = wm.plan(ev, CUR, DIR, live, verify=ok)
     assert list(p.wakes) == ["0201"] and not p.halted
+
+
+def test_daily_cap_follows_message_quota():
+    assert wm.DAILY_CAP == wm.msg_counter.LIMIT // 3 and wm.DAILY_CAP > 60
+
+
+def test_unchanged_card_fingerprint_is_not_rewoken_until_repeat_window():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    log = [{"ts": "2026-10-16T12:00:00+03:00", "wakes": {"0701": ["W-20261016-001"]}, "fps": [["W-20261016-001", "approved", "0701"]]}]
+    assert wm.stale_plan(ev, DIR, set(), now, log=log, verify=ok).wakes == {}
+    later = datetime.fromisoformat("2026-10-17T13:00:00+03:00")
+    assert wm.stale_plan(ev, DIR, set(), later, log=log, verify=ok).wakes  # مرّت REPEAT_HOURS
+
+
+def test_changed_state_is_woken_despite_old_fingerprint():
+    from datetime import datetime
+    ev = [created("W-20261016-001", held="0701"), state("W-20261016-001", "approved", "2026-10-16T10:00:00+03:00", held_by="0701")]
+    now = datetime.fromisoformat("2026-10-16T14:00:00+03:00")
+    log = [{"ts": "2026-10-16T12:00:00+03:00", "wakes": {"0701": ["W-20261016-001"]}, "fps": [["W-20261016-001", "routed", "0701"]]}]
+    assert wm.stale_plan(ev, DIR, set(), now, log=log, verify=ok).wakes
