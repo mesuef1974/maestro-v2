@@ -1,0 +1,3 @@
+#!/bin/sh
+# خطاف pre-push (W-20261025-002): قفلُ الرأس المعتمَد. التثبيت في مستودعٍ: ضعه في .git/hooks/ أو اضبط core.hooksPath على هذا المجلّد.
+exec python "${MAESTRO_TOOLS:-C:/Users/mesue/delivery_manager_work/tools}/prepush_head_lock.py"

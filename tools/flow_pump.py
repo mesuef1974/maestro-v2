@@ -44,6 +44,7 @@ sys.path.insert(0, str(HERE))
 import approval_check as ac  # noqa: E402
 import ledger  # noqa: E402
 import ledger_sync  # noqa: E402
+import pump_health  # noqa: E402
 import push_approved  # noqa: E402
 
 HEAD_RE = re.compile(r"(?:(?:بالرأس|للرأس|الرأس)\s+|[@＠]\s*)([0-9a-f]{8,40})")
@@ -1050,6 +1051,16 @@ def _run(argv=None) -> int:
     orig_move = ledger.move  # ledger_sync لا يمرّر by؛ يسجّلها المضخّة باسم 0101 (مسجِّلٌ مسموح لـmerged/published)
     ledger.move = lambda *args, **kw: orig_move(*args, **{"by": SENDER, **kw})
     rc = ledger_sync.cycle(a.apply, 80)
+    print("— صحة المضخّة (تصعيد الركود) —")
+    try:
+        evs = ledger.load_events()
+        st = ledger.reduce_state(evs)
+        for line in pump_health.escalation_pass({c: v for c, v in st.items() if c not in a.skip}, a.apply):
+            print("تصعيد: " + line)
+        if a.apply and pump_health.write_daily(st, evs):
+            print("صحة: كُتبت لقطةُ اليوم")
+    except Exception as exc:  # الرصدُ لا يُسقط الدورة
+        print(f"صحة المضخّة: تعذّر ({exc})")
     if a.apply:
         from datetime import datetime
 

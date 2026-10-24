@@ -202,6 +202,17 @@ class OffSwitch(unittest.TestCase):
         self.assertEqual(fp.OFF.read_text(), "حرجٌ")
 
 
+_ENV = mock.patch.dict(os.environ, {"LEDGER_PATH": str(Path(tempfile.mkdtemp()) / "events.jsonl")})
+
+
+def setUpModule():  # لقطةُ صحة المضخّة (--apply) لا تلمس الدفتر الحيّ
+    _ENV.start()
+
+
+def tearDownModule():
+    _ENV.stop()
+
+
 class PublishStage(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())

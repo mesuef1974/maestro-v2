@@ -296,7 +296,7 @@ def add_item(source: str, problem_type: str, problem: str, impact: str, accept: 
              files: list[str] | None = None, urgent: bool = False, path=None, scores: dict | None = None,
              start: str = "", priority: str = "", held_by: str = "", origin: str | None = None,
              owner_order: str = "", parent: str = "", evidence: str = "", confirmations_path=None,
-             enforce_origin: bool | None = None) -> str:
+             enforce_origin: bool | None = None, branch: str = "") -> str:
     if source not in SOURCES:
         raise LedgerError(f"مصدرٌ غيرُ معروف: {source} (المسموح: {', '.join(SOURCES)})")
     if priority not in PRIORITIES:
@@ -312,6 +312,9 @@ def add_item(source: str, problem_type: str, problem: str, impact: str, accept: 
     if held_by and held_by != "-":
         data["held_by"] = check_session(held_by)
     events = load_events(path)
+    if branch:
+        check_branch_free(reduce_state(events), "", branch)
+        data["branch"] = branch
     # الحارسُ على الدفتر الحقيقيّ دائماً مهما كان المستدعي؛ ودفاترُ الاختبار المؤقّتة تطلبه صراحةً
     if enforce_origin if enforce_origin is not None else _is_real_ledger(path):
         data.update(check_origin(source, origin, owner_order, parent, evidence, [problem, impact, accept], events,
@@ -332,6 +335,31 @@ def check_session(value: str) -> str:
     if not SESSION_RE.match(value):
         raise LedgerError("--held-by رقمُ جلسةٍ من أربع خانات (مثل 0402) أو «-» للتصفير")
     return value
+
+
+#: حالاتٌ يُفرَج فيها عن الفرع: لا بطاقةَ حيّةً عليه بعدها (W-20261025-002، البند 1)
+BRANCH_FREE_STATES = RELEASING_STATES | {"merged"}
+
+
+def check_branch_free(items: dict[str, dict], item_id: str, branch: str | None) -> None:
+    """بطاقةٌ حيّةٌ واحدةٌ على الفرع (W-20261025-002): بطاقتان على فرعٍ واحد تُبطل إحداهما اعتمادَ الأخرى بإيداعها (حادثة 007/016)؛
+    يُرفض ربطُ بطاقةٍ بفرعٍ عليه بطاقةٌ غيرُ منتهية، ويُسمّى الموجودُ منها. تُغلق الأولى ثمّ يُقبل."""
+    if not branch:
+        return
+    live = sorted(k for k, v in items.items() if k != item_id and v.get("branch") == branch and v.get("state") not in BRANCH_FREE_STATES)
+    if live:
+        raise LedgerError(f"على الفرع «{branch}» بطاقةٌ حيّةٌ أصلاً: {'، '.join(live)} — أغلِقها (closed/deferred) أو اندمجت قبل ربط بطاقةٍ ثانية")
+
+
+def check_head_lock(item: dict, state: str, push_head: str | None) -> None:
+    """قفلُ الرأس (W-20261025-002، البند 2): تدوينُ pushed برأسٍ يخالف الرأسَ المعتمَد يُرفض؛ المنفذُ الوحيد waive-head الموقّع من 0501
+    (ينقل approved_head إلى الرأس الجديد فيتطابقان). البطاقةُ بلا اعتماد أو بلا رأسٍ مدوَّن لا يسري عليها."""
+    approved = (item.get("approved_head") or "").strip()
+    if state != "pushed" or not approved or not push_head:
+        return
+    n = min(len(approved), len(push_head))
+    if approved[:n] != push_head[:n]:
+        raise LedgerError(f"قفلُ الرأس: الرأسُ المدفوع {push_head[:8]} يخالف الرأسَ المعتمَد {approved[:8]} — الاعتمادُ لا يرثه إيداعٌ لاحق (waive-head من 0501 وحدَها)")
 
 
 def remote_branch_head(branch: str, repo: str | None = None) -> str | None:
@@ -987,6 +1015,9 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     if pump_note:
         print(pump_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{pump_note}"
+    check_head_lock(items[item_id], state, push_head)
+    if branch:
+        check_branch_free(items, item_id, branch)
     history = {e["data"].get("state") for e in load_events(path) if e["id"] == item_id and e["kind"] == "state"}
     spec_warning = check_spec_gate(items[item_id], state, history, waive_spec)
     if waive_spec and state in ("routed", "in_progress") and spec_missing(items[item_id]) and (
@@ -1032,6 +1063,8 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
             note = f"{note + ' — ' if note else ''}استثناءُ فحص البعيد: {waive_remote_check}"
         else:
             extra["branch"] = check_remote_push(branch or items[item_id].get("branch"), push_head, remote_lookup)
+    if branch and state != "pushed":
+        extra["branch"] = branch  # ربطُ البطاقة بفرعها قبل الدفع (البند 1)
     if held_by is not None:
         extra["held_by"] = "" if held_by == "-" else held_by
     if state == "ready_for_review" and head_now and HEAD_RE.match(head_now):
@@ -1604,8 +1637,9 @@ def main() -> None:
     a.add_argument("--owner-order", default="", help="لـowner-order وdiscussion: نصُّ أمر المالك الحرفيّ بإنشائها كما في owner_confirmations.md")
     a.add_argument("--parent", default="", help="لـdefect: البطاقةُ التي اكتُشف العيبُ أثناءها")
     a.add_argument("--evidence", default="", help="لـdefect: موضعُ العيب مسار:سطر")
+    a.add_argument("--branch", default="", help="الفرعُ الذي يعمل عليه التنفيذ؛ يُرفض إن كانت عليه بطاقةٌ حيّة (W-20261025-002)")
     m = sub.add_parser("move"); m.add_argument("id"); m.add_argument("state"); m.add_argument("--note"); m.add_argument("--by", help="رقمُ جلستك (0501/0101/0601…)؛ يُسجَّل مع الحالة"); m.add_argument("--head", help="للاعتماد: رأسُ الإيداع المعاين (sha8)؛ ولـpushed: يُقارَن بالبعيد")
-    m.add_argument("--branch", help="لـpushed: الفرعُ المتحقَّق من وجوده على البعيد"); m.add_argument("--waive-remote-check", help="استثناءٌ مسجَّل لفحص البعيد (السبب)")
+    m.add_argument("--branch", help="لـpushed: الفرعُ المتحقَّق من وجوده على البعيد؛ ولغيره: يربط البطاقةَ بفرعها (بطاقةٌ حيّةٌ واحدةٌ للفرع)"); m.add_argument("--waive-remote-check", help="استثناءٌ مسجَّل لفحص البعيد (السبب)")
     m.add_argument("--held-by", help="الجلسةُ الحاجزة للبطاقة؛ «-» للتصفير")
     m.add_argument("--waive-spec", help="استثناءٌ مسجَّل لبوّابة المواصفة الكاملة (السبب)")
     m.add_argument("--waive-wip", help="استثناءٌ مسجَّل لحدِّ العمل الجاري: بطاقةٌ واحدةٌ جاريةٌ للجلسة (السبب)")
@@ -1652,7 +1686,7 @@ def main() -> None:
         if args.cmd == "add":
             print(add_item(args.source, args.type, args.problem, args.impact, args.accept, args.files, args.urgent,
                            start=args.start, priority=args.priority, held_by=args.held_by or "", origin=args.origin,
-                           owner_order=args.owner_order, parent=args.parent, evidence=args.evidence))
+                           owner_order=args.owner_order, parent=args.parent, evidence=args.evidence, branch=args.branch))
         elif args.cmd == "move":
             move(args.id, args.state, note=args.note, by=args.by, head=args.head, branch=args.branch,
                  waive_remote_check=args.waive_remote_check, held_by=args.held_by, waive_spec=args.waive_spec, waive_wip=args.waive_wip, preflight_repo=args.preflight_repo, waive_preflight=args.waive_preflight, premerge_sha=args.premerge_sha, head_now=args.head_now, waive_pump_only=args.waive_pump_only); print("ok")
