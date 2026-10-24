@@ -171,6 +171,29 @@ def test_the_receipt_must_be_ok_and_for_the_same_head(tmp_path):
         raise AssertionError("بلا إيصالٍ لا دفع")
 
 
+def test_exemption_needs_an_explicit_flag_and_a_repo_without_prepush_tool(tmp_path):
+    """(W-20261024-007) الافتراضيُّ لا إعفاء؛ والإعفاءُ يلزمه معاملٌ صريحٌ وغيابُ scripts/prepush_check.py."""
+    repo = tmp_path / "tools_repo"
+    repo.mkdir()
+    g = receipt_git(tmp_path)
+    for kw in ({}, {"exempt_no_prepush": False}):
+        try:
+            pa.guard("W-1", "claude/x", str(repo), ITEMS, g, ok, require_receipt=True, **kw)
+        except pa.PushRefused as exc:
+            assert "prepush" in str(exc)
+        else:
+            raise AssertionError("بلا معاملٍ صريحٍ لا إعفاء")
+    assert pa.guard("W-1", "claude/x", str(repo), ITEMS, g, ok, require_receipt=True, exempt_no_prepush=True) == HEAD
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "prepush_check.py").write_text("", encoding="utf-8")
+    try:
+        pa.guard("W-1", "claude/x", str(repo), ITEMS, g, ok, require_receipt=True, exempt_no_prepush=True)
+    except pa.PushRefused:
+        pass
+    else:
+        raise AssertionError("مستودعٌ يحمل أداةَ prepush لا يُعفى")
+
+
 def test_guard_still_rejects_a_head_that_differs_within_the_shared_prefix():
     seven = {"W-1": {"state": "approved", "approved_head": "aaaaaab"}}
     try:

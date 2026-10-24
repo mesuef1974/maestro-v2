@@ -599,6 +599,10 @@ class PushPass(unittest.TestCase):
         fp.ledger.move(self.card, "approved", path=self.path, note="اعتمد المالك على 8500", head="aaaaaaaa", by="0501", waive_spec="اختبار")
         self.gitdir = self.tmp / "gitdir"
         self.gitdir.mkdir()
+        self.has_tool = True  # المستودعُ الوهميُّ منصّةٌ تحمل scripts/prepush_check.py ما لم يُقل غيرُه
+        p = mock.patch.object(fp.push_approved, "has_prepush_tool", lambda repo: self.has_tool)
+        p.start()
+        self.addCleanup(p.stop)
 
     def git(self, branch):
         head = "a" * 40
@@ -641,6 +645,12 @@ class PushPass(unittest.TestCase):
         lines, pushes, item = self.run_pass(receipt=False)
         self.assertEqual((pushes, item["state"]), ([], "approved"))
         self.assertIn("prepush", lines[0])
+
+    def test_a_repo_without_prepush_tool_is_exempt_from_the_receipt_explicitly(self):
+        """(W-20261024-007، حالة 008) مستودعُ أدواتٍ بلا scripts/prepush_check.py لا يعلق دفعُه للأبد."""
+        self.has_tool = False
+        lines, pushes, item = self.run_pass(receipt=False)
+        self.assertEqual((pushes, item["state"]), ([("push", "origin", "HEAD:refs/heads/w20261020-001-x")], "pushed"))
 
     def test_other_branches_are_never_pushed(self):
         for branch in ("main", "feature/x"):
@@ -787,8 +797,20 @@ class PrepushPass(unittest.TestCase):
         for git in (self.git(dirty=" M x.py\n"), self.git(branch="main"), self.git(origin="https://github.com/x/maestro-v2.git"),
                     self.git(head="b" * 40)):
             lines, docker = self.run_pass(git=git)
-            self.assertEqual((lines, docker.calls), ([], []))
+            if "maestro-v2" in git(".", "remote")[1]:  # غيرُ المنصّة: سطرٌ صريحٌ لا تخطٍّ صامت (W-20261024-007)
+                self.assertEqual(len(lines), 1)
+                self.assertIn("غيرُ المنصّة", lines[0])
+                self.assertEqual(docker.calls, [])
+            else:
+                self.assertEqual((lines, docker.calls), ([], []))
         self.assertIsNone(self.receipt())
+
+    def test_a_platform_tree_without_prepush_tool_says_so_instead_of_silent_skip(self):
+        (self.tree / "scripts" / "prepush_check.py").unlink()
+        lines, docker = self.run_pass()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("prepush_check.py", lines[0])
+        self.assertEqual(docker.calls, [])
 
     def test_head_changed_during_the_run_gives_no_receipt(self):
         heads = iter(["a" * 40, "b" * 40])

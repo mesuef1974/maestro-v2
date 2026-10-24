@@ -307,7 +307,7 @@ def push_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = No
             for line in deferred:
                 _log_once("دفع: " + line)
     results = push_watch.scan(items, where_repos, apply, path, by=SENDER,
-                              branch_re=push_approved.PUMP_BRANCH_RE, require_receipt=True, **kw) if items else []
+                              branch_re=push_approved.PUMP_BRANCH_RE, require_receipt=True, exempt_no_prepush=True, **kw) if items else []
     out, quiet = list(deferred), 0
     for r in results:
         if r["status"] == "skipped" and push_watch.QUIET in r["reason"]:
@@ -421,7 +421,10 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
     for cid in sorted(items):
         want = items[cid]["approved_head"].strip()
         tree, _why = push_watch.find_tree(cid, want, where_repos, git, push_approved.PUMP_BRANCH_RE)
-        if tree is None or not _is_platform(tree["path"], git):
+        if tree is None:
+            continue
+        if not _is_platform(tree["path"], git):
+            out.append(f"{cid}: مستودعٌ غيرُ المنصّة ({Path(tree['path']).name}) — بلا إيصال prepush ولا يُشترط (إعفاءٌ صريح، W-20261024-007)")
             continue
         path = tree["path"]
         rc, head = git(path, "rev-parse", "HEAD")
@@ -438,7 +441,8 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
         if ran >= limit:
             out.append(f"{cid}: ⏸ prepush في الدورة التالية (الحدّ {limit} في الدورة)")
             continue
-        if not (Path(path) / "scripts" / "prepush_check.py").is_file():
+        if not push_approved.has_prepush_tool(path):
+            out.append(f"{cid}: لا scripts/prepush_check.py في الشجرة — إيصال prepush غيرُ ممكنٍ هنا ولا يُشترط")
             continue
         if not apply:
             out.append(f"{cid}: يُشغَّل prepush في الحاوية للرأس {head[:8]} (عرض)")
