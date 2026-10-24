@@ -147,7 +147,7 @@ def main(argv=None) -> int:
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--interval", type=int, default=300)
     ap.add_argument("--dry-run", action="store_true", help="عرضٌ بلا دفع")
-    ap.add_argument("--by", default="0701", help="رقمُ الجلسة المشغِّلة (للدفتر؛ 0702 مدمَجةٌ في 0701)")
+    ap.add_argument("--by", default="0701", help="رقمُ الجلسة المشغِّلة (للدفتر)")
     a = ap.parse_args(argv)
     if not (a.once or a.loop):
         ap.error("اختر --once أو --loop")
