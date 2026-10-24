@@ -12,6 +12,10 @@
     session_state.py focus NNNN --card ID --step N   # يعلن تركيزَ الجلسة (بطاقةٌ في الدفتر وخطوة)
     session_state.py guard NNNN           # حارسُ المسح: يفشل إن غاب focus معلَنٌ أو أقدمُ من آخر حدثٍ للجلسة وللجلسة بطاقةٌ محجوزة
     session_state.py hook < hook.json     # SessionStart: يحقن الحالةَ بعد المسح (source=startup|clear) إن وُجدت وكانت حديثة
+    session_state.py duties NNNN --none | --add ID --every N --what "<وصفٌ قصير>" --owner-quote "<نصّ الأمر>" | --clear
+                                          # الواجباتُ الدائمة/الدورات؛ prepare-clear يرفض إن لم تُسجَّل أو يُصرَّح بخلوّها (W-20261024-006)
+    session_state.py clear_all --owner-quote "<نصّ أمر المالك>" [--only NNNN ...] [--exclude NNNN ...]
+                                          # يُعدّ كلَّ الجلسات الحيّة (guard+duties+generate+verify+علامة مسحٍ معلَّق) ويطبع قائمةً جاهزة
 
 المسحُ نفسُه (`clear_session`) أداةُ التطبيق ويصدرها 0101 بأمر المالك؛ لا تمسح جلسةٌ نفسَها ولا يمسح السكربتُ شيئاً.
 """
@@ -52,7 +56,11 @@ RULES = (  # قواعدُ حكمٍ ثابتة تُحمَل مع الحالة و�
     "الاعتمادُ من approval_check لا من هذا الملف",
     "استأنِف من work: focus ثمّ recent ثمّ git.dirty؛ وما غاب عنها فاقرأه من الدفتر",
 )
-TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "next_due", "rules"}
+TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "duties", "next_due", "rules"}
+PENDING_TTL_S = 900  # علامةُ «مسح قيد الانتظار»: 15 دقيقةً ثمّ تُهمَل (W-20261024-005)
+DUTIES_MAX = 6
+INJECT_MARK = "حُقنت الحالةُ بعد المسح"
+DUTY_WHAT_RE = re.compile(r"^[\w ·\-]{1,60}$")
 
 
 def _now() -> datetime:
@@ -83,7 +91,10 @@ def _read_jsonl(p: Path) -> list[dict]:
 
 def _mine(ev: dict, num: str) -> bool:
     d = ev.get("data", {})
-    return d.get("by") == num or (ev.get("kind") == "note" and str(d.get("text", "")).startswith(f"({num})"))
+    if ev.get("kind") == "note":  # ملاحظةُ الحقن آليّةٌ: لا تُعدّ عملاً للجلسة فلا تُبطل focus
+        t = str(d.get("text", ""))
+        return t.startswith(f"({num})") and INJECT_MARK not in t
+    return d.get("by") == num
 
 
 def focus_path(num: str, root: Path | None = None) -> Path:
@@ -204,6 +215,7 @@ def derive(num: str, label: str = "", now: datetime | None = None, root: Path | 
         "held_cards": held[:HELD_MAX],
         "last_measure": {"counter": counter, "held_count": len(held), "open_queue": len(open_q)},
         "work": {"focus": focus, "recent": recent, "git": _git_info(cwd)},
+        "duties": (load_duties(num, root) or {}).get("items", []),
         "next_due": _fmt(now + NEXT_DUE),
         "rules": list(RULES),
     }
@@ -271,6 +283,11 @@ def validate(state: dict) -> list[str]:
         g = w["git"]
         if g is not None and not (isinstance(g, dict) and set(g) == {"branch", "head", "dirty", "paths"} and re.match(r"^[\w./\-]{1,80}$", str(g["branch"])) and ID_RE.match(str(g["head"])) and isinstance(g["dirty"], int) and isinstance(g["paths"], list) and len(g["paths"]) <= DIRTY_MAX and all(PATH_RE.match(str(x)) for x in g["paths"])):
             errs.append("work.git خارج المخطّط")
+    d = state["duties"]
+    if not isinstance(d, list) or len(d) > DUTIES_MAX:
+        errs.append("duties تجاوزت السقف")
+    elif not all(_duty_ok(x) for x in d):
+        errs.append("عنصرُ duties خارج المخطّط")
     if FORBIDDEN.search(str(state["session_label"])):  # الرموزُ والحالات مقيَّدةٌ بصيغتها؛ النصُّ الوحيد هو العنوان
         errs.append("كلمةٌ ممنوعة في session_label")
     for s in _strings({k: v for k, v in state.items() if k != "rules"}):
@@ -299,6 +316,174 @@ def focus_guard(num: str, root: Path | None = None, ledger_path: Path | None = N
     if last is not None and datetime.fromisoformat(focus["at"]) < last:
         return [f"focus الجلسة {num} أقدمُ من آخر حدثٍ لها في الدفتر ({_fmt(last)}؛ focus عند {focus['at']})؛ جدّده بـ focus"]
     return []
+
+
+def _duty_ok(x: object) -> bool:
+    return bool(isinstance(x, dict) and set(x) == {"id", "every_min", "what"} and ID_RE.match(str(x["id"]))
+                and isinstance(x["every_min"], int) and not isinstance(x["every_min"], bool) and 0 <= x["every_min"] <= 1440
+                and DUTY_WHAT_RE.match(str(x["what"])) and not FORBIDDEN.search(str(x["what"])))
+
+
+def duties_path(num: str, root: Path | None = None) -> Path:
+    return state_path(num, root).with_name(f"duties_{num}.json")
+
+
+def load_duties(num: str, root: Path | None = None) -> dict | None:
+    """الواجباتُ المسجَّلة للجلسة؛ None إن لم تُسجَّل ولم يُصرَّح بخلوّها."""
+    try:
+        d = json.loads(duties_path(num, root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(d, dict) and set(d) == {"declared_at", "items"} and TS_RE.match(str(d["declared_at"]))
+            and isinstance(d["items"], list) and len(d["items"]) <= DUTIES_MAX and all(_duty_ok(x) for x in d["items"])):
+        return None
+    return d
+
+
+def set_duties(num: str, add: dict | None = None, none: bool = False, clear: bool = False,
+               root: Path | None = None, now: datetime | None = None) -> Path:
+    """يسجّل الواجباتِ الدائمة؛ none = تصريحٌ بخلوّ الجلسة منها؛ add يضيف أو يستبدل بالمعرّف؛ clear يمحو التسجيل."""
+    p = duties_path(num, root)
+    if clear:
+        p.unlink(missing_ok=True)
+        return p
+    if none:
+        items: list[dict] = []
+    elif add is not None:
+        if not _duty_ok(add):
+            raise ValueError("واجبٌ خارج الصيغة (id، every_min بين 0 و1440 والصفرُ = بلا دورة، وصفٌ قصير بلا كلماتِ اعتماد)")
+        items = [x for x in (load_duties(num, root) or {"items": []})["items"] if x["id"] != add["id"]] + [add]
+        if len(items) > DUTIES_MAX:
+            raise ValueError(f"الواجباتُ تتجاوز {DUTIES_MAX}")
+    else:
+        raise ValueError("لا شيءَ يُسجَّل")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"declared_at": _fmt(now or _now()), "items": items}, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return p
+
+
+def duties_guard(num: str, root: Path | None = None) -> list[str]:
+    if load_duties(num, root) is None:
+        return [f"لم تُسجَّل واجباتُ الجلسة {num} ولم يُصرَّح بخلوّها؛ سجّلها بـ: session_state.py duties {num} --add ... أو --none"]
+    return []
+
+
+def _norm_tree(p: str) -> str:
+    return str(p).replace("\\", "/").rstrip("/").lower()
+
+
+def pending_path(num: str, tree: str, root: Path | None = None) -> Path:
+    import hashlib
+
+    h = hashlib.sha1(_norm_tree(tree).encode("utf-8")).hexdigest()[:12]  # noqa: S324
+    return state_path(num, root).with_name(f"pending_clear_{h}_{num}.json")
+
+
+def write_pending(num: str, tree: str, root: Path | None = None, now: datetime | None = None, ttl_s: int = PENDING_TTL_S) -> Path:
+    """علامةُ «مسح قيد الانتظار» لكلّ شجرة: يقرؤها خطّافُ SessionStart حين لا يُحسم الرقمُ بعنوان التطبيق."""
+    if not tree:
+        raise ValueError("لا شجرةَ للجلسة؛ لا علامةَ تُكتب")
+    p = pending_path(num, tree, root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"num": num, "cwd": _norm_tree(tree), "created_at": _fmt(now or _now()), "ttl_s": ttl_s}, ensure_ascii=False) + "\n", encoding="utf-8")
+    return p
+
+
+def find_pending(cwd: str, root: Path | None = None, now: datetime | None = None) -> tuple[str | None, list[Path]]:
+    """(الرقمُ الوحيد الصالح أو None، ملفّاتُ العلامات المطابقة للشجرة). تعدّدُ العلامات الصالحة أو انتهاؤها أو فسادُ الحالة = None."""
+    now = now or _now()
+    here = _norm_tree(cwd)
+    files: list[Path] = []
+    valid: set[str] = set()
+    for f in sorted(state_path("0000", root).parent.glob("pending_clear_*.json")):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            if not (isinstance(d, dict) and set(d) == {"num", "cwd", "created_at", "ttl_s"} and SESSION_RE.match(str(d["num"])) and isinstance(d["ttl_s"], int)):
+                continue
+            if not (here == d["cwd"] or here.startswith(d["cwd"] + "/")):
+                continue
+            files.append(f)
+            if now - datetime.fromisoformat(d["created_at"]) > timedelta(seconds=d["ttl_s"]):
+                continue
+            st = load_state(d["num"], root)
+            if st is None or validate(st) or now - datetime.fromisoformat(st["generated_at"]) > STALE_AFTER:
+                continue
+            valid.add(d["num"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return (next(iter(valid)) if len(valid) == 1 else None), files
+
+
+def _log_injection(num: str, root: Path | None, via_pending: bool) -> None:
+    """حدثٌ في الدفتر على بطاقة تركيز الجلسة (أو أوّل بطاقةٍ تحجزها)؛ لا يُسقط الحقنَ إن فشل."""
+    try:
+        import ledger
+
+        st = load_state(num, root) or {}
+        card = ((st.get("work") or {}).get("focus") or {}).get("card") or next((h["id"] for h in st.get("held_cards", [])), None)
+        if card:
+            ledger.add_note(card, INJECT_MARK + (" بعلامة مسحٍ معلَّقة للشجرة" if via_pending else ""), num, main_root(root) / "ledger" / "events.jsonl")
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
+def live_sessions(base: Path | None = None) -> list[dict]:
+    """جلساتُ التطبيق الحيّة (غيرُ المؤرشفة) بعنوانٍ يبدأ برقمٍ: [{num, title, tree}] بلا تكرار (الأحدثُ نشاطاً يغلب)."""
+    import session_identity
+
+    base = session_identity.SESSIONS if base is None else base
+    out: dict[str, dict] = {}
+    for f in base.glob("*/*/local_*.json"):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        title = str(d.get("title", ""))
+        m = re.match(r"\s*(\d{4})\b", title)
+        if not m or d.get("isArchived"):
+            continue
+        act = int(d.get("lastActivityAt") or 0)
+        prev = out.get(m.group(1))
+        if prev is None or act > prev["_act"]:
+            out[m.group(1)] = {"num": m.group(1), "title": title, "tree": str(d.get("worktreePath") or d.get("cwd") or ""), "_act": act}
+    return [{k: v for k, v in x.items() if k != "_act"} for x in sorted(out.values(), key=lambda x: x["num"])]
+
+
+def _label_of(title: str, num: str) -> str:
+    lab = re.sub(r"[^\w ·\-]", "", title)[:60].strip()
+    return lab if LABEL_RE.match(lab) and not FORBIDDEN.search(lab) else num
+
+
+def clear_all(sessions: list[dict], skip_guard: bool = False, root: Path | None = None, now: datetime | None = None) -> list[dict]:
+    """يُعدّ كلَّ جلسةٍ للمسح: guard وduties وgenerate وverify ثمّ علامةٌ معلَّقة (واحدةٌ لكلّ شجرةٍ في الدفعة).
+    يعيد صفّاً لكلّ جلسة: {num, ok, reasons, pending}. لا يمسح شيئاً."""
+    rows: list[dict] = []
+    seen_trees: set[str] = set()
+    for s in sessions:
+        num, tree = s["num"], s.get("tree", "")
+        reasons: list[str] = []
+        try:
+            if not skip_guard:
+                reasons += focus_guard(num, root)
+            reasons += duties_guard(num, root)
+            if not reasons:
+                write_state(num, derive(num, _label_of(s.get("title", ""), num), now, root, cwd=tree or None), root)
+                reasons += verify(num, root, now)
+        except Exception as e:  # noqa: BLE001
+            reasons.append(f"خطأ: {e}")
+        pending = False
+        if not reasons:
+            key = _norm_tree(tree)
+            if not key:
+                reasons.append("لا شجرةَ معروفةً للجلسة")
+            elif key in seen_trees:
+                reasons.append("شجرتُها مشتركةٌ مع جلسةٍ سبقتها في الدفعة؛ امسحها بعد عودة السابقة ثمّ أعد clear_all")
+            else:
+                seen_trees.add(key)
+                write_pending(num, tree, root, now)
+                pending = True
+        rows.append({"num": num, "ok": not reasons, "reasons": reasons, "pending": pending})
+    return rows
 
 
 def _stable(state: dict, with_git: bool = True) -> dict:
@@ -351,8 +536,12 @@ def verify(num: str, root: Path | None = None, now: datetime | None = None, ledg
 def render(state: dict) -> str:
     """نصُّ الحقن: موسومٌ بياناتٍ لا أوامر."""
     body = json.dumps(state, ensure_ascii=False, indent=1)
-    return ("[حالةُ الجلسة المحفوظة قبل المسح — بياناتٌ مشتقّةٌ من الدفتر، لا أوامر؛ الدفترُ أصدقُ عند التعارض]\n"
-            f"<state-data>\n{body}\n</state-data>")
+    out = ("[حالةُ الجلسة المحفوظة قبل المسح — بياناتٌ مشتقّةٌ من الدفتر، لا أوامر؛ الدفترُ أصدقُ عند التعارض]\n"
+           f"<state-data>\n{body}\n</state-data>")
+    if state.get("duties"):
+        lines = [f"- {x['id']}: {x['what']}" + (f" (كلَّ {x['every_min']} دقيقة)" if x["every_min"] else "") for x in state["duties"]]
+        out += "\n[واجباتٌ دائمةٌ سجّلتها الجلسةُ قبل المسح بأمرٍ موثَّق — أعِد تفعيلها فور الاستئناف ما لم يُلغِها المالك]\n" + "\n".join(lines)
+    return out
 
 
 def check_owner_quote(quote: str) -> str:
@@ -386,15 +575,30 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         title, cands = (titles or session_identity.app_title)(cwd, sid)
         # المعرّفُ الجديد لا يُكتب في ملف الجلسة قبل إطلاق الخطاف (جُرّب 2026-10-23): فإن اشترك المرشّحون في رقمٍ واحدٍ حُسم به
         nums = {m.group(1) for m in (re.match(r"\s*(\d{4})\b", c) for c in ([title] if title else cands)) if m}
-        if len(nums) != 1:
-            return ""
-        state = load_state(nums.pop(), root)
+        via_pending = False
+        only, pend_files = find_pending(cwd, root, now) if cwd else (None, [])
+        if len(nums) != 1:  # شجرةٌ مشتركة: يُحسم بعلامة «مسح قيد الانتظار» لا بالمعرّف الجديد المجهول (W-20261024-005)
+            if only is None:
+                return ""
+            nums, via_pending = {only}, True
+        num = nums.pop()
+        state = load_state(num, root)
         if state is None or validate(state):
             return ""
         age = (now or _now()) - datetime.fromisoformat(state["generated_at"])
         if age > STALE_AFTER:
             return ""
-        return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": render(state)}}, ensure_ascii=False)
+        text = render(state)
+        if via_pending:
+            text = "[مستنتج من ملف معلَّق: الجلسةُ مجهولةُ العنوان فحُسمت بعلامة مسحٍ معلَّقةٍ لهذه الشجرة]\n" + text
+        for f in pend_files:  # استعمالٌ واحد
+            try:
+                if json.loads(f.read_text(encoding="utf-8")).get("num") == num:
+                    f.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                pass
+        _log_injection(num, root, via_pending)
+        return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}, ensure_ascii=False)
     except Exception:  # noqa: BLE001
         return ""
 
@@ -418,12 +622,49 @@ def main(argv: list[str] | None = None) -> int:
     fp.add_argument("num")
     fp.add_argument("--card", required=True)
     fp.add_argument("--step", type=int, required=True)
+    dp = sub.add_parser("duties", help="يسجّل الواجباتِ الدائمة أو يصرّح بخلوّها")
+    dp.add_argument("num")
+    dg = dp.add_mutually_exclusive_group(required=True)
+    dg.add_argument("--none", action="store_true")
+    dg.add_argument("--add", metavar="ID")
+    dg.add_argument("--clear", action="store_true")
+    dp.add_argument("--every", type=int, default=0, help="الدورةُ بالدقائق (0 = بلا دورة)")
+    dp.add_argument("--what", default="")
+    dp.add_argument("--owner-quote", default="")
+    ca = sub.add_parser("clear_all", help="يُعدّ كلَّ الجلسات الحيّة للمسح ويطبع قائمةً جاهزة")
+    ca.add_argument("--owner-quote", required=True)
+    ca.add_argument("--skip-guard-quote", default="")
+    ca.add_argument("--only", nargs="*", default=[])
+    ca.add_argument("--exclude", nargs="*", default=[])
     a = ap.parse_args(argv)
 
     if a.cmd == "hook":
         out = cmd_hook(sys.stdin.read())
         if out:
             print(out)
+        return 0
+    if a.cmd == "clear_all":
+        try:
+            print(f"أمرُ المالك موثَّق: {check_owner_quote(a.owner_quote)}")
+            skip = bool(a.skip_guard_quote) and bool(print(f"تجاوزُ الحارس بأمر المالك: {check_owner_quote(a.skip_guard_quote)}") or True)
+        except Exception as e:  # noqa: BLE001
+            print(f"رُفض: أمرُ المالك غيرُ موثَّق في owner_confirmations.md ({e})", file=sys.stderr)
+            return 3
+        sessions = [s for s in live_sessions() if (not a.only or s["num"] in a.only) and s["num"] not in a.exclude]
+        rows = clear_all(sessions, skip_guard=skip)
+        ready = [r for r in rows if r["ok"]]
+        for r in rows:
+            print(f"{'جاهزة' if r['ok'] else 'مرفوضة'} {r['num']}" + ("" if r["ok"] else ": " + "؛ ".join(r["reasons"])))
+        print(f"القائمةُ الجاهزة للمسح ({len(ready)}/{len(rows)}): " + " ".join(r["num"] for r in ready))
+        return 0 if len(ready) == len(rows) else 6
+    if a.cmd == "duties" and SESSION_RE.match(a.num):
+        try:
+            if a.add:
+                check_owner_quote(a.owner_quote)  # تسجيلُ واجبٍ دائم بأمر مالكٍ موثَّق
+            print(f"كُتب: {set_duties(a.num, add={'id': a.add, 'every_min': a.every, 'what': a.what} if a.add else None, none=a.none, clear=a.clear)}")
+        except Exception as e:  # noqa: BLE001
+            print(f"رُفض: {e}", file=sys.stderr)
+            return 3
         return 0
     if not SESSION_RE.match(a.num):
         print("رقمُ جلسةٍ غيرُ صالح", file=sys.stderr)
@@ -458,6 +699,10 @@ def main(argv: list[str] | None = None) -> int:
             if gerrs:
                 print("رُفض المسح (الحارس): " + "؛ ".join(gerrs), file=sys.stderr)
                 return 5
+            derrs = duties_guard(a.num)
+            if derrs:
+                print("رُفض المسح (الواجبات): " + "؛ ".join(derrs), file=sys.stderr)
+                return 7
         label = a.label or (load_state(a.num) or {}).get("session_label", "")
         p, wrote = write_state(a.num, derive(a.num, label, cwd=a.cwd or None))
         print(f"{'كُتب' if wrote else 'بلا تغيير'}: {p}")
@@ -466,6 +711,8 @@ def main(argv: list[str] | None = None) -> int:
             if errs:
                 print("فشل التحقّق: " + "؛ ".join(errs), file=sys.stderr)
                 return 4
+            if a.cwd:
+                print(f"علامةُ مسحٍ معلَّق: {write_pending(a.num, a.cwd)}")
             print(f"جاهزٌ للمسح: على 0101 تنفيذُ clear_session للجلسة {a.num} بأمر المالك المذكور، ثم يُتحقَّق من ظهور الحالة في أوّل دورٍ بعد المسح.")
         return 0
     if a.cmd == "verify":
