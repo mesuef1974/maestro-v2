@@ -34,8 +34,9 @@ def permanent_titles(tabs: dict) -> dict[str, str]:
 
 def evaluate(facts: dict, blocked_titles: dict[str, str]) -> dict:
     blockers = []
-    if facts["title"] in blocked_titles:
-        blockers.append(blocked_titles[facts["title"]])
+    held = blocked_titles.get(facts["title"]) or next((r for t, r in blocked_titles.items() if t[:4] == facts["title"][:4] and facts["title"][:4].isdigit()), None)
+    if held:  # الحمايةُ بالرقم لا بنصّ العنوان: العنوانُ الحيُّ يتغيّر («خفيفة» مقابل «المايسترو») ولا تسقط الحمايةُ بذلك
+        blockers.append(held)
     if facts["open_prs"]:
         blockers.append(f"{len(facts['open_prs'])} طلبات مفتوحة: " + ", ".join("#" + str(n) for n in facts["open_prs"]))
     status = facts.get("branch_status")
