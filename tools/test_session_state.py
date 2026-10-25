@@ -727,11 +727,11 @@ class TestUnifiedGuardAndFocusRenewal:
         ss.set_duties("0108", none=True, root=tree, now=NOW)
         ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
         self._late_event(tree, "2026-10-25T00:00:00+03:00")
-        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, 180_000), tree, NOW)
+        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, ss.CLEAR_AT_TOKENS + 5000), tree, NOW)
         assert "كُتب طلبُ المسح" in out and ss.auto_clear_nums(tree, NOW) == {"0108"}
 
     def test_no_declared_focus_still_blocks_auto_clear(self, tree, tmp_path):
         ss.set_duties("0108", none=True, root=tree, now=NOW)
         ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
-        assert "سقط الحارسُ" in ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, 180_000), tree, NOW)
+        assert "سقط الحارسُ" in ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, ss.CLEAR_AT_TOKENS + 5000), tree, NOW)
         assert ss.auto_clear_nums(tree, NOW) == set()
