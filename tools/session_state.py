@@ -59,7 +59,7 @@ RULES = (  # قواعدُ حكمٍ ثابتة تُحمَل مع الحالة و�
 )
 TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "duties", "waiting", "next_due", "rules"}
 PENDING_TTL_S = 900  # علامةُ «مسح قيد الانتظار»: 15 دقيقةً ثمّ تُهمَل (W-20261024-005)
-CLEAR_AT_TOKENS = 150_000  # عتبةُ المسح الذاتي: سياقُ آخر رسالةٍ في transcript (W-20261025-015)
+CLEAR_AT_TOKENS = 175_000  # عتبةُ المسح الذاتي: سياقُ آخر رسالةٍ في transcript (W-20261025-015)
 TRANSCRIPT_TAIL = 400_000  # يُقرأ ذيلُ الملفّ فقط: الاستهلاكُ في آخر رسالة مساعد
 DUTIES_MAX = 6
 WAITING_MAX = 8  # الإحالاتُ الصادرة المنتظَرة في الحالة

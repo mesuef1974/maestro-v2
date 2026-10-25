@@ -64,8 +64,8 @@ STALE_PER_MSG = 5  # أقدمُ خمس بطاقاتٍ لكلّ رسالة
 PAYLOAD = "{id} {state} — اقرأ: python tools/ledger.py show {id}"
 CLEAR_ID = "after_clear"  # معرّفٌ خاصٌّ لإيقاظ ما بعد المسح: لا بطاقةَ له
 CLEAR_MSG = "بعد المسح — اقرأ بطاقتك role_cards/{num}.md ثمّ شغّل: python tools/my_state.py {num}"
-AUTO_CLEAR_STATE = "auto_clear"  # الطلبُ صادرٌ عن خطّاف Stop عند 150 ألفاً لا عن مسحٍ جرى (W-20261025-015)
-AUTO_CLEAR_MSG = "سياقك بلغ 150 ألفاً — نفّذ المسح الذاتيّ كما في role_cards/COMMON.md ثمّ اقرأ بطاقتك role_cards/{num}.md وشغّل: python tools/my_state.py {num}"
+AUTO_CLEAR_STATE = "auto_clear"  # الطلبُ صادرٌ عن خطّاف Stop عند 175 ألفاً لا عن مسحٍ جرى (W-20261025-015)
+AUTO_CLEAR_MSG = "سياقك بلغ 175 ألفاً — نفّذ المسح الذاتيّ كما في role_cards/COMMON.md ثمّ اقرأ بطاقتك role_cards/{num}.md وشغّل: python tools/my_state.py {num}"
 PAYLOAD_OK = re.compile(r"^W-\d{8}-\d{3} [a-z_]+ — اقرأ: python tools/ledger\.py show W-\d{8}-\d{3}$")
 
 
