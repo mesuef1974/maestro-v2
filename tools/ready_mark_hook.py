@@ -2,7 +2,7 @@
 """خطّافُ PostToolUse: حين ترسل جلسةٌ «جاهزٌ للمعاينة» يُسجَّل الدفترُ ready_for_review بالرأس (W-20261015-015).
 
 يقرأ JSON الخطّاف من stdin، ويتحقّق أنّ الرسالةَ تبدأ بـ«جاهزٌ للمعاينة» وفيها رقمُ الجلسة بين قوسين ورمزُ بطاقةٍ ورأسٌ بعد «الرأس»، ثمّ يستدعي
-`ready_mark.mark` **وحدَه** (فتسري بوّاباتُه: الرأسُ موجودٌ ويحمل رمزَ البطاقة، والبطاقةُ ليست معتمدةً). لا يعتمد ولا يراسل ولا يعدّل إعداداتٍ.
+`ready_mark.mark` **وحدَه** (فتسري بوّاباتُه: الرأسُ موجودٌ ويحمل رمزَ البطاقة، والبطاقةُ ليست معتمدةً). **رقمُ المرسِلة يُشتقّ من معرّف جلستها لا من نصّ الرسالة.** لا يعتمد ولا يراسل ولا يعدّل إعداداتٍ.
 والفشلُ دائماً بصمتٍ آمن: يخرج 0 ولا يحجب الأداةَ التي استُدعي بعدها؛ والسببُ يُكتب في logs/ready_mark_hook.log إن وُجد المجلّد.
 وللجلسة أن تسجّل بنفسها بأداة ready_mark؛ هذا الخطّافُ لمن نسي.
 
@@ -21,6 +21,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import ledger  # noqa: E402
 import ready_mark  # noqa: E402
+import session_identity  # noqa: E402
 
 TOOLS = {"SendMessage", "mcp__ccd_session_mgmt__send_message"}
 PHRASE = "جاهزٌ للمعاينة"
@@ -36,16 +37,25 @@ def log(line: str) -> None:
             fh.write(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
 
 
-def parse(message: str) -> tuple[str, str, list[str]] | None:
-    """(رقمُ الجلسة، الرأس، البطاقات) من رسالةٍ تبدأ بـ«جاهزٌ للمعاينة»؛ وإلّا None."""
+def parse(message: str) -> tuple[str | None, str, list[str]] | None:
+    """(الرقمُ المذكورُ في النصّ إن وُجد، الرأس، البطاقات) من رسالةٍ تبدأ بـ«جاهزٌ للمعاينة»؛ وإلّا None.
+
+    الرقمُ في النصّ للمقارنة فقط: هويّةُ المرسِلة تُشتقّ من معرّف جلستها (W-20261015-015)."""
     text = message.strip()
     if not text.startswith(PHRASE):
         return None
     by, head = BY_RE.search(text), HEAD_RE.search(text)
     cards = list(dict.fromkeys(CARD_RE.findall(text)))
-    if not (by and head and cards):
+    if not (head and cards):
         return None
-    return by.group(1), head.group(1), cards
+    return (by.group(1) if by else None), head.group(1), cards
+
+
+def sender_number(payload: dict) -> str | None:
+    """رقمُ الجلسة المرسِلة من معرّفها (session_id) وcwd في مدخل الخطّاف عبر عنوان الجلسة الحيّ؛ وإلّا None."""
+    title, _ = session_identity.app_title(str(payload.get("cwd") or ""), str(payload.get("session_id") or ""))
+    m = session_identity.NUM.match(title or "")
+    return m.group(0).strip() if m else None
 
 
 def handle(payload: dict, path=None, repo: str | None = None) -> list[str]:
@@ -56,7 +66,12 @@ def handle(payload: dict, path=None, repo: str | None = None) -> list[str]:
     parsed = parse(message)
     if not parsed:
         return []
-    by, head, cards = parsed
+    stated, head, cards = parsed
+    by = sender_number(payload)
+    if by is None:
+        return ["تخطّي: تعذّر اشتقاقُ رقم الجلسة المرسِلة من معرّفها (الرقمُ في النصّ لا يُعتمد)"]
+    if stated is not None and stated != by:
+        return [f"تخطّي: الرقمُ في النصّ ({stated}) يخالف رقمَ الجلسة المرسِلة ({by})"]
     out = []
     items = ledger.reduce_state(ledger.load_events(path))
     for card in cards:
