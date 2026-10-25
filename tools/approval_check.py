@@ -43,6 +43,9 @@ def run(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
 # اعتماداتٌ قديمةٌ بلا رأسٍ تُقبل بتحذيرٍ حتى هذا التاريخ ثمّ تُرفض (قرار 0101، v2.23)
 LEGACY_DEADLINE = date(2026, 10, 9)
 HEAD_IN_LINE = re.compile(r"(?:الرأس|@)\s*([0-9a-f]{7,40})")
+#: (W-20261025-018) في أسطر owner_confirmations.md يُقرأ الرأسُ من عمود الهدف «بطاقة @رأس» (الأخير) لا من أوّل «الرأس/@» في السطر كلّه؛
+#: قبل هذا التاريخ يبقى السلوكُ القديم مع إنذارٍ حيث اختلفا (قُيس 2026-10-25: 15 سطراً من 1468)، وبعده يُلزَم العمود.
+COLUMN_HEAD_FROM = date(2026, 11, 1)
 
 
 def head_status(approved: str | None, pr_head: str | None, today: date | None = None) -> str:
@@ -234,6 +237,24 @@ def source_line() -> str:
     return f"المصدر المقروء: {f} — آخر تعديل {datetime.datetime.fromtimestamp(f.stat().st_mtime):%Y-%m-%d %H:%M}"
 
 
+def row_head(ln: str, today: date | None = None) -> tuple[str | None, str]:
+    """(الرأس، تحذيرٌ أو ""): سطرُ جدولٍ بخمسة أعمدةٍ فأكثر يُقرأ رأسُه من عموده الأخير بعد COLUMN_HEAD_FROM؛
+    وقبله يبقى أوّلُ رأسٍ في السطر مع تحذيرٍ إن خالفه رأسُ العمود. وما ليس جدولاً يبقى على السلوك القديم."""
+    today = today or date.today()
+    whole = HEAD_IN_LINE.search(ln)
+    old = whole.group(1) if whole else None
+    cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+    if len(cells) < 5:
+        return old, ""
+    col = HEAD_IN_LINE.search(cells[-1])
+    new = col.group(1) if col else None
+    if today >= COLUMN_HEAD_FROM:
+        return new, ""
+    if (new or "")[:8] != (old or "")[:8]:
+        return old, f" ⚠ الرأس في عمود الهدف ({(new or 'غائب')[:8]}) يخالف أوّل رأسٍ في السطر ({(old or 'غائب')[:8]}) — إنذارٌ حتى {COLUMN_HEAD_FROM} ثمّ يُقرأ من العمود"
+    return old, ""
+
+
 def _confirmation_rows(key: str, pr_head: str | None = None, enforce: bool | None = None,
                        path: Path | None = None) -> list[tuple[str, str, str]]:
     """(السطرُ الخامّ، الحالة، الذيل) لأسطر owner_confirmations.md الحيّة التي تذكر الهدف — مصدرُ الدليل والحمل معاً."""
@@ -254,9 +275,9 @@ def _confirmation_rows(key: str, pr_head: str | None = None, enforce: bool | Non
     direct = {w for ln in live if _has_key(key, ln) for k, w, _ in [line_source(ln)] if k in ("direct", "legacy") and w}
     for ln in live:
         if _has_key(key, ln):
-            h = HEAD_IN_LINE.search(ln)
-            tail = " ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else ""
-            st = quote_status(ln, head_status(h.group(1) if h else None, pr_head))
+            head, warn = row_head(ln)
+            tail = (" ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else "") + warn
+            st = quote_status(ln, head_status(head, pr_head))
             if st == "rejected":
                 tail += " ✘ نصُّ القول رفضٌ لا قبول"
             kind, _, hearer = line_source(ln)
