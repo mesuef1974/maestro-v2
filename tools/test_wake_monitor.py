@@ -400,6 +400,19 @@ def test_an_already_live_session_is_woken_even_when_the_cap_is_full():
     assert list(p.wakes) == ["0201"] and not p.halted
 
 
+def test_clear_wakes_are_outside_the_live_cap_while_ordinary_wakes_stay_capped():
+    """W-20261025-025: رسالةُ المسح/ما بعده لا تُؤجَّل بسقف التزامن؛ والإيقاظُ العاديّ الزائدُ يُؤجَّل كما كان."""
+    live = {f"{n:04d}" for n in (201, 301, 501, 601, 701, 801)}
+    p = wm.WakePlan()
+    p.wakes = {
+        "0901": [(wm.CLEAR_ID, "pending_clear")],
+        "0902": [("W-20261016-001", "routed")],
+    }
+    wm.cap_live(p, live)
+    assert list(p.wakes) == ["0901"] and p.deferred and not p.halted
+    assert any(i == "W-20261016-001" for i, _ in p.skipped)
+
+
 # ===== إيقاظ ما بعد المسح (W-20261025-001) =====
 from datetime import datetime, timedelta, timezone  # noqa: E402
 
