@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """غلافٌ رقيقٌ يُستدعى عند «pushed» فيفتح الطلب بسطر الاعتماد القياسيّ (W-20261020-016).
 
-    python open_pr_on_pushed.py W-20261020-016 --repo <شجرة> [--branch claude/x] [--execute]
+    python open_pr_after_push.py W-20261020-016 --repo <شجرة> [--branch claude/x] [--execute]
 
 لا يكرّر منطقاً: يعيد استعمال `open_pr.main` (وفحوص `pr_open_prep` داخلها) كما هي. الافتراضيّ ظلٌّ
 (يطبع الأوامر دون تنفيذ)، والتنفيذُ يحتاج `--execute` ومعه `OPEN_PR_ENFORCE=1` معاً، كما في `open_pr.py`.
