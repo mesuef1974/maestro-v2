@@ -3,6 +3,7 @@
 
     python approval_check.py card W-20260930-005
     python approval_check.py pr 772
+    python approval_check.py pr 12 --repo mesuef1974/maestro-v2      # طلبٌ في مستودعٍ غير shschool_mvp
     python approval_check.py visual W-20261009-007 --head ab12cd34   # الأدلّةُ البصريّة وحدَها — قبل «جاهزٌ للمعاينة»
 
 المصادر بالترتيب: (١) حالةُ البطاقة في الدفتر — لا تبلغ approved وما بعدها إلا بـ`ledger.py move … --note` (قاعدةُ D-73م)،
@@ -169,8 +170,12 @@ def pr_card(d: dict) -> tuple[str | None, str | None]:
     return None, None
 
 
-def pr_evidence(num: str) -> tuple[list[tuple[str, str]], str | None, str | None]:
-    code, out = run(["gh", "pr", "view", num, "--json", "title,body,state,headRefOid,headRefName"], cwd=REPO_DIR)
+def pr_evidence(num: str, repo: str | None = None) -> tuple[list[tuple[str, str]], str | None, str | None]:
+    """repo: «مالك/مستودع» لطلبٍ في غير مستودع المنصّة (مثل maestro-v2)؛ بلا قيمةٍ = shschool_mvp."""
+    cmd = ["gh", "pr", "view", num, "--json", "title,body,state,headRefOid,headRefName"]
+    if repo:
+        cmd += ["--repo", repo]
+    code, out = run(cmd, cwd=REPO_DIR)
     if code != 0:
         return [], None, None
     d = json.loads(out)
@@ -596,7 +601,7 @@ def main() -> int:
     ap.add_argument("kind", choices=["card", "pr", "visual", "ready"])
     ap.add_argument("target")
     ap.add_argument("--head", help="للبطاقة: رأسُ الإيداع الحاليّ للمقارنة (sha8)")
-    ap.add_argument("--repo", default=".", help="ready: شجرةُ عملِ الجلسة المراد قبولُ «جاهزٌ للمعاينة» منها")
+    ap.add_argument("--repo", default=".", help="ready: شجرةُ عملِ الجلسة المراد قبولُ «جاهزٌ للمعاينة» منها؛ pr: «مالك/مستودع» لطلبٍ خارج shschool_mvp (مثل mesuef1974/maestro-v2)")
     a = ap.parse_args()
     print(source_line())
     ev: list[tuple[str, str]] = []
@@ -615,7 +620,7 @@ def main() -> int:
     if a.kind == "card":
         ev += card_evidence(a.target, pr_head)
     else:
-        pev, card, pr_head = pr_evidence(a.target)
+        pev, card, pr_head = pr_evidence(a.target, None if a.repo == "." else a.repo)
         ev += pev
         if card:
             ev += card_evidence(card, pr_head)
