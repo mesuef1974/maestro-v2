@@ -680,3 +680,58 @@ def test_local_sid_skips_match_without_session_id_and_empty_id(tmp_path):
     _put_session(tmp_path, "2", 200, cliSessionId="C1")
     assert ss.local_session_id("C1", tmp_path) == "local_ok"
     assert ss.local_session_id("", tmp_path) == ""
+
+
+class TestUnifiedGuardAndFocusRenewal:
+    """W-20261025-023/024: أمر guard هو فحصُ الخطّاف نفسُه، وتقدّمُ الدفتر لا يُسقط جلسةً أعلنت تركيزَها."""
+
+    @staticmethod
+    def _asst(tokens):
+        return {"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": tokens, "cache_creation_input_tokens": 0}}}
+
+    @staticmethod
+    def _tx(tmp_path, tokens):
+        p = tmp_path / "t.jsonl"
+        p.write_text(json.dumps(TestUnifiedGuardAndFocusRenewal._asst(tokens)) + "\n", encoding="utf-8")
+        return p
+
+    @staticmethod
+    def _late_event(tree, ts="2099-01-01T00:00:00+03:00"):
+        with (tree / "ledger" / "events.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(_ev(ts, "W-1", "note", {"text": "(0108) تقدّم", "by": "0108"}), ensure_ascii=False) + "\n")
+
+    def test_clear_guard_covers_focus_duties_and_state(self, tree):
+        errs = ss.clear_guard("0108", tree, NOW)
+        assert any("focus" in e for e in errs) and any("واجبات" in e for e in errs) and any("حالة" in e for e in errs)
+        ss.set_focus("0108", "W-1", 2, root=tree)
+        ss.set_duties("0108", none=True, root=tree, now=NOW)
+        ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
+        assert ss.clear_guard("0108", tree, NOW) == []
+
+    def test_guard_command_calls_clear_guard(self, monkeypatch, capsys):
+        monkeypatch.setattr(ss, "clear_guard", lambda num: ["فحصٌ موحَّد"])
+        assert ss.main(["guard", "0108"]) == 5
+        assert "فشل: فحصٌ موحَّد" in capsys.readouterr().out
+
+    def test_renew_focus_keeps_card_and_step_and_never_invents_focus(self, tree):
+        assert ss.renew_focus("0108", tree) is False and ss._load_focus("0108", tree) is None
+        ss.set_focus("0108", "W-1", 3, root=tree)
+        self._late_event(tree)
+        assert ss.focus_guard("0108", tree)  # صار أقدم من آخر حدث
+        assert ss.renew_focus("0108", tree) is True
+        f = ss._load_focus("0108", tree)
+        assert f["card"] == "W-1" and f["step"] == 3
+
+    def test_auto_clear_survives_ledger_progress_after_focus(self, tree, tmp_path):
+        ss.set_focus("0108", "W-1", 2, root=tree)
+        ss.set_duties("0108", none=True, root=tree, now=NOW)
+        ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
+        self._late_event(tree, "2026-10-25T00:00:00+03:00")
+        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, 160_000), tree, NOW)
+        assert "كُتب طلبُ المسح" in out and ss.auto_clear_nums(tree, NOW) == {"0108"}
+
+    def test_no_declared_focus_still_blocks_auto_clear(self, tree, tmp_path):
+        ss.set_duties("0108", none=True, root=tree, now=NOW)
+        ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
+        assert "سقط الحارسُ" in ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, 160_000), tree, NOW)
+        assert ss.auto_clear_nums(tree, NOW) == set()
