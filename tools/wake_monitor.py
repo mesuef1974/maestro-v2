@@ -132,7 +132,8 @@ def sender_count(sender: str, path: Path = COUNTER) -> int:
 def cap_live(p: "WakePlan", live) -> None:
     """سقفُ التزامن MAX_LIVE: الموقَظةُ الحيّةُ أصلاً لا تزيد العدّ؛ الجديدةُ تُقبل بقدر ما بقي من السقف بترتيب الخطّة، والباقي يُؤجَّل
     (p.deferred فلا يتقدّم المؤشّر فيعاد في الدورة التالية). إن امتلأ السقفُ فلا إيقاظ وتُسجَّل halted."""
-    fresh = [h for h in p.wakes if h not in live]
+    # رسالتا المسح وما بعده (CLEAR_ID) خارج السقف (W-20261025-025): جلسةٌ ممسوحةٌ خاملةٌ لا يوقظها غيرُ هذه الرسالة فيبقى تأجيلُها تعطيلاً لها
+    fresh = [h for h in p.wakes if h not in live and not any(i == CLEAR_ID for i, _ in p.wakes[h])]
     room = max(0, MAX_LIVE - len(set(live)))
     if len(fresh) <= room:
         return
