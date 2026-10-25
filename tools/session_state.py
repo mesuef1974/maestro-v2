@@ -59,6 +59,8 @@ RULES = (  # قواعدُ حكمٍ ثابتة تُحمَل مع الحالة و�
 )
 TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "duties", "waiting", "next_due", "rules"}
 PENDING_TTL_S = 900  # علامةُ «مسح قيد الانتظار»: 15 دقيقةً ثمّ تُهمَل (W-20261024-005)
+CLEAR_AT_TOKENS = 150_000  # عتبةُ المسح الذاتي: سياقُ آخر رسالةٍ في transcript (W-20261025-015)
+TRANSCRIPT_TAIL = 400_000  # يُقرأ ذيلُ الملفّ فقط: الاستهلاكُ في آخر رسالة مساعد
 DUTIES_MAX = 6
 WAITING_MAX = 8  # الإحالاتُ الصادرة المنتظَرة في الحالة
 INJECT_MARK = "حُقنت الحالةُ بعد المسح"
@@ -559,6 +561,73 @@ def pending_markers(root: Path | None = None, now: datetime | None = None) -> di
     return out
 
 
+def context_tokens(transcript: str | Path) -> int | None:
+    """سياقُ الجلسة الآن = مدخلات آخر رسالة مساعدٍ في الجلسة الرئيسة (input + cache_read + cache_creation). None إن تعذّر القياس."""
+    try:
+        path = Path(transcript)
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - TRANSCRIPT_TAIL))
+            raw = f.read().decode("utf-8", errors="ignore")
+    except OSError:
+        return None
+    for line in reversed(raw.splitlines()):
+        if '"usage"' not in line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue  # أوّلُ سطرٍ في الذيل قد يكون مبتوراً
+        usage = (d.get("message") or {}).get("usage") if isinstance(d, dict) else None
+        if not isinstance(usage, dict) or d.get("isSidechain") or d.get("type") != "assistant":
+            continue
+        parts = [usage.get(k) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")]
+        if all(isinstance(x, int) and x >= 0 for x in parts if x is not None):
+            return sum(x or 0 for x in parts)
+    return None
+
+
+def auto_clear_path(num: str, root: Path | None = None) -> Path:
+    return state_path(num, root).with_name(f"auto_clear_{num}.json")
+
+
+def auto_clear_nums(root: Path | None = None, now: datetime | None = None) -> set[str]:
+    """أرقامُ الجلسات التي طلب الخطّافُ مسحَها الذاتيّ وطلبُها غيرُ منتهٍ (يقرؤها wake_monitor ليغيّر نصَّ الإيقاظ)."""
+    now = now or _now()
+    out: set[str] = set()
+    for f in sorted(state_path("0000", root).parent.glob("auto_clear_*.json")):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            if SESSION_RE.match(str(d["num"])) and now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=PENDING_TTL_S):
+                out.add(d["num"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def maybe_auto_clear(num: str, cwd: str, transcript: str | Path, root: Path | None = None, now: datetime | None = None) -> str:
+    """عند بلوغ العتبة يكتب علامةَ «مسح معلّق» وطلبَ المسح الذاتيّ بصمت؛ ويسقط بصمت إن فشل الحارس (focus/duties/verify).
+    idempotent: لا يكتب ثانيةً ما دام الطلب قائماً. يعيد وصفاً قصيراً للسجلّ ولا يرفع استثناءً."""
+    now = now or _now()
+    tokens = context_tokens(transcript)
+    if tokens is None:
+        return "سياق: غيرُ مقيس"
+    if tokens < CLEAR_AT_TOKENS:
+        return f"سياق: {tokens}"
+    if not cwd:
+        return f"سياق: {tokens}، بلا شجرة"
+    if num in auto_clear_nums(root, now):
+        return f"سياق: {tokens}، الطلبُ قائم"
+    reasons = focus_guard(num, root) + duties_guard(num, root) + verify(num, root, now)
+    if reasons:
+        return f"سياق: {tokens}، سقط الحارسُ: {'؛ '.join(reasons)[:120]}"
+    write_pending(num, cwd, root, now)
+    auto_clear_path(num, root).write_text(
+        json.dumps({"num": num, "tokens": tokens, "created_at": _fmt(now)}, ensure_ascii=False) + "\n", encoding="utf-8")
+    return f"سياق: {tokens}، كُتب طلبُ المسح الذاتيّ"
+
+
 def _log_injection(num: str, root: Path | None, via_pending: bool, verdict: str = "", issues: list[str] | None = None) -> None:
     """حدثٌ في الدفتر على بطاقة تركيز الجلسة (أو أوّل بطاقةٍ تحجزها)؛ لا يُسقط الحقنَ إن فشل."""
     try:
@@ -866,6 +935,11 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
             scan_transcript(num, tpath, root)
         write_state(num, derive(num, label, cwd=cwd or None, root=root), root, heartbeat=HEARTBEAT_AFTER)
         outcome = f"{num}: جُدِّد"
+        if tpath:
+            try:
+                outcome += f" | {maybe_auto_clear(num, cwd, tpath, root)}"
+            except Exception as exc:  # noqa: BLE001  # يسقط بصمت: التجديدُ نجح ولا يُفسَد بالمسح
+                outcome += f" | مسحٌ ذاتيّ: {type(exc).__name__}"
     except Exception as exc:  # noqa: BLE001
         outcome += f" ({type(exc).__name__})"
         try:  # لا يسقط الجلسةَ، لكنّ الفشلَ يُسجَّل ليُعرف أنّ الخطّاف يعمل في شجرات worktree

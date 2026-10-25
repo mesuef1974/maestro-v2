@@ -64,6 +64,8 @@ STALE_PER_MSG = 5  # أقدمُ خمس بطاقاتٍ لكلّ رسالة
 PAYLOAD = "{id} {state} — اقرأ: python tools/ledger.py show {id}"
 CLEAR_ID = "after_clear"  # معرّفٌ خاصٌّ لإيقاظ ما بعد المسح: لا بطاقةَ له
 CLEAR_MSG = "بعد المسح — اقرأ بطاقتك role_cards/{num}.md ثمّ شغّل: python tools/my_state.py {num}"
+AUTO_CLEAR_STATE = "auto_clear"  # الطلبُ صادرٌ عن خطّاف Stop عند 150 ألفاً لا عن مسحٍ جرى (W-20261025-015)
+AUTO_CLEAR_MSG = "سياقك بلغ 150 ألفاً — نفّذ المسح الذاتيّ كما في role_cards/COMMON.md ثمّ اقرأ بطاقتك role_cards/{num}.md وشغّل: python tools/my_state.py {num}"
 PAYLOAD_OK = re.compile(r"^W-\d{8}-\d{3} [a-z_]+ — اقرأ: python tools/ledger\.py show W-\d{8}-\d{3}$")
 
 
@@ -94,7 +96,7 @@ def payload(item_id: str, state: str, num: str = "") -> str:
     if item_id == CLEAR_ID:
         if not SESSION_NUM.match(num):
             raise ValueError("إيقاظُ ما بعد المسح بلا رقم جلسة")
-        return CLEAR_MSG.format(num=num)
+        return (AUTO_CLEAR_MSG if state == AUTO_CLEAR_STATE else CLEAR_MSG).format(num=num)
     text = PAYLOAD.format(id=item_id, state=state)
     if not PAYLOAD_OK.match(text):
         raise ValueError(f"حمولةٌ خارج الصيغة المسموحة: {text!r}")
@@ -243,7 +245,7 @@ def read_log(path: Path = LOG) -> list[dict]:
     return out
 
 
-def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=()) -> WakePlan:
+def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=(), auto=frozenset()) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
     aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
     دالّةٌ نقيّةٌ إلّا ما يفعله verify. الحالةُ هي المُطلِق لا الحدث."""
@@ -303,7 +305,7 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         elif num in last_wake and now - last_wake[num] < timedelta(minutes=REWAKE_MIN):
             p.skipped.append((num, f"أُوقظت قبل أقلّ من {REWAKE_MIN} دقيقة"))
         else:
-            p.wakes.setdefault(num, []).append((CLEAR_ID, "pending_clear"))
+            p.wakes.setdefault(num, []).append((CLEAR_ID, AUTO_CLEAR_STATE if num in auto else "pending_clear"))
             since[CLEAR_ID + num] = now
     if len(p.wakes) > MAX_SESSIONS_PER_RUN:
         oldest = sorted(p.wakes, key=lambda n: min(since[i if i != CLEAR_ID else CLEAR_ID + n] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
@@ -437,8 +439,9 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
         import session_state
 
         cleared = session_state.pending_markers(ROOT, now)
+        auto = session_state.auto_clear_nums(ROOT, now)
         return stale_plan(events, directory, live_minus_cleared(live_for(a), cleared, running_from_arg(getattr(a, "running", None))), now,
-                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared)
+                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto)
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
