@@ -70,3 +70,48 @@ def test_single_live_session_on_the_tree_wins_over_stale_names(tmp_path):
     _session(tmp_path, "1", "local_1", "0702 · معاون", TREE)
     _session(tmp_path, "2", "local_2", "0101 · قديمة", TREE, archived=True)
     assert si.app_title(TREE + "\tools", "", tmp_path) == ("0702 · معاون", [])
+
+
+# ── تدرّج الأولويّة عند تكرار المعرّف (W-20261025-008) ──
+def _put(base, name, mtime, **kw):
+    import os
+
+    d = base / "a" / "b"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"local_{name}.json"
+    f.write_text(json.dumps(kw, ensure_ascii=False), encoding="utf-8")
+    os.utime(f, (mtime, mtime))
+
+
+def _run(tmp_path, files, sid="SID-1"):
+    for i, (title, kw, m) in enumerate(files):
+        _put(tmp_path, str(i), m, title=title, **kw)
+    return si.app_title("D:/x", sid, base=tmp_path)
+
+
+def test_direct_old_beats_newer_prior(tmp_path):
+    got = _run(tmp_path, [("0301 قديم", {"cliSessionId": "SID-1"}, 100),
+                          ("0405 جديد", {"cliSessionId": "X", "priorCliSessionIds": ["SID-1"]}, 200)])
+    assert got == ("0301 قديم", [])
+
+
+def test_two_direct_newest_wins(tmp_path):
+    got = _run(tmp_path, [("0301 قديم", {"sessionId": "SID-1"}, 100), ("0302 جديد", {"cliSessionId": "SID-1"}, 200)])
+    assert got == ("0302 جديد", [])
+
+
+def test_two_prior_newest_wins(tmp_path):
+    got = _run(tmp_path, [("0301 قديم", {"priorCliSessionIds": ["SID-1"]}, 100),
+                          ("0302 جديد", {"priorCliSessionIds": ["SID-1"]}, 200)])
+    assert got == ("0302 جديد", [])
+
+
+def test_archived_is_skipped(tmp_path):
+    got = _run(tmp_path, [("0301 قديم", {"cliSessionId": "SID-1"}, 100),
+                          ("0302 جديد", {"cliSessionId": "SID-1", "isArchived": True}, 200)])
+    assert got == ("0301 قديم", [])
+
+
+def test_nested_isarchived_does_not_skip_live_session(tmp_path):
+    got = _run(tmp_path, [("0301 حيّة", {"cliSessionId": "SID-1", "meta": {"isArchived": True}}, 100)])
+    assert got == ("0301 حيّة", [])

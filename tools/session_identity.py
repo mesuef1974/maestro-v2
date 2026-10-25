@@ -44,13 +44,48 @@ def _norm(p: str) -> str:
     return p.replace("\\", "/").rstrip("/").lower()
 
 
+def _newest_first(base: Path) -> list[Path]:
+    """ملفّاتُ الجلسات من الأحدث تعديلاً إلى الأقدم (الجلسةُ الحيّةُ تُوجَد في الأوائل)."""
+    out = []
+    for f in base.glob("*/*/local_*.json"):
+        try:
+            out.append((f.stat().st_mtime, f))
+        except OSError:
+            continue
+    out.sort(key=lambda x: x[0], reverse=True)
+    return [f for _, f in out]
+
+
 def app_title(cwd: str, session_id: str = "", base: Path | None = None) -> tuple[str | None, list[str]]:
     """(العنوانُ الحيّ، المرشَّحون عند الالتباس): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)، ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
 
     شجرةٌ تشترك فيها جلستان حيّتان بلا معرّفٍ يميّز: (None، العناوين) فيسأل الهوك 0101 بدل أن يخمّن ويضلّل."""
     base = SESSIONS if base is None else base
     by_tree: dict[str, str] = {}
-    for f in base.glob("*/*/local_*.json"):
+    files = _newest_first(base)
+    if session_id:  # مسارٌ سريع: الجلسةُ الحيّةُ أحدثُ الملفّات؛ لا نحلّل إلا ما يحوي معرّفها نصّاً
+        prior_hit = None  # تدرّج الأولويّة: sessionId/cliSessionId يغلبان priorCliSessionIds، والأحدثُ تعديلاً داخل كلٍّ
+        for f in files:
+            try:
+                raw = f.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if session_id not in raw:
+                continue
+            try:
+                d = json.loads(raw)
+            except ValueError:
+                continue
+            title = str(d.get("title", ""))
+            if not NUM.match(title) or d.get("isArchived"):
+                continue
+            if session_id in (d.get("sessionId"), d.get("cliSessionId")):
+                return title, []
+            if prior_hit is None and session_id in (d.get("priorCliSessionIds") or []):
+                prior_hit = title
+        if prior_hit is not None:
+            return prior_hit, []
+    for f in files:
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
