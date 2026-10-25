@@ -644,3 +644,39 @@ class TestAutoClear:
 
         assert "150 ألفاً" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108") and "COMMON" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108")
         assert wm.payload(wm.CLEAR_ID, "pending_clear", "0108").startswith("بعد المسح")
+
+
+# ── تدرّج الأولويّة والتطابق مع الأصل (W-20261025-010) ──
+def _put_session(base, name, mtime, **kw):
+    import os
+
+    d = base / "a" / "b"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"local_{name}.json"
+    f.write_text(json.dumps(kw), encoding="utf-8")
+    os.utime(f, (mtime, mtime))
+
+
+def test_local_sid_direct_old_beats_newer_prior(tmp_path):
+    _put_session(tmp_path, "1", 100, sessionId="local_old", cliSessionId="C1")
+    _put_session(tmp_path, "2", 200, sessionId="local_new", cliSessionId="X", priorCliSessionIds=["C1"])
+    assert ss.local_session_id("C1", tmp_path) == "local_old"
+
+
+def test_local_sid_two_direct_newest_wins(tmp_path):
+    _put_session(tmp_path, "1", 100, sessionId="local_old", cliSessionId="C1")
+    _put_session(tmp_path, "2", 200, sessionId="local_new", cliSessionId="C1")
+    assert ss.local_session_id("C1", tmp_path) == "local_new"
+
+
+def test_local_sid_two_prior_newest_wins(tmp_path):
+    _put_session(tmp_path, "1", 100, sessionId="local_old", priorCliSessionIds=["C1"])
+    _put_session(tmp_path, "2", 200, sessionId="local_new", priorCliSessionIds=["C1"])
+    assert ss.local_session_id("C1", tmp_path) == "local_new"
+
+
+def test_local_sid_skips_match_without_session_id_and_empty_id(tmp_path):
+    _put_session(tmp_path, "1", 100, sessionId="local_ok", cliSessionId="C1")
+    _put_session(tmp_path, "2", 200, cliSessionId="C1")
+    assert ss.local_session_id("C1", tmp_path) == "local_ok"
+    assert ss.local_session_id("", tmp_path) == ""

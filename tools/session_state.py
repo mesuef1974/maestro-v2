@@ -785,17 +785,35 @@ def main_confirmations(root: Path | None = None) -> Path:
 
 
 def local_session_id(cli_sid: str, base: Path | None = None) -> str:
-    """معرّفُ الواجهة local_… للجلسة (الذي تُراسَل به) من معرّف CLI الذي يمرّره الخطّاف؛ وإلا فمعرّف CLI نفسُه."""
+    """معرّفُ الواجهة local_… للجلسة (الذي تُراسَل به) من معرّف CLI الذي يمرّره الخطّاف؛ وإلا فمعرّف CLI نفسُه.
+
+    الأحدثُ تعديلاً أوّلاً (الجلسةُ الحيّةُ في الأوائل) ولا يُحلَّل JSON إلا لما يحوي المعرّفَ نصّاً؛ والتدرّج:
+    cliSessionId يغلب priorCliSessionIds، والأحدثُ داخل كلٍّ (W-20261025-010)."""
+    if not cli_sid:
+        return cli_sid
     try:
         import session_identity
 
-        for f in (base or session_identity.SESSIONS).glob("*/*/local_*.json"):
+        prior_hit = None
+        for f in session_identity._newest_first(base or session_identity.SESSIONS):
             try:
-                d = json.loads(f.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+                raw = f.read_text(encoding="utf-8")
+            except OSError:
                 continue
-            if cli_sid and cli_sid in {d.get("cliSessionId"), *(d.get("priorCliSessionIds") or [])} and d.get("sessionId"):
+            if cli_sid not in raw:
+                continue
+            try:
+                d = json.loads(raw)
+            except ValueError:
+                continue
+            if not d.get("sessionId"):
+                continue
+            if d.get("cliSessionId") == cli_sid:
                 return str(d["sessionId"])
+            if prior_hit is None and cli_sid in (d.get("priorCliSessionIds") or []):
+                prior_hit = str(d["sessionId"])
+        if prior_hit is not None:
+            return prior_hit
     except Exception:  # noqa: BLE001
         pass
     return cli_sid

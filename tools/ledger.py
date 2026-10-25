@@ -1445,13 +1445,15 @@ def governing_files(changed: list[str]) -> list[str]:
     return [f for f in changed if any(re.search(p, normalize_path(f)) for p in GOVERNING_RE)]
 
 
-def _docs_changed_files(approved: str, new_head: str, passed: list[str] | None) -> list[str]:
+def _docs_changed_files(approved: str, new_head: str, passed: list[str] | None, repo: str | None = None) -> list[str]:
     """ما يُفحص لاستثناء «وثائق»: `git diff` الحقيقيُّ **اتّحاداً** مع القائمة الممرَّرة — فلا يتجاوز الفحصَ من يمرّر قائمةً حميدةً.
 
     فإن تعذّرت قراءةُ git (اختبارٌ بلا مستودع) والقائمةُ ممرَّرةٌ فُحصت وحدَها؛ وبلا قائمةٍ يفشل بصوتٍ عالٍ كما كان.
     """
     try:
-        real = [f for f in _git_read(["git", "diff", "--no-renames", "--name-only", approved, new_head]).splitlines() if f.strip()]
+        cmd = ["git", "diff", "--no-renames", "--name-only", approved, new_head]
+        out = _git_read(cmd, repo) if repo else _git_read(cmd)  # --repo يُحترم إن مُرِّر (W-20261025-017)
+        real = [f for f in out.splitlines() if f.strip()]
     except LedgerError:
         if passed is None:
             raise
@@ -1549,7 +1551,7 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         check_red_fix(item, item["approved_head"], new_head, repo)
         reason = f"إصلاحُ فحصٍ أحمر بعد الدفع بقرار المالك 10-10 D-332م (تحقّق آليّ: pushed، بلا واجهة/هجرات/أمن) — {reason}"
     elif kind == "docs":
-        changed = _docs_changed_files(item["approved_head"], new_head, changed)
+        changed = _docs_changed_files(item["approved_head"], new_head, changed, repo)
         governing = governing_files(changed)
         if governing:
             raise LedgerError(
@@ -1562,6 +1564,63 @@ def waive_head(item_id: str, new_head: str, by: str, reason: str, path=None, cha
         raise LedgerError("--kind: docs أو reviewed-diff أو main-merge أو tests-only أو tests-main-chain أو types-only أو red-fix أو patch-id أو auto")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": new_head[:8]}, path)
     append_event("note", item_id, {"text": check_text("note", f"استثناءُ رأسٍ تافه بتوقيع {by}: {item['approved_head']}→{new_head[:8]} — {reason}")}, path)
+
+
+#: (W-20261025-017، D-443م وD-489م) سجلُّ تفويض 0101 في الدفتر: اعتمادُ الرأس بعد مراجعة الفرق الفعليّ، ويقبله approval_check تفويضاً لا قولاً.
+#: يُرفض آلياً إن مسّ الفرق واجهةً (templates/ وstatic/) أو هجرةً أو صلاحيّاتٍ/أمناً أو ملفّاً حاكماً (يُضاف إلى الحاكم هنا ملفّاتُ قواعد هذا المستودع).
+DELEGATION_BY = {"0101"}
+DELEGATION_VIA = "تفويض D-443م"
+DELEGATION_FILES_MAX = 60
+DELEGATION_UI_PREFIXES = ("templates/", "static/")
+DELEGATION_GOVERNING_RE = (
+    r"^role_cards/", r"^decisions\.md$", r"^docs/governance/", r"^\.github/",
+    r"^tools/(approval_check|ledger|flow_pump|guard_git)\.py$",  # قاعدةُ الاعتماد نفسُها لا تُعدَّل بتفويض
+)
+
+
+def delegation_blockers(changed: list[str]) -> list[str]:
+    """أسبابُ رفض التفويض آلياً لقائمة الملفّات، بأسمائها؛ فارغةٌ = يجوز."""
+    out: list[str] = []
+    for f in changed:
+        n = normalize_path(f)
+        if n.startswith(DELEGATION_UI_PREFIXES):
+            out.append(f"واجهة: {f}")
+        elif "/migrations/" in "/" + n:
+            out.append(f"هجرة: {f}")
+        elif governing_files([f]) or any(re.search(p, n) for p in DELEGATION_GOVERNING_RE):
+            out.append(f"حاكم: {f}")
+        elif any(k in n for k in SENSITIVE_PATH_PARTS):
+            out.append(f"صلاحيات/أمن: {f}")
+    return out
+
+
+def record_delegation(item_id: str, head: str, by: str, path=None, repo: str | None = None, changed: list[str] | None = None) -> list[str]:
+    """يسجّل اعتمادَ 0101 بالتفويض على الرأس: الفرقُ الفعليّ عن origin/main اتّحاداً مع الممرَّر (كما في الوثائق)، ويرفض الموانع.
+    يكتب حدثَ approval (by، via، head، files) ثمّ حالةَ approved بالرأس. يعيد الملفّات."""
+    if by not in DELEGATION_BY:
+        raise LedgerError(f"التفويض لـ{sorted(DELEGATION_BY)} وحدَها")
+    if not HEAD_RE.match(head):
+        raise LedgerError("--head غيرُ صالح")
+    item = reduce_state(load_events(path)).get(item_id)
+    if not item:
+        raise LedgerError(f"لا بطاقةَ {item_id}")
+    if item.get("state") not in ("ready_for_review", "approved"):
+        raise LedgerError(f"التفويض لبطاقةٍ جاهزةٍ للمعاينة فقط، حالتُها {item.get('state')}")
+    try:
+        real = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{head}"], repo).splitlines() if f.strip()]
+    except LedgerError:
+        if changed is None:
+            raise
+        real = []
+    files = list(dict.fromkeys([*(changed or []), *real]))
+    if not files:
+        raise LedgerError("فرقٌ فارغٌ عن origin/main (fetch أوّلاً؟) — لا تفويضَ على لا شيء")
+    bad = delegation_blockers(files)
+    if bad:
+        raise LedgerError(f"يُعرض على المالك لا بالتفويض: {bad[:6]}")
+    append_event("approval", item_id, {"by": by, "via": DELEGATION_VIA, "head": head[:8], "n": len(files), "files": sorted(files)[:DELEGATION_FILES_MAX]}, path)
+    append_event("state", item_id, {"state": "approved", "by": by, "head": head[:8]}, path)
+    return files
 
 
 def wsjf(item: dict) -> float:
@@ -1586,9 +1645,9 @@ def late_items(items: dict, now: datetime | None = None) -> list[dict]:
     return [i for i in items.values() if i.get("state") in waiting and i.get("start") and datetime.fromisoformat(i["start"]) <= now]
 
 
-def _git_read(cmd: list[str]) -> str:
-    """أمرٌ قرائيٌّ على غيت أو gh؛ يفشل بصوتٍ عالٍ لا صامتاً."""
-    repo = os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+def _git_read(cmd: list[str], repo: str | None = None) -> str:
+    """أمرٌ قرائيٌّ على غيت أو gh؛ يفشل بصوتٍ عالٍ لا صامتاً. `repo` يُحترم إن مُرِّر (W-20261025-017)."""
+    repo = repo or os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
     proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=False, cwd=repo)
     if proc.returncode != 0:
         raise LedgerError(f"فشل: {' '.join(cmd[:4])} — {proc.stderr.strip()[:200]}")
@@ -1671,6 +1730,11 @@ def main() -> None:
     wv = sub.add_parser("waive-head", help="استثناءُ تافهٍ (وثائق فقط) بتوقيع 0501: يُنقل الاعتمادُ إلى رأسٍ جديد")
     wv.add_argument("id"); wv.add_argument("--head", required=True); wv.add_argument("--by", required=True); wv.add_argument("--reason", required=True); wv.add_argument("--kind", default="docs", choices=["docs", "main-merge", "tests-only", "tests-main-chain", "types-only", "red-fix", "patch-id", "reviewed-diff", "auto"])
     wv.add_argument("--reviewed-by"); wv.add_argument("--repo")
+    dg = sub.add_parser("delegate", help="يسجّل اعتمادَ 0101 بتفويض D-443م على رأس (يرفض واجهةً وهجرةً وصلاحيّاتٍ وحاكماً)")
+    dg.add_argument("id")
+    dg.add_argument("--head", required=True)
+    dg.add_argument("--by", required=True)
+    dg.add_argument("--repo")
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
@@ -1707,6 +1771,8 @@ def main() -> None:
             park(args.id, args.decision, args.reason); print("ok")
         elif args.cmd == "reapprove":
             reapprove(args.id, args.head, args.by, args.note); print("ok")
+        elif args.cmd == "delegate":
+            print(f"ok: {len(record_delegation(args.id, args.head, args.by, repo=args.repo))} ملفاً")
         elif args.cmd == "waive-head":
             waive_head(args.id, args.head, args.by, args.reason, kind=args.kind, repo=args.repo, reviewed_by=args.reviewed_by); print("ok")
         elif args.cmd == "tag":
