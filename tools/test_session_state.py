@@ -553,3 +553,17 @@ class TestOutboxWaiting:
         st = {"work": {"focus": {"card": "W-9", "step": 2}}, "waiting": [{"n": 0, "to": "0701", "at": "2026-10-25T13:00:00+03:00"}]}
         h = ss.resume_head(st)
         assert h.splitlines()[0].startswith("[استأنِف فوراً]") and "W-9" in h and "0701" in h
+
+
+def test_stop_hook_logs_every_call_with_reason(tree):
+    log = ss.state_path("0000", tree).with_name("stop_hook_calls.log")
+    hook = json.dumps({"cwd": "D:/w", "session_id": "s1"})
+    ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
+    ss.cmd_stop_hook(hook, tree, lambda c, i: (None, ["0108 · أ", "0102 · ب"]))
+    ss.cmd_stop_hook(hook, tree, lambda c, i: (None, []))
+    ss.cmd_stop_hook("not json", tree)
+    rows = log.read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 4
+    assert "cwd=D:/w" in rows[0] and "session_id=s1" in rows[0] and "0108: جُدِّد" in rows[0]
+    assert "الرقمُ غيرُ محدَّد (2" in rows[1] and "الرقمُ غيرُ محدَّد (0" in rows[2]
+    assert "تعذّرت قراءةُ الحمولة" in rows[3]

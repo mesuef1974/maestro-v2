@@ -833,29 +833,48 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         return ""
 
 
+def _log_stop_call(root: Path | None, cwd: str, sid: str, outcome: str) -> None:
+    """سطرٌ لكلّ استدعاءٍ للخطّاف (W-20261025-007): وقتٌ، cwd، session_id، الرقمُ المحلول أو سببُ التخطّي. لا يرفع استثناءً."""
+    try:
+        with state_path("0000", root).with_name("stop_hook_calls.log").open("a", encoding="utf-8") as f:
+            f.write(f"{_fmt(_now())} cwd={cwd} session_id={sid} {outcome}\n")
+    except OSError:
+        pass
+
+
 def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str:
-    """Stop: يجدّد ملفَّ حالة الجلسة بعد كلّ دورٍ (idempotent) حتى لا يُطلب منها كتابتُه برسالة. لا يسقط الجلسةَ أبداً."""
+    """Stop: يجدّد ملفَّ حالة الجلسة بعد كلّ دورٍ (idempotent) حتى لا يُطلب منها كتابتُه برسالة. لا يسقط الجلسةَ أبداً.
+
+    كلُّ استدعاءٍ يُسجَّل في stop_hook_calls.log، ولا رجوعَ صامتاً: يُذكر الرقمُ المحلول أو سببُ التخطّي."""
+    cwd, sid, outcome = "", "", "تخطّي: تعذّرت قراءةُ الحمولة"
     try:
         hook = json.loads(stdin_text or "{}")
         import session_identity
 
         cwd, sid = hook.get("cwd", ""), str(hook.get("session_id", ""))
+        outcome = "تخطّي: فشل قبل تحديد الرقم"
         title, cands = (titles or session_identity.app_title)(cwd, sid)
         nums = {m.group(1) for m in (re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", c) for c in ([title] if title else cands)) if m}
         if len(nums) != 1:
+            outcome = f"تخطّي: الرقمُ غيرُ محدَّد ({len(nums)} مرشّحاً: {','.join(sorted(nums)) or '-'})"
             return ""
         num = nums.pop()
+        outcome = f"{num}: فشل أثناء التجديد"
         label = (load_state(num, root) or {}).get("session_label", "")
         tpath = hook.get("transcript_path")
         if tpath:
             scan_transcript(num, tpath, root)
         write_state(num, derive(num, label, cwd=cwd or None, root=root), root, heartbeat=HEARTBEAT_AFTER)
+        outcome = f"{num}: جُدِّد"
     except Exception as exc:  # noqa: BLE001
+        outcome += f" ({type(exc).__name__})"
         try:  # لا يسقط الجلسةَ، لكنّ الفشلَ يُسجَّل ليُعرف أنّ الخطّاف يعمل في شجرات worktree
             with state_path("0000", root).with_name("stop_hook_errors.log").open("a", encoding="utf-8") as f:
                 f.write(f"{_fmt(_now())} {type(exc).__name__}: {str(exc)[:150]}\n")
         except OSError:
             pass
+    finally:
+        _log_stop_call(root, cwd, sid, outcome)
     return ""
 
 
