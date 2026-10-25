@@ -31,6 +31,70 @@ class ReadyHead(unittest.TestCase):
         self.assertIsNone(fp.ready_head(_item("ready_for_review", "بالرأس abc123")))
 
 
+def _fake_git(branches, grep_hits):
+    """git وهميّ: for-each-ref يعيد الفروع، وlog --grep يعيد رأساً لفروع grep_hits فقط، وrev-parse لـ_is_platform."""
+    def git(repo, *args):
+        if args[0] == "for-each-ref":
+            return 0, chr(10).join(f"{n} {s}" for n, s in branches)
+        if args[0] == "log":
+            return 0, "x" if args[-2] in grep_hits else ""
+        return 0, ""
+    return git
+
+
+class DeriveHead(unittest.TestCase):
+    BR = [("claude/a", "a" * 40), ("w0701-b", "b" * 40), ("main", "c" * 40)]
+
+    def run_derive(self, hits):
+        with mock.patch.object(fp, "_is_platform", return_value=True):
+            return fp.derive_head("W-1", _fake_git(self.BR, hits), "P")
+
+    def test_a_single_allowed_branch_gives_its_tip(self):
+        self.assertEqual(self.run_derive({"claude/a"}), ("aaaaaaaa", "claude/a"))
+
+    def test_main_is_never_a_candidate(self):
+        head, _ = self.run_derive({"main"})
+        self.assertIsNone(head)
+
+    def test_two_branches_are_ambiguous_and_give_no_head(self):
+        head, why = self.run_derive({"claude/a", "w0701-b"})
+        self.assertIsNone(head)
+        self.assertIn("التباس", why)
+
+    def test_no_branch_gives_no_head(self):
+        self.assertIsNone(self.run_derive(set())[0])
+
+    def test_a_non_platform_card_gives_no_head(self):
+        with mock.patch.object(fp, "_is_platform", return_value=False):
+            self.assertIsNone(fp.derive_head("W-1", _fake_git(self.BR, {"claude/a"}), "P")[0])
+
+
+class DerivedFlow(unittest.TestCase):
+    """بطاقةٌ بلا رأسٍ معلَن ولا رسالة: يُشتقّ رأسُها من الفرع، فتنتظر المالك، فإن اعتمد انتقلت approved بالرأس المشتقّ وحده."""
+    STATES = {"W-1": {"state": "ready_for_review", "notes": []}}
+    GIT = staticmethod(lambda: _fake_git([("claude/a", "a" * 40)], {"claude/a"}))
+
+    def test_waits_for_owner_and_is_listed_once(self):
+        with mock.patch.object(fp, "_is_platform", return_value=True), mock.patch.object(fp, "approval_ok", return_value=False):
+            self.assertEqual(fp.owner_list(self.STATES, self.GIT(), "P"), ["W-1 @ aaaaaaaa"])
+            self.assertIn("ينتظر", fp.approve_pass(self.STATES, False, self.GIT(), "P")[0])
+
+    def test_owner_approval_moves_it_with_the_derived_head_and_no_message(self):
+        with (
+            mock.patch.object(fp, "_is_platform", return_value=True),
+            mock.patch.object(fp, "approval_ok", return_value=True),
+            mock.patch.object(fp.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run,
+        ):
+            line = fp.approve_pass(self.STATES, True, self.GIT(), "P")[0]
+        self.assertIn("approved", line)
+        cmd = run.call_args[0][0]
+        self.assertEqual(cmd[cmd.index("--head") + 1], "aaaaaaaa")
+
+    def test_an_approved_card_is_not_listed_for_the_owner(self):
+        with mock.patch.object(fp, "_is_platform", return_value=True), mock.patch.object(fp, "approval_ok", return_value=True):
+            self.assertEqual(fp.owner_list(self.STATES, self.GIT(), "P"), [])
+
+
 class ApprovePass(unittest.TestCase):
     STATES = {
         "W-1": _item("ready_for_review", "جاهزٌ للمعاينة بالرأس aaaaaaaa"),
