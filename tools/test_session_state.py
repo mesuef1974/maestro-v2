@@ -569,6 +569,83 @@ def test_stop_hook_logs_every_call_with_reason(tree):
     assert "تعذّرت قراءةُ الحمولة" in rows[3]
 
 
+class TestAutoClear:
+    """W-20261025-015: خطّاف Stop يقيس سياق الجلسة من transcript ويكتب طلبَ المسح الذاتيّ عند 150 ألفاً بصمت."""
+
+    @staticmethod
+    def _tx(tmp_path, *rows):
+        p = tmp_path / "t.jsonl"
+        p.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+        return p
+
+    @staticmethod
+    def _asst(inp, cr=0, cc=0, **extra):
+        return {"type": "assistant", "message": {"usage": {"input_tokens": inp, "cache_read_input_tokens": cr, "cache_creation_input_tokens": cc, "output_tokens": 99}}, **extra}
+
+    def _ready(self, tree):
+        ss.set_focus("0108", "W-1", 2, root=tree)
+        ss.set_duties("0108", none=True, root=tree, now=NOW)
+        ss.write_state("0108", ss.derive("0108", "0108 · التقييم والعصف", NOW, tree, cwd="D:/w"), tree)
+
+    def test_context_is_input_plus_cache_of_last_main_message(self, tmp_path):
+        t = self._tx(tmp_path, self._asst(10, 1000, 200), self._asst(5, 149_000, 300), self._asst(1, 999_999, 0, isSidechain=True))
+        assert ss.context_tokens(t) == 149_305
+
+    def test_context_none_when_unmeasurable(self, tmp_path):
+        assert ss.context_tokens(tmp_path / "missing.jsonl") is None
+        assert ss.context_tokens(self._tx(tmp_path, {"type": "user", "message": {"content": "x"}})) is None
+        bad = tmp_path / "bad.jsonl"
+        bad.write_text('{"usage": oops\n', encoding="utf-8")
+        assert ss.context_tokens(bad) is None
+
+    def test_context_reads_only_tail_of_huge_file(self, tmp_path):
+        p = tmp_path / "big.jsonl"
+        pad = json.dumps({"type": "user", "message": {"content": "ح" * 500}}, ensure_ascii=False) + "\n"
+        p.write_text(pad * 2000 + json.dumps(self._asst(7, 700, 70)) + "\n", encoding="utf-8")
+        assert p.stat().st_size > ss.TRANSCRIPT_TAIL
+        assert ss.context_tokens(p) == 777
+
+    def test_below_threshold_writes_nothing(self, tree, tmp_path):
+        self._ready(tree)
+        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(1, 149_997, 1)), tree, NOW)
+        assert "149999" in out
+        assert ss.pending_markers(tree, NOW) == {} and ss.auto_clear_nums(tree, NOW) == set()
+
+    def test_at_threshold_writes_marker_and_request_once(self, tree, tmp_path):
+        self._ready(tree)
+        t = self._tx(tmp_path, self._asst(0, 150_000, 0))
+        assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", t, tree, NOW)
+        assert list(ss.pending_markers(tree, NOW)) == ["0108"] and ss.auto_clear_nums(tree, NOW) == {"0108"}
+        before = ss.auto_clear_path("0108", tree).read_text(encoding="utf-8")
+        assert "الطلبُ قائم" in ss.maybe_auto_clear("0108", "D:/w", t, tree, NOW + timedelta(minutes=1))
+        assert ss.auto_clear_path("0108", tree).read_text(encoding="utf-8") == before  # idempotent
+
+    def test_request_expires_after_ttl(self, tree, tmp_path):
+        self._ready(tree)
+        ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(0, 160_000, 0)), tree, NOW)
+        assert ss.auto_clear_nums(tree, NOW + timedelta(seconds=ss.PENDING_TTL_S + 1)) == set()
+
+    def test_guard_failure_is_silent_and_writes_nothing(self, tree, tmp_path):
+        ss.write_state("0108", ss.derive("0108", "0108 · التقييم والعصف", NOW, tree, cwd="D:/w"), tree)  # بلا focus ولا واجبات
+        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(0, 200_000, 0)), tree, NOW)
+        assert "سقط الحارسُ" in out
+        assert ss.pending_markers(tree, NOW) == {} and ss.auto_clear_nums(tree, NOW) == set()
+
+    def test_stop_hook_triggers_and_never_breaks_refresh(self, tree, tmp_path):
+        self._ready(tree)
+        t = self._tx(tmp_path, self._asst(0, 155_000, 0))
+        hook = json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(t)})
+        assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
+        assert ss.auto_clear_nums(tree) == {"0108"}
+        assert "كُتب طلبُ المسح" in ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8")
+
+    def test_wake_message_differs_when_auto_clear_requested(self):
+        import wake_monitor as wm
+
+        assert "150 ألفاً" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108") and "COMMON" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108")
+        assert wm.payload(wm.CLEAR_ID, "pending_clear", "0108").startswith("بعد المسح")
+
+
 # ── تدرّج الأولويّة والتطابق مع الأصل (W-20261025-010) ──
 def _put_session(base, name, mtime, **kw):
     import os
