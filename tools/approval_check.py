@@ -560,9 +560,43 @@ def main_merge_carry(card: str | None, pr_head: str | None, target: str) -> list
     return waiver_carry(card, pr_head, target)
 
 
+DELEGATION_EVIDENCE_PREFIX = "الدفتر: تفويض 0101"
+
+
+def delegation_evidence(card: str | None, head: str | None) -> list[tuple[str, str]]:
+    """(W-20261025-017، D-489م) سجلُّ تفويض 0101 في دفتر البطاقة بالرأس وملفّات الفرق: يُقبل ويُعرض تفويضاً لا قولاً.
+    يُعاد فحصُ الموانع على الملفّات المسجَّلة (واجهة/هجرة/صلاحيات/حاكم) فإن وُجد مانعٌ أو كان الفرقُ الفعليّ أوسع من المسجَّل
+    صار الدليلُ conflict يحجب. لا يثبت شيئاً وحدَه إلا إن طابق الرأس."""
+    if not card:
+        return []
+    d = _show(card)
+    if not d:
+        return []
+    import ledger  # noqa: PLC0415
+
+    out: list[tuple[str, str]] = []
+    for a in d.get("approvals", []):
+        if a.get("via") != ledger.DELEGATION_VIA or a.get("by") not in ledger.DELEGATION_BY:
+            continue
+        h = str(a.get("head") or "")[:8]
+        files = [str(f) for f in (a.get("files") or [])]
+        bad = ledger.delegation_blockers(files)
+        code, diff = run(["git", "diff", "--no-renames", "--name-only", f"origin/main...{h}"], cwd=REPO_DIR)
+        actual = [f for f in diff.splitlines() if f.strip()] if code == 0 else []
+        extra = sorted(set(actual) - set(files)) if len(files) < ledger.DELEGATION_FILES_MAX else []
+        if bad or extra or not files:
+            why = "؛ ".join([*bad[:3], *([f"الفرقُ الفعليّ أوسع من المسجَّل: {extra[:3]}"] if extra else []), *([] if files else ["بلا ملفّاتٍ مسجَّلة"])])
+            out.append((f"الدفتر: تفويض 0101 على {h} مرفوضٌ آلياً ({why}) — يُعرض على المالك", "conflict"))
+            continue
+        out.append((f"{DELEGATION_EVIDENCE_PREFIX} ({ledger.DELEGATION_VIA}) على الرأس {h} — {a.get('n', len(files))} ملفّاً بلا واجهةٍ ولا هجرةٍ ولا صلاحيّاتٍ ولا حاكم ← تفويضٌ لا قولٌ مباشرٌ من المالك على هذا الرأس", head_status(h, head)))
+    return out
+
+
 def _owner_direct(e: tuple[str, str]) -> bool:
-    """H2: أيُّ دليلٍ يُقبل اعتماداً؟ سطرُ owner_confirmations (مباشرٌ أو تفويضٌ دائمٌ مسجَّل) لا الدفترُ ولا وصفُ الطلب ولا المنقول."""
+    """H2: أيُّ دليلٍ يُقبل اعتماداً؟ سطرُ owner_confirmations (مباشرٌ أو تفويضٌ دائمٌ مسجَّل) أو سجلُّ تفويض 0101 المفحوص آلياً؛ لا الدفترُ العاديّ ولا وصفُ الطلب ولا المنقول."""
     text = e[0]
+    if text.startswith(DELEGATION_EVIDENCE_PREFIX):
+        return True
     if not text.startswith("owner_confirmations.md:"):
         return False
     return "منقولٌ عن" not in text
@@ -626,6 +660,7 @@ def main() -> int:
             ev += card_evidence(card, pr_head)
             ev += confirmations_evidence(card, pr_head)  # أسطرُ المالك المسجَّلة باسم البطاقة
     ev += confirmations_evidence(a.target, pr_head)
+    ev += delegation_evidence(a.target if a.kind == "card" else (card or None), pr_head)
     ev += waiver_carry(card if a.kind == "pr" else a.target, pr_head, a.target)
     rejected = [e for e in ev if e[1] == "rejected"]
     if rejected:
