@@ -43,6 +43,9 @@ def run(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
 # اعتماداتٌ قديمةٌ بلا رأسٍ تُقبل بتحذيرٍ حتى هذا التاريخ ثمّ تُرفض (قرار 0101، v2.23)
 LEGACY_DEADLINE = date(2026, 10, 9)
 HEAD_IN_LINE = re.compile(r"(?:الرأس|@)\s*([0-9a-f]{7,40})")
+#: (W-20261025-018) في أسطر owner_confirmations.md يُقرأ الرأسُ من عمود الهدف «بطاقة @رأس» (الأخير) لا من أوّل «الرأس/@» في السطر كلّه؛
+#: قبل هذا التاريخ يبقى السلوكُ القديم مع إنذارٍ حيث اختلفا (قُيس 2026-10-25: 15 سطراً من 1468)، وبعده يُلزَم العمود.
+COLUMN_HEAD_FROM = date(2026, 11, 1)
 
 
 def head_status(approved: str | None, pr_head: str | None, today: date | None = None) -> str:
@@ -234,6 +237,24 @@ def source_line() -> str:
     return f"المصدر المقروء: {f} — آخر تعديل {datetime.datetime.fromtimestamp(f.stat().st_mtime):%Y-%m-%d %H:%M}"
 
 
+def row_head(ln: str, today: date | None = None) -> tuple[str | None, str]:
+    """(الرأس، تحذيرٌ أو ""): سطرُ جدولٍ بخمسة أعمدةٍ فأكثر يُقرأ رأسُه من عموده الأخير بعد COLUMN_HEAD_FROM؛
+    وقبله يبقى أوّلُ رأسٍ في السطر مع تحذيرٍ إن خالفه رأسُ العمود. وما ليس جدولاً يبقى على السلوك القديم."""
+    today = today or date.today()
+    whole = HEAD_IN_LINE.search(ln)
+    old = whole.group(1) if whole else None
+    cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+    if len(cells) < 5:
+        return old, ""
+    col = HEAD_IN_LINE.search(cells[-1])
+    new = col.group(1) if col else None
+    if today >= COLUMN_HEAD_FROM:
+        return new, ""
+    if (new or "")[:8] != (old or "")[:8]:
+        return old, f" ⚠ الرأس في عمود الهدف ({(new or 'غائب')[:8]}) يخالف أوّل رأسٍ في السطر ({(old or 'غائب')[:8]}) — إنذارٌ حتى {COLUMN_HEAD_FROM} ثمّ يُقرأ من العمود"
+    return old, ""
+
+
 def _confirmation_rows(key: str, pr_head: str | None = None, enforce: bool | None = None,
                        path: Path | None = None) -> list[tuple[str, str, str]]:
     """(السطرُ الخامّ، الحالة، الذيل) لأسطر owner_confirmations.md الحيّة التي تذكر الهدف — مصدرُ الدليل والحمل معاً."""
@@ -254,9 +275,9 @@ def _confirmation_rows(key: str, pr_head: str | None = None, enforce: bool | Non
     direct = {w for ln in live if _has_key(key, ln) for k, w, _ in [line_source(ln)] if k in ("direct", "legacy") and w}
     for ln in live:
         if _has_key(key, ln):
-            h = HEAD_IN_LINE.search(ln)
-            tail = " ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else ""
-            st = quote_status(ln, head_status(h.group(1) if h else None, pr_head))
+            head, warn = row_head(ln)
+            tail = (" ← إفادةُ جلسةٍ تُدقَّق بالعيّنة" if "إفادةُ جلسة" in ln else "") + warn
+            st = quote_status(ln, head_status(head, pr_head))
             if st == "rejected":
                 tail += " ✘ نصُّ القول رفضٌ لا قبول"
             kind, _, hearer = line_source(ln)
@@ -560,9 +581,43 @@ def main_merge_carry(card: str | None, pr_head: str | None, target: str) -> list
     return waiver_carry(card, pr_head, target)
 
 
+DELEGATION_EVIDENCE_PREFIX = "الدفتر: تفويض 0101"
+
+
+def delegation_evidence(card: str | None, head: str | None) -> list[tuple[str, str]]:
+    """(W-20261025-017، D-489م) سجلُّ تفويض 0101 في دفتر البطاقة بالرأس وملفّات الفرق: يُقبل ويُعرض تفويضاً لا قولاً.
+    يُعاد فحصُ الموانع على الملفّات المسجَّلة (واجهة/هجرة/صلاحيات/حاكم) فإن وُجد مانعٌ أو كان الفرقُ الفعليّ أوسع من المسجَّل
+    صار الدليلُ conflict يحجب. لا يثبت شيئاً وحدَه إلا إن طابق الرأس."""
+    if not card:
+        return []
+    d = _show(card)
+    if not d:
+        return []
+    import ledger  # noqa: PLC0415
+
+    out: list[tuple[str, str]] = []
+    for a in d.get("approvals", []):
+        if a.get("via") != ledger.DELEGATION_VIA or a.get("by") not in ledger.DELEGATION_BY:
+            continue
+        h = str(a.get("head") or "")[:8]
+        files = [str(f) for f in (a.get("files") or [])]
+        bad = ledger.delegation_blockers(files)
+        code, diff = run(["git", "diff", "--no-renames", "--name-only", f"origin/main...{h}"], cwd=REPO_DIR)
+        actual = [f for f in diff.splitlines() if f.strip()] if code == 0 else []
+        extra = sorted(set(actual) - set(files)) if len(files) < ledger.DELEGATION_FILES_MAX else []
+        if bad or extra or not files:
+            why = "؛ ".join([*bad[:3], *([f"الفرقُ الفعليّ أوسع من المسجَّل: {extra[:3]}"] if extra else []), *([] if files else ["بلا ملفّاتٍ مسجَّلة"])])
+            out.append((f"الدفتر: تفويض 0101 على {h} مرفوضٌ آلياً ({why}) — يُعرض على المالك", "conflict"))
+            continue
+        out.append((f"{DELEGATION_EVIDENCE_PREFIX} ({ledger.DELEGATION_VIA}) على الرأس {h} — {a.get('n', len(files))} ملفّاً بلا واجهةٍ ولا هجرةٍ ولا صلاحيّاتٍ ولا حاكم ← تفويضٌ لا قولٌ مباشرٌ من المالك على هذا الرأس", head_status(h, head)))
+    return out
+
+
 def _owner_direct(e: tuple[str, str]) -> bool:
-    """H2: أيُّ دليلٍ يُقبل اعتماداً؟ سطرُ owner_confirmations (مباشرٌ أو تفويضٌ دائمٌ مسجَّل) لا الدفترُ ولا وصفُ الطلب ولا المنقول."""
+    """H2: أيُّ دليلٍ يُقبل اعتماداً؟ سطرُ owner_confirmations (مباشرٌ أو تفويضٌ دائمٌ مسجَّل) أو سجلُّ تفويض 0101 المفحوص آلياً؛ لا الدفترُ العاديّ ولا وصفُ الطلب ولا المنقول."""
     text = e[0]
+    if text.startswith(DELEGATION_EVIDENCE_PREFIX):
+        return True
     if not text.startswith("owner_confirmations.md:"):
         return False
     return "منقولٌ عن" not in text
@@ -626,6 +681,7 @@ def main() -> int:
             ev += card_evidence(card, pr_head)
             ev += confirmations_evidence(card, pr_head)  # أسطرُ المالك المسجَّلة باسم البطاقة
     ev += confirmations_evidence(a.target, pr_head)
+    ev += delegation_evidence(a.target if a.kind == "card" else (card or None), pr_head)
     ev += waiver_carry(card if a.kind == "pr" else a.target, pr_head, a.target)
     rejected = [e for e in ev if e[1] == "rejected"]
     if rejected:
