@@ -1,0 +1,30 @@
+name: اختبارات أدوات الحوكمة
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tools-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tools:
+    # الأدوات مكتوبة وتُشغَّل على Windows (مسارات ومحارف)؛ فالفحص على بيئتها نفسها
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: تثبيت pytest
+        run: python -m pip install pytest
+      - name: اختبارات tools
+        run: python -m pytest tools -q -p no:cacheprovider

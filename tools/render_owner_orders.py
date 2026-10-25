@@ -40,7 +40,8 @@ def render(rows: list[tuple[str, str, str]]) -> str:
 
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
-    rows = owner_rows((ROOT / "decisions.md").read_text(encoding="utf-8"))
+    arch = ROOT / "decisions_archive.md"  # أوامرُ المالك المؤرشفة تبقى في الناتج (W-20261025-016)
+    rows = owner_rows((arch.read_text(encoding="utf-8") + chr(10) if arch.is_file() else "") + (ROOT / "decisions.md").read_text(encoding="utf-8"))
     (ROOT / "owner_orders_auto.md").write_text(render(rows), encoding="utf-8")
     print(f"owner_orders_auto.md ✔ ({len(rows)} صفّاً)")
     return 0
