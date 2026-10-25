@@ -10,7 +10,7 @@
                                           # يطابق الأمرَ بـowner_confirmations.md ثمّ يولّد ويتحقّق ويطبع تعليمة المسح لـ0101
     session_state.py restore NNNN         # يطبع الحالةَ موسومةً «بيانات» لا أوامر
     session_state.py focus NNNN --card ID --step N   # يعلن تركيزَ الجلسة (بطاقةٌ في الدفتر وخطوة)
-    session_state.py guard NNNN           # حارسُ المسح: يفشل إن غاب focus معلَنٌ أو أقدمُ من آخر حدثٍ للجلسة وللجلسة بطاقةٌ محجوزة
+    session_state.py guard NNNN           # حارسُ المسح (هو نفسُ فحص خطّاف Stop): focus ثمّ الواجبات ثمّ تطابقُ ملفّ الحالة مع الدفتر
     session_state.py hook < hook.json     # SessionStart: يحقن الحالةَ بعد المسح (source=startup|clear) إن وُجدت وكانت حديثة
     session_state.py duties NNNN --none | --add ID --every N --what "<وصفٌ قصير>" --owner-quote "<نصّ الأمر>" | --clear
                                           # الواجباتُ الدائمة/الدورات؛ prepare-clear يرفض إن لم تُسجَّل أو يُصرَّح بخلوّها (W-20261024-006)
@@ -119,6 +119,19 @@ def set_focus(num: str, card: str, step: int, root: Path | None = None, ledger_p
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"card": card, "step": step, "at": _fmt(_now())}, ensure_ascii=False) + "\n", encoding="utf-8")
     return p
+
+
+def renew_focus(num: str, root: Path | None = None, ledger_path: Path | None = None) -> bool:
+    """يجدّد ختمَ focus المعلَن بالبطاقة والخطوة نفسيهما (W-20261025-024): كلُّ حدثٍ جديدٍ في الدفتر يقدّم «آخر حدثٍ للجلسة»
+    فيسقط الحارسُ بلا ذنب. لا يُنشئ تركيزاً لم تعلنه الجلسة؛ يعيد False إن لم يوجد أو صارت بطاقتُه خارج الدفتر."""
+    cur = _load_focus(num, root)
+    if cur is None:
+        return False
+    try:
+        set_focus(num, cur["card"], cur["step"], root, ledger_path)
+    except ValueError:
+        return False
+    return True
 
 
 def _load_focus(num: str, root: Path | None) -> dict | None:
@@ -499,6 +512,11 @@ def duties_guard(num: str, root: Path | None = None) -> list[str]:
     return []
 
 
+def clear_guard(num: str, root: Path | None = None, now: datetime | None = None, ledger_path: Path | None = None) -> list[str]:
+    """الفحصُ الواحدُ لأمر guard وخطّاف Stop (W-20261025-023): التركيزُ والواجباتُ وتطابقُ ملفّ الحالة مع الدفتر."""
+    return focus_guard(num, root, ledger_path) + duties_guard(num, root) + verify(num, root, now, ledger_path)
+
+
 def _norm_tree(p: str) -> str:
     return str(p).replace("\\", "/").rstrip("/").lower()
 
@@ -619,7 +637,9 @@ def maybe_auto_clear(num: str, cwd: str, transcript: str | Path, root: Path | No
         return f"سياق: {tokens}، بلا شجرة"
     if num in auto_clear_nums(root, now):
         return f"سياق: {tokens}، الطلبُ قائم"
-    reasons = focus_guard(num, root) + duties_guard(num, root) + verify(num, root, now)
+    if renew_focus(num, root):  # W-20261025-024: تقدّمُ الدفتر لا يُسقط جلسةً أعلنت تركيزَها؛ ثمّ تُولَّد الحالةُ ليطابقها verify
+        write_state(num, derive(num, (load_state(num, root) or {}).get("session_label", ""), now, root, cwd=cwd), root)
+    reasons = clear_guard(num, root, now)
     if reasons:
         return f"سياق: {tokens}، سقط الحارسُ: {'؛ '.join(reasons)[:120]}"
     write_pending(num, cwd, root, now)
@@ -1054,7 +1074,7 @@ def main(argv: list[str] | None = None) -> int:
         print("رقمُ جلسةٍ غيرُ صالح", file=sys.stderr)
         return 2
     if a.cmd == "guard":
-        errs = focus_guard(a.num)
+        errs = clear_guard(a.num)
         print("سليم" if not errs else "فشل: " + "؛ ".join(errs))
         return 0 if not errs else 5
     if a.cmd == "focus":
