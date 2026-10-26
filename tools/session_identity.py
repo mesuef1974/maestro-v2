@@ -23,8 +23,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 NAMES = ROOT / "projects" / "schoolos" / "session_names.json"
 PLATFORM = "shschool_mvp"
+ROOT_NAME = "delivery_manager_work"
 #: جلساتُ تطبيق Claude على القرص: الهويّةُ الحيّةُ (معرّفُ الجلسة ← عنوانُها) أصدقُ من خريطة الأشجار حين تشترك جلستان في شجرة (0423 عُرّفت 0405، 2026-10-19)
-NUM = re.compile(r"\s*\d{4}\b")
+NUM = re.compile(r"\s*\d{4}(?:-[ء-ي])?(?![\w-])")
 SESSIONS = Path(os.environ.get("APPDATA", "")) / "Claude" / "claude-code-sessions"
 
 
@@ -141,6 +142,9 @@ def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, 
         tree = _norm(str(d.get("worktreePath") or d.get("cwd") or ""))
         if tree and _norm(cwd).startswith(tree):
             by_tree[title] = tree
+    if len(by_tree) > 1:  # الأخصّ يغلب: شجرةٌ داخل مجلّد جلسةٍ أخرى لا تلتبس بها
+        longest = max(len(t) for t in by_tree.values())
+        by_tree = {k: v for k, v in by_tree.items() if len(v) == longest}
     if len(by_tree) == 1:
         return next(iter(by_tree)), [], False
     return None, sorted(by_tree), False
@@ -155,10 +159,17 @@ def message(title: str | None, tree: str | None) -> str:
     if title is None:
         return ("[هويّة الجلسة] لم أجد اسمَ هذه الشجرة (" + str(tree) + ") في session_names.json — "
                 "اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض أنّك مرنة 04SS.")
-    m = re.match(r"\s*(\d{4})\b", title)
+    m = re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", title)
     num = m.group(1) if m else "؟؟؟؟"
+    if "-" in num:  # جلسةٌ فرعيّة (0101-أ): بلا بطاقة دورٍ ولا my_state؛ ملفُّ حالتها المعياريّ هو مرجعُها
+        return (f"[هويّة الجلسة] أنت «{title}» — رقمُك {num} (فرعيّة، لست {num.split('-')[0]}). "
+                f"ملفُّ حالتك المعياريّ `C:/Users/mesue/delivery_manager_work/handover_notes/state_{num}.json` "
+                f"وتركيزك `handover_notes/focus_{num}.json`؛ اقرأهما قبل أيّ ردّ. "
+                "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل.")
     flexible = num.startswith("04")
-    card = "role_cards/04.md (المرنة) ثمّ ledger.py show <رمز بطاقتك>" if flexible else f"role_cards/{num}.md"
+    own = (ROOT / "role_cards" / f"{num}.md").exists()
+    card = (f"role_cards/{num}.md (بطاقتك) ثمّ role_cards/04.md (المشتركة) ثمّ ledger.py show <رمز بطاقتك>" if own
+            else "role_cards/04.md (المرنة) ثمّ ledger.py show <رمز بطاقتك>") if flexible else f"role_cards/{num}.md"
     return (f"[هويّة الجلسة] أنت «{title}» — رقمُك {num}. "
             f"اقرأ بطاقتك `C:/Users/mesue/delivery_manager_work/{card}` ثمّ شغّل "
             f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ (اكتب وصفَ أداة Bash بالعربيّة، مثل «قراءة حالة جلستي»، وإلا رفضه lang_guard). "
@@ -168,6 +179,23 @@ def message(title: str | None, tree: str | None) -> str:
 
 #: إيداع ترقية مهارة الهويّة البصريّة (#897) على main؛ غيابُه من سلف الشجرة = مهارةٌ قديمة
 SKILL_UPGRADE = "130d8a56f"
+
+
+def directory_lines(num: str | None = None) -> list[str]:
+    """سطورُ «قاعدة المالك» و«متابعة الإحالة» و«عناوين الجلسات» — لكلّ جلسةٍ ثابتةٍ أيّاً كان مجلّدُها؛ فارغةٌ عند أيّ عطل (لا تُسقط الـhook)."""
+    out: list[str] = []
+    try:
+        import session_directory
+
+        d = {k: v for k, v in session_directory.entries().items() if k in (num, "0101")}  # معرّفُ الجلسة نفسها و0101 فقط؛ لغيرهما session_directory.py (W-20261026-002)
+        out.append("[قاعدة المالك] المالكُ في الاعتماد والمعاينة فقط: لا تسأله «هل أرفع/أكلّف/أبلغ؟» ولا تطلب منه إذنًا بالتوجيه بين الجلسات؛ أرسل إلى 0101 بالمعرّف (هو من يوجّه المنفّذين ولا تتجاوزه إلى جلسةٍ منفّذة)، أو إلى الجلسة صاحبة السلسلة المقرَّرة في الفلو (0501←0601←0701)، ثمّ أبلغ المالكَ بما تمّ. ما عدا ذلك قرارُه وحده: دمجٌ وقراراتٌ تغيّر قاعدةً.")
+        out.append("[متابعة الإحالة] كلُّ إحالةٍ تُتابَع بقراءة نتيجةِ الإرسال: `delivered` = مبلّغة (بلغت)؛ `queued` = في الطابور فلا تُعاد، وتحقّق بعد دقيقتين من list_events ثمّ أعِدها مرةً واحدةً إن لم تبدأ؛ `undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة. أبلغ الحالةَ بإحدى ثلاث: (بلغت / في الطابور / لم تبلغ)، ولا تسأل المالكَ عن إعادة الإرسال. وبعد دقيقتين اقرأ list_events للجلسة المستقبِلة وأبلغ ما وجدتَه فوراً: بدأت أو امتنعت أو سألت؛ فإن لم يظهر شيءٌ فأعِد الإحالةَ مرةً واحدةً وأبلغ 0101.")
+        out.append("[عناوين الجلسات] أرسل بالمعرّف `to: local_<uuid>` لا بالاسم، ولا تُمرِّر رسالتك عبر المالك (دورُه الاعتماد والمعاينة فقط). "
+              "المعرّفُ يتبدّل عند إعادة التشغيل فتحقّق قبل الإرسال: `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`. "
+              + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
+    except Exception:  # noqa: BLE001
+        return []
+    return out
 
 
 def main() -> int:
@@ -182,6 +210,23 @@ def main() -> int:
             cwd, session_id = hook.get("cwd", ""), str(hook.get("session_id", ""))
         except Exception:  # noqa: BLE001 — الـhook لا يسقط الجلسة أبداً
             cwd = ""
+    if cwd and ROOT_NAME in cwd.replace("\\", "/").lower() and PLATFORM not in cwd.replace("\\", "/"):
+        # جلساتُ مجلّد delivery_manager_work (0101/0104/0108/0109/0110): لا شجرةَ منصّةٍ لها فالهويّةُ من عنوان الجلسة الحيّ بمعرّفها (واقعةُ 2026-10-24: صمتُ الـhook بعد الكلير)
+        sys.stdout.reconfigure(encoding="utf-8")
+        try:
+            live, candidates = app_title(cwd, session_id)
+        except Exception:  # noqa: BLE001
+            live, candidates = None, []
+        if live is not None:
+            print(message(live, None))
+        elif candidates:
+            print("[هويّة الجلسة] تشترك في هذا المجلّد جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
+                  + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
+        else:
+            return 0
+        for line in directory_lines(_num_of(live)):
+            print(line)
+        return 0
     if not cwd or PLATFORM not in cwd.replace("\\", "/"):
         return 0
     tree = tree_name(cwd)
@@ -201,19 +246,8 @@ def main() -> int:
               + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
     else:
         print(message(live or lookup(cwd, names), tree))
-    own = (re.match(r"\s*(\d{4})\b", live or lookup(cwd, names) or "") or [None, None])[1]
-    try:  # دليلُ عناوين الجلسات: الإرسالُ بالمعرّف لا بالاسم (الاسمُ لا يوقظ خاملةً) — لا يُسقط الـhook أبداً
-        import session_directory
-
-        d = session_directory.entries()
-        shown = {k: v for k, v in d.items() if k in (own, "0101")}  # معرّفُ الجلسة نفسها و0101 فقط؛ لغيرهما session_directory.py (W-20261026-002)
-        print("[قاعدة المالك] المالكُ في الاعتماد والمعاينة فقط: لا تسأله «هل أرفع/أكلّف/أبلغ؟» ولا تطلب منه إذنًا بالتوجيه بين الجلسات؛ أرسل إلى 0101 بالمعرّف (هو من يوجّه المنفّذين ولا تتجاوزه إلى جلسةٍ منفّذة)، أو إلى الجلسة صاحبة السلسلة المقرَّرة في الفلو (0501←0601←0701)، ثمّ أبلغ المالكَ بما تمّ. ما عدا ذلك قرارُه وحده: دمجٌ وقراراتٌ تغيّر قاعدةً.")
-        print("[متابعة الإحالة] كلُّ إحالةٍ تُتابَع بقراءة نتيجةِ الإرسال: `delivered` = مبلّغة (بلغت)؛ `queued` = في الطابور فلا تُعاد، وتحقّق بعد دقيقتين من list_events ثمّ أعِدها مرةً واحدةً إن لم تبدأ؛ `undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة. أبلغ الحالةَ بإحدى ثلاث: (بلغت / في الطابور / لم تبلغ)، ولا تسأل المالكَ عن إعادة الإرسال. وبعد دقيقتين اقرأ list_events للجلسة المستقبِلة وأبلغ ما وجدتَه فوراً: بدأت أو امتنعت أو سألت؛ فإن لم يظهر شيءٌ فأعِد الإحالةَ مرةً واحدةً وأبلغ 0101.")
-        print("[عناوين الجلسات] أرسل بالمعرّف `to: local_<uuid>` لا بالاسم، ولا تُمرِّر رسالتك عبر المالك (دورُه الاعتماد والمعاينة فقط). "
-              "المعرّفُ يتبدّل عند إعادة التشغيل فتحقّق قبل الإرسال: `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`. "
-              + "؛ ".join(f"{k}={v['id']}" for k, v in shown.items()))
-    except Exception:  # noqa: BLE001
-        pass
+    for line in directory_lines(_num_of(live or lookup(cwd, names))):
+        print(line)
     try:  # تحذيرٌ فقط (لا حجب): شجرةٌ بلا ترقية مهارة الهويّة البصريّة (#897) تعمل بنسخةٍ قديمةٍ منها
         import subprocess
 

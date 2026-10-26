@@ -177,3 +177,46 @@ def test_auto_clear_nums_ignores_expired_and_corrupt_markers(tmp_path):
     (notes / "auto_clear_0104.json").write_text(json.dumps({"num": "0104", "created_at": (now - timedelta(hours=1)).isoformat()}), encoding="utf-8")
     (notes / "auto_clear_0108.json").write_text("{", encoding="utf-8")
     assert si.auto_clear_nums(tmp_path) == {"0101"}
+
+
+# ===== فرع المجلّد الجذر والأرقام الفرعيّة (منقولةٌ من ec1116d) =====
+ROOT_CWD = r"C:\Users\mesue\delivery_manager_work"
+
+
+def _run_main(monkeypatch, capsys, cwd, result):
+    monkeypatch.setattr("sys.argv", ["session_identity.py", "--cwd", cwd])
+    monkeypatch.setattr(si, "app_title", lambda c, sid="", base=None: result)
+    monkeypatch.setattr(si, "directory_lines", lambda num=None: ["[دليل]"])
+    si.main()
+    return capsys.readouterr().out
+
+
+def test_root_folder_session_gets_identity_from_live_title(monkeypatch, capsys):
+    out = _run_main(monkeypatch, capsys, ROOT_CWD, ("0108 · الجامع", []))
+    assert "0108" in out and "[دليل]" in out
+
+
+def test_root_folder_sub_session_number_is_accepted(monkeypatch, capsys):
+    out = _run_main(monkeypatch, capsys, ROOT_CWD, ("0101-أ · فرعيّة", []))
+    assert "0101" in out and "[دليل]" in out
+
+
+def test_root_folder_worktree_cwd_is_still_root_branch(monkeypatch, capsys):
+    out = _run_main(monkeypatch, capsys, ROOT_CWD + r"\tools", ("0109 · س", []))
+    assert "0109" in out
+
+
+def test_root_folder_ambiguity_asks_0101(monkeypatch, capsys):
+    out = _run_main(monkeypatch, capsys, ROOT_CWD, (None, ["0104 · أ", "0108 · ب"]))
+    assert "اسأل 0101" in out and "0104 · أ" in out
+
+
+def test_root_folder_without_live_title_stays_silent(monkeypatch, capsys):
+    assert _run_main(monkeypatch, capsys, ROOT_CWD, (None, [])) == ""
+
+
+def test_longest_tree_wins_when_nested_entries_match(tmp_path):
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", r"C:\Users\mesue\delivery_manager_work")
+    _session(tmp_path, "2", "local_2", "0420 · فرعيّة", r"C:\Users\mesue\delivery_manager_work\sub\deep")
+    title, _ = si.app_title(r"C:\Users\mesue\delivery_manager_work\sub\deep\x", "", tmp_path)
+    assert title == "0420 · فرعيّة"
