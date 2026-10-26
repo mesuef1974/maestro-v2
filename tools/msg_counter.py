@@ -100,6 +100,57 @@ def sender_num(payload: dict) -> str | None:
         return None
 
 
+APP_LIMIT = 10  # حدُّ التطبيق: عشرُ رسائلَ بين الجلسات منذ آخر رسالةٍ كتبها المالك (قرار 0101 على 008)
+APP_WARN_AT = 8
+TRANSCRIPT_TAIL = 2_000_000
+_NOT_OWNER = ("<system-reminder", "<cross-session-message", "<ci-monitor-event", "<side-sessions-event", "<command-", "<local-command")
+
+
+def _is_owner_message(d: dict) -> bool:
+    """رسالةُ مستخدمٍ حقيقيّة: نصٌّ لا tool_result ولا حقنٌ آليّ ولا رسالةُ جلسةٍ أخرى."""
+    if d.get("type") != "user" or d.get("isSidechain") or d.get("isMeta"):
+        return False
+    content = (d.get("message") or {}).get("content")
+    parts = [content] if isinstance(content, str) else [b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text"]
+    texts = [p.strip() for p in parts if isinstance(p, str) and p.strip()]
+    return bool(texts) and not any(t.startswith(_NOT_OWNER) for t in texts)
+
+
+def sends_since_owner(transcript_path: str, current_id: str = "") -> int:
+    """عددُ الإرسالات الناجحة (delivered/queued) بعد آخر رسالةٍ كتبها المالكُ فعلاً، من ذيل transcript.
+    `current_id` معرّفُ الاستدعاء الجاري: يُحسب إن لم يكن نتيجتُه مكتوبةً بعدُ في الملفّ. 0 عند تعذّر القراءة."""
+    try:
+        with open(transcript_path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - TRANSCRIPT_TAIL))
+            lines = f.read().decode("utf-8", errors="ignore").splitlines()
+    except OSError:
+        return 0
+    send_ids: set[str] = set()
+    counted: set[str] = set()
+    for ln in lines:
+        try:
+            d = json.loads(ln)
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        if _is_owner_message(d):
+            send_ids, counted = set(), set()
+            continue
+        content = (d.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use" and str(b.get("name", "")).endswith(SEND_TOOLS):
+                send_ids.add(b.get("id", ""))
+            elif b.get("type") == "tool_result" and b.get("tool_use_id") in send_ids and DELIVERED.search(_flatten(b.get("content"))):
+                counted.add(b["tool_use_id"])
+    return len(counted | ({current_id} if current_id and current_id not in counted else set()))
+
+
 def hook(raw: str) -> int:
     """خطّاف PostToolUse: يزيد عدّادَ المرسِل بواحدٍ عند نجاح الإرسال فقط، ويطبع التنبيهَ عند اقتراب الحدّ."""
     try:
@@ -117,8 +168,15 @@ def hook(raw: str) -> int:
     row["count"] += 1
     row["last"] = _now()
     _save(data)
+    notes = []
     if row["count"] >= WARN_AT:
-        print(_line(num, row, LIMIT))
+        notes.append(_line(num, row, LIMIT))
+    since = sends_since_owner(str(payload.get("transcript_path", "")), str(payload.get("tool_use_id", "")))
+    if since >= APP_WARN_AT:
+        notes.append(f"تنبيه حدّ التطبيق: أرسلتَ {since} رسائل بين الجلسات منذ آخر رسالةٍ كتبها المالك (الحدّ {APP_LIMIT}): "
+                     "اجمع ما تبقّى في رسالةٍ واحدة أو توقّف حتى يكتب المالك.")
+    if notes:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": " ".join(notes)}}, ensure_ascii=False))
     return 0
 
 

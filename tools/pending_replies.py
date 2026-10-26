@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -72,6 +73,30 @@ def done(n: int, note: str = "", path: Path = FILE) -> None:
     _append({"kind": "done", "n": n, "ts": _now().isoformat(timespec="minutes"), "note": note.strip()}, path)
 
 
+#: مسارُ تقريرٍ مذكورٌ في نصّ الإحالة: ملفٌّ md أو json تحت handover_notes (نسبيٌّ للجذر أو مطلق)
+REPORT_RE = re.compile(r"((?:[A-Za-z]:)?[\w./\\-]*handover_notes[/\\][\w./\\-]+\.(?:md|json))")
+
+
+def close_reported(path: Path = FILE, base: Path | None = None) -> list[int]:
+    """يُغلق آلياً كلَّ بندٍ مفتوحٍ يذكر نصُّه ملفَّ تقرير handover_notes وقد كُتب بعد تسجيل البند (W-20261026-008):
+    الجلسةُ التي كتبت تقريرَها لا تبقى منتظِرةً ولا يُسأل عنها. يعيد أرقامَ ما أُغلق؛ لا يرفع استثناءً."""
+    base = base or FILE.parent.parent
+    closed: list[int] = []
+    for r in open_items(path):
+        m = REPORT_RE.search(r["about"])
+        if not m:
+            continue
+        f = Path(m.group(1).replace("\\", "/"))
+        f = f if f.is_absolute() else base / f
+        try:
+            if f.is_file() and datetime.fromtimestamp(f.stat().st_mtime, DOHA) >= datetime.fromisoformat(r["ts"]):
+                done(r["n"], f"أُغلق آلياً: كُتب التقرير {m.group(1)}", path)
+                closed.append(r["n"])
+        except (OSError, ValueError):
+            continue
+    return closed
+
+
 def asked(n: int, path: Path = FILE) -> None:
     if not any(r["kind"] == "add" and r["n"] == n for r in _rows(path)):
         raise ValueError(f"لا بندَ برقم {n}")
@@ -87,6 +112,7 @@ def main() -> int:
     o = sub.add_parser("overdue"); o.add_argument("--minutes", type=float, default=30.0)
     d = sub.add_parser("done"); d.add_argument("n", type=int); d.add_argument("--note", default="")
     k = sub.add_parser("asked"); k.add_argument("n", type=int)
+    sub.add_parser("autoclose", help="يُغلق البنودَ التي كُتب تقريرُها المذكور")
     x = ap.parse_args()
     if x.cmd == "add":
         print(f"سُجّل #{add(x.to, x.about, from_=x.from_)}")
@@ -96,6 +122,8 @@ def main() -> int:
             print(f"#{r['n']} إلى {r['to']} منذ {r['ts'][5:16]} (آخرُ سؤال {r['last'][5:16]}، أُعيد {r['asks']} مرّة): {r['about'][:90]}")
         if not items:
             print("لا ردودَ منتظَرة" if x.cmd == "list" else "لا ما تأخّر")
+    elif x.cmd == "autoclose":
+        print("أُغلق: " + ("، ".join(f"#{n}" for n in close_reported()) or "لا شيء"))
     elif x.cmd == "done":
         done(x.n, x.note); print("ok")
     else:

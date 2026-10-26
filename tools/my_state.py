@@ -226,6 +226,12 @@ def main() -> None:
         session_state.clear_markers(args.session)
     except Exception:  # noqa: BLE001 — قراءةُ البطاقات لا تسقط بسبب العلامات
         pass
+    try:  # W-20261026-008: انتظارٌ كُتب تقريرُه المذكور يُغلق آلياً فلا يبقى في الحالة
+        import pending_replies
+
+        pending_replies.close_reported()
+    except Exception:  # noqa: BLE001
+        pass
     if args.brief:
         print(brief_report(args.session, ledger.load_events()))
         return
