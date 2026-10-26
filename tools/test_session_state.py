@@ -735,3 +735,12 @@ class TestUnifiedGuardAndFocusRenewal:
         ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
         assert "سقط الحارسُ" in ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, 180_000), tree, NOW)
         assert ss.auto_clear_nums(tree, NOW) == set()
+
+
+def test_hook_does_not_repeat_identity_directory_lines(tree):
+    """W-20261025-029: أسطرُ «قاعدة المالك» و«متابعة الإحالة» و«عناوين الجلسات» يطبعها session_identity وحدَه."""
+    ss.write_state("0108", _gen(tree), tree)
+    titles = lambda cwd, sid: ("0108 · التقييم والعصف", [])  # noqa: E731
+    out = ss.cmd_hook(json.dumps({"source": "clear", "cwd": "x", "session_id": "s"}), tree, NOW, titles)
+    ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert "[قاعدة المالك]" not in ctx and "[متابعة الإحالة]" not in ctx and "[عناوين الجلسات]" not in ctx
