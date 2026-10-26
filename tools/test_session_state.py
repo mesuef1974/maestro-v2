@@ -635,7 +635,7 @@ class TestAutoClear:
         self._ready(tree)
         t = self._tx(tmp_path, self._asst(0, 176_000, 0))
         hook = json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(t)})
-        assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
+        assert json.loads(ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])))["decision"] == "block"  # W-20261026-001
         assert ss.auto_clear_nums(tree) == {"0108"}
         assert "كُتب طلبُ المسح" in ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8")
 
@@ -753,3 +753,37 @@ def test_compact_render_lists_waiting_once(tree):
     assert "#3 إلى 0501" in full and '"waiting"' in full
     assert "#3 إلى 0501" not in compact and '"waiting"' not in compact and "أعلاه" in compact
     assert "#3 إلى 0501" in ss.resume_head(s)
+
+
+class TestSelfClearBlock:
+    """W-20261026-001: عند كتابة طلب المسح يمنع Stop الإنهاءَ بنصّ أمر المسح الذاتيّ، فلا يتوقّف التنفيذُ على الكنّاس."""
+
+    @staticmethod
+    def _setup(tree, tokens):
+        ss.set_focus("0108", "W-1", 2, root=tree)
+        ss.set_duties("0108", none=True, root=tree, now=NOW)
+        tp = tree / "t.jsonl"
+        tp.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": tokens, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
+        return json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(tp)})
+
+    def test_new_request_blocks_stop_with_clear_instructions(self, tree):
+        hook = self._setup(tree, 180_000)
+        out = ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
+        d = json.loads(out)
+        assert d["decision"] == "block" and "clear_session" in d["reason"] and "guard 0108" in d["reason"] and "role_cards/0108.md" in d["reason"]
+        assert ss.auto_clear_path("0108", tree).exists()
+
+    def test_existing_request_does_not_block_again(self, tree):
+        hook = self._setup(tree, 180_000)
+        titles = lambda c, i: ("0108 · التقييم", [])  # noqa: E731
+        assert ss.cmd_stop_hook(hook, tree, titles)
+        assert ss.cmd_stop_hook(hook, tree, titles) == ""  # الطلبُ قائم: مرّةً واحدةً فقط
+
+    def test_stop_hook_active_never_loops(self, tree):
+        hook = json.loads(self._setup(tree, 180_000))
+        hook["stop_hook_active"] = True
+        assert ss.cmd_stop_hook(json.dumps(hook), tree, lambda c, i: ("0108 · التقييم", [])) == ""
+
+    def test_below_threshold_stays_silent(self, tree):
+        hook = self._setup(tree, 100_000)
+        assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
