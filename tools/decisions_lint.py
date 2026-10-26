@@ -66,7 +66,10 @@ def main() -> int:
     ap.add_argument("--since", type=int, default=0, help="يبدأ الفحصَ من هذا الرقم")
     ap.add_argument("--file", default=str(ROOT / "decisions.md"))
     args = ap.parse_args()
-    notes = lint(parse(Path(args.file).read_text(encoding="utf-8")), args.since)
+    f = Path(args.file)
+    arch = f.with_name("decisions_archive.md")  # الأرشيفُ أولاً ليبقى الترتيبُ والأرقامُ متّصلة (W-20261025-016)
+    text = (arch.read_text(encoding="utf-8") + chr(10) if arch.is_file() else "") + f.read_text(encoding="utf-8")
+    notes = lint(parse(text), args.since)
     print("\n".join(notes) if notes else "سجلُّ القرارات سليم")
     return 1 if notes else 0
 

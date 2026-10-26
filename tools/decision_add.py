@@ -33,6 +33,8 @@ def now_doha() -> datetime:
 
 def next_id() -> str:
     text = DECISIONS.read_text(encoding="utf-8") if DECISIONS.is_file() else ""
+    arch = DECISIONS.with_name("decisions_archive.md")  # القراراتُ المؤرشفة تبقى محجوزةَ الأرقام (W-20261025-016)
+    text += arch.read_text(encoding="utf-8") if arch.is_file() else ""
     nums = [int(m) for m in re.findall(r"D-(\d+)م", text)]
     return f"D-{(max(nums) + 1) if nums else 1}م"
 

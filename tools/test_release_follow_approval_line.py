@@ -5,6 +5,7 @@ from __future__ import annotations
 import pathlib
 import shutil
 import subprocess
+import tempfile
 
 import pytest
 
@@ -17,14 +18,17 @@ def _passed(output: str) -> bool:
         line for line in SCRIPT.read_text(encoding="utf-8").splitlines() if line.startswith("approval_passed()")
     )
     assert body, "الدالة غائبة من السكربت"
-    proc = subprocess.run(  # noqa: S603
-        ["bash", "-c", body + "\napproval_passed"],  # noqa: S607
-        input=output,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
+    # السكربتُ يُمرَّر بملفٍّ لا بوسيط سطر أوامر: ترميزُ الوسائط على Windows يفسد «✔»
+    with tempfile.TemporaryDirectory() as d:
+        sh = pathlib.Path(d) / "t.sh"
+        sh.write_bytes((body + "\napproval_passed\n").encode("utf-8"))
+        proc = subprocess.run(  # noqa: S603
+            [shutil.which("bash"), sh.name],  # noqa: S607
+            input=output.encode("utf-8"),
+            capture_output=True,
+            check=False,
+            cwd=d,
+        )
     return proc.returncode == 0
 
 

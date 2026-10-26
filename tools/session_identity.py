@@ -16,13 +16,16 @@ import json
 import os
 import re
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 NAMES = ROOT / "projects" / "schoolos" / "session_names.json"
 PLATFORM = "shschool_mvp"
+ROOT_NAME = "delivery_manager_work"
 #: جلساتُ تطبيق Claude على القرص: الهويّةُ الحيّةُ (معرّفُ الجلسة ← عنوانُها) أصدقُ من خريطة الأشجار حين تشترك جلستان في شجرة (0423 عُرّفت 0405، 2026-10-19)
-NUM = re.compile(r"\s*\d{4}\b")
+NUM = re.compile(r"\s*\d{4}(?:-[ء-ي])?(?![\w-])")
 SESSIONS = Path(os.environ.get("APPDATA", "")) / "Claude" / "claude-code-sessions"
 
 
@@ -44,13 +47,88 @@ def _norm(p: str) -> str:
     return p.replace("\\", "/").rstrip("/").lower()
 
 
-def app_title(cwd: str, session_id: str = "", base: Path | None = None) -> tuple[str | None, list[str]]:
+def _newest_first(base: Path) -> list[Path]:
+    """ملفّاتُ الجلسات من الأحدث تعديلاً إلى الأقدم (الجلسةُ الحيّةُ تُوجَد في الأوائل)."""
+    out = []
+    for f in base.glob("*/*/local_*.json"):
+        try:
+            out.append((f.stat().st_mtime, f))
+        except OSError:
+            continue
+    out.sort(key=lambda x: x[0], reverse=True)
+    return [f for _, f in out]
+
+
+#: التطبيقُ يكتب cliSessionId الجديد في ملفّ الجلسة بعد SessionStart لا قبله (مقيس 2026-10-26 بعد مسح 0101 الذاتيّ، W-20261026-006)
+ID_WAIT_S = 3.0
+ID_POLL_S = 0.5
+#: عمرُ علامة المسح الذاتيّ السارية (يطابق PENDING_TTL_S في session_state)
+AUTO_CLEAR_TTL_S = 900
+
+
+def auto_clear_nums(root: Path | None = None) -> set[str]:
+    """أرقامُ الجلسات صاحبة علامة مسحٍ ذاتيّ سارية (handover_notes/auto_clear_<رقم>.json)؛ تتجاهل التالف والمنتهي."""
+    out: set[str] = set()
+    for f in ((root or ROOT) / "handover_notes").glob("auto_clear_*.json"):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            created = datetime.fromisoformat(d["created_at"])
+            if (datetime.now(created.tzinfo) - created).total_seconds() <= AUTO_CLEAR_TTL_S:
+                out.add(str(d["num"]))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: float = ID_WAIT_S,
+              pending: set[str] | None = None, sleep=time.sleep) -> tuple[str | None, list[str]]:
+    """(العنوانُ الحيّ، المرشَّحون) كما في `_resolve`؛ مع معرّفِ جلسةٍ لم يُطابَق بعدُ نعيد قراءةَ الملفّات حتى `wait_s` ثانيةً
+    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook). وعند الالتباس تُختار صاحبةُ علامة المسح السارية إن كانت وحيدة."""
+    waited = 0.0
+    while True:
+        title, candidates, by_id = _resolve(cwd, session_id, base)
+        if by_id or not session_id or waited >= wait_s:
+            break
+        sleep(ID_POLL_S)
+        waited += ID_POLL_S
+    if title is None and len(candidates) > 1:
+        marked = auto_clear_nums() if pending is None else pending
+        owners = [c for c in candidates if _num_of(c) in marked]
+        if len(owners) == 1:
+            return owners[0], []
+    return title, candidates
+
+
+def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, list[str], bool]:
     """(العنوانُ الحيّ، المرشَّحون عند الالتباس): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)، ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
 
     شجرةٌ تشترك فيها جلستان حيّتان بلا معرّفٍ يميّز: (None، العناوين) فيسأل الهوك 0101 بدل أن يخمّن ويضلّل."""
     base = SESSIONS if base is None else base
     by_tree: dict[str, str] = {}
-    for f in base.glob("*/*/local_*.json"):
+    files = _newest_first(base)
+    if session_id:  # مسارٌ سريع: الجلسةُ الحيّةُ أحدثُ الملفّات؛ لا نحلّل إلا ما يحوي معرّفها نصّاً
+        prior_hit = None  # تدرّج الأولويّة: sessionId/cliSessionId يغلبان priorCliSessionIds، والأحدثُ تعديلاً داخل كلٍّ
+        for f in files:
+            try:
+                raw = f.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if session_id not in raw:
+                continue
+            try:
+                d = json.loads(raw)
+            except ValueError:
+                continue
+            title = str(d.get("title", ""))
+            if not NUM.match(title) or d.get("isArchived"):
+                continue
+            if session_id in (d.get("sessionId"), d.get("cliSessionId")):
+                return title, [], True
+            if prior_hit is None and session_id in (d.get("priorCliSessionIds") or []):
+                prior_hit = title
+        if prior_hit is not None:
+            return prior_hit, [], True
+    for f in files:
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -60,32 +138,64 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None) -> tuple
             continue
         ids = {d.get("sessionId"), d.get("cliSessionId"), *(d.get("priorCliSessionIds") or [])}
         if session_id and session_id in ids:
-            return title, []
+            return title, [], True
         tree = _norm(str(d.get("worktreePath") or d.get("cwd") or ""))
         if tree and _norm(cwd).startswith(tree):
             by_tree[title] = tree
+    if len(by_tree) > 1:  # الأخصّ يغلب: شجرةٌ داخل مجلّد جلسةٍ أخرى لا تلتبس بها
+        longest = max(len(t) for t in by_tree.values())
+        by_tree = {k: v for k, v in by_tree.items() if len(v) == longest}
     if len(by_tree) == 1:
-        return next(iter(by_tree)), []
-    return None, sorted(by_tree)
+        return next(iter(by_tree)), [], False
+    return None, sorted(by_tree), False
+
+
+def _num_of(title: str | None) -> str | None:
+    m = re.match(r"\s*(\d{4})\b", title or "")
+    return m.group(1) if m else None
 
 
 def message(title: str | None, tree: str | None) -> str:
     if title is None:
         return ("[هويّة الجلسة] لم أجد اسمَ هذه الشجرة (" + str(tree) + ") في session_names.json — "
                 "اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض أنّك مرنة 04SS.")
-    m = re.match(r"\s*(\d{4})\b", title)
+    m = re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", title)
     num = m.group(1) if m else "؟؟؟؟"
+    if "-" in num:  # جلسةٌ فرعيّة (0101-أ): بلا بطاقة دورٍ ولا my_state؛ ملفُّ حالتها المعياريّ هو مرجعُها
+        return (f"[هويّة الجلسة] أنت «{title}» — رقمُك {num} (فرعيّة، لست {num.split('-')[0]}). "
+                f"ملفُّ حالتك المعياريّ `C:/Users/mesue/delivery_manager_work/handover_notes/state_{num}.json` "
+                f"وتركيزك `handover_notes/focus_{num}.json`؛ اقرأهما قبل أيّ ردّ. "
+                "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل.")
     flexible = num.startswith("04")
-    card = "role_cards/04.md (المرنة) ثمّ ledger.py show <رمز بطاقتك>" if flexible else f"role_cards/{num}.md"
+    own = (ROOT / "role_cards" / f"{num}.md").exists()
+    card = (f"role_cards/{num}.md (بطاقتك) ثمّ role_cards/04.md (المشتركة) ثمّ ledger.py show <رمز بطاقتك>" if own
+            else "role_cards/04.md (المرنة) ثمّ ledger.py show <رمز بطاقتك>") if flexible else f"role_cards/{num}.md"
     return (f"[هويّة الجلسة] أنت «{title}» — رقمُك {num}. "
             f"اقرأ بطاقتك `C:/Users/mesue/delivery_manager_work/{card}` ثمّ شغّل "
-            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ. "
+            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ (اكتب وصفَ أداة Bash بالعربيّة، مثل «قراءة حالة جلستي»، وإلا رفضه lang_guard). "
             + ("" if flexible else "لا تفترض أنّك مرنة 04SS. ")
             + "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل.")
 
 
 #: إيداع ترقية مهارة الهويّة البصريّة (#897) على main؛ غيابُه من سلف الشجرة = مهارةٌ قديمة
 SKILL_UPGRADE = "130d8a56f"
+
+
+def directory_lines(num: str | None = None) -> list[str]:
+    """سطورُ «قاعدة المالك» و«متابعة الإحالة» و«عناوين الجلسات» — لكلّ جلسةٍ ثابتةٍ أيّاً كان مجلّدُها؛ فارغةٌ عند أيّ عطل (لا تُسقط الـhook)."""
+    out: list[str] = []
+    try:
+        import session_directory
+
+        d = {k: v for k, v in session_directory.entries().items() if k in (num, "0101")}  # معرّفُ الجلسة نفسها و0101 فقط؛ لغيرهما session_directory.py (W-20261026-002)
+        out.append("[قاعدة المالك] المالكُ في الاعتماد والمعاينة فقط: لا تسأله «هل أرفع/أكلّف/أبلغ؟» ولا تطلب منه إذنًا بالتوجيه بين الجلسات؛ أرسل إلى 0101 بالمعرّف (هو من يوجّه المنفّذين ولا تتجاوزه إلى جلسةٍ منفّذة)، أو إلى الجلسة صاحبة السلسلة المقرَّرة في الفلو (0501←0601←0701)، ثمّ أبلغ المالكَ بما تمّ. ما عدا ذلك قرارُه وحده: دمجٌ وقراراتٌ تغيّر قاعدةً.")
+        out.append("[متابعة الإحالة] كلُّ إحالةٍ تُتابَع بقراءة نتيجةِ الإرسال: `delivered` = مبلّغة (بلغت)؛ `queued` = في الطابور فلا تُعاد، وتحقّق بعد دقيقتين من list_events ثمّ أعِدها مرةً واحدةً إن لم تبدأ؛ `undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة. أبلغ الحالةَ بإحدى ثلاث: (بلغت / في الطابور / لم تبلغ)، ولا تسأل المالكَ عن إعادة الإرسال. وبعد دقيقتين اقرأ list_events للجلسة المستقبِلة وأبلغ ما وجدتَه فوراً: بدأت أو امتنعت أو سألت؛ فإن لم يظهر شيءٌ فأعِد الإحالةَ مرةً واحدةً وأبلغ 0101.")
+        out.append("[عناوين الجلسات] أرسل بالمعرّف `to: local_<uuid>` لا بالاسم، ولا تُمرِّر رسالتك عبر المالك (دورُه الاعتماد والمعاينة فقط). "
+              "المعرّفُ يتبدّل عند إعادة التشغيل فتحقّق قبل الإرسال: `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`. "
+              + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
+    except Exception:  # noqa: BLE001
+        return []
+    return out
 
 
 def main() -> int:
@@ -100,6 +210,23 @@ def main() -> int:
             cwd, session_id = hook.get("cwd", ""), str(hook.get("session_id", ""))
         except Exception:  # noqa: BLE001 — الـhook لا يسقط الجلسة أبداً
             cwd = ""
+    if cwd and ROOT_NAME in cwd.replace("\\", "/").lower() and PLATFORM not in cwd.replace("\\", "/"):
+        # جلساتُ مجلّد delivery_manager_work (0101/0104/0108/0109/0110): لا شجرةَ منصّةٍ لها فالهويّةُ من عنوان الجلسة الحيّ بمعرّفها (واقعةُ 2026-10-24: صمتُ الـhook بعد الكلير)
+        sys.stdout.reconfigure(encoding="utf-8")
+        try:
+            live, candidates = app_title(cwd, session_id)
+        except Exception:  # noqa: BLE001
+            live, candidates = None, []
+        if live is not None:
+            print(message(live, None))
+        elif candidates:
+            print("[هويّة الجلسة] تشترك في هذا المجلّد جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
+                  + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
+        else:
+            return 0
+        for line in directory_lines(_num_of(live)):
+            print(line)
+        return 0
     if not cwd or PLATFORM not in cwd.replace("\\", "/"):
         return 0
     tree = tree_name(cwd)
@@ -119,17 +246,8 @@ def main() -> int:
               + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
     else:
         print(message(live or lookup(cwd, names), tree))
-    try:  # دليلُ عناوين الجلسات: الإرسالُ بالمعرّف لا بالاسم (الاسمُ لا يوقظ خاملةً) — لا يُسقط الـhook أبداً
-        import session_directory
-
-        d = session_directory.entries()
-        print("[قاعدة المالك] المالكُ في الاعتماد والمعاينة فقط: لا تسأله «هل أرفع/أكلّف/أبلغ؟» ولا تطلب منه إذنًا بالتوجيه بين الجلسات؛ أرسل إلى 0101 بالمعرّف (هو من يوجّه المنفّذين ولا تتجاوزه إلى جلسةٍ منفّذة)، أو إلى الجلسة صاحبة السلسلة المقرَّرة في الفلو (0501←0601←0701)، ثمّ أبلغ المالكَ بما تمّ. ما عدا ذلك قرارُه وحده: دمجٌ وقراراتٌ تغيّر قاعدةً.")
-        print("[متابعة الإحالة] كلُّ إحالةٍ تُتابَع بقراءة نتيجةِ الإرسال: `delivered` = مبلّغة (بلغت)؛ `queued` = في الطابور فلا تُعاد، وتحقّق بعد دقيقتين من list_events ثمّ أعِدها مرةً واحدةً إن لم تبدأ؛ `undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة. أبلغ الحالةَ بإحدى ثلاث: (بلغت / في الطابور / لم تبلغ)، ولا تسأل المالكَ عن إعادة الإرسال. وبعد 30 دقيقةً تحقّق من git/الدفتر أنّ عملاً ظهر (فرعٌ أو إيداعٌ أو حالةُ بطاقة)، وإلا فأعِد الإحالةَ وأبلغ 0101.")
-        print("[عناوين الجلسات] أرسل بالمعرّف `to: local_<uuid>` لا بالاسم، ولا تُمرِّر رسالتك عبر المالك (دورُه الاعتماد والمعاينة فقط). "
-              "المعرّفُ يتبدّل عند إعادة التشغيل فتحقّق قبل الإرسال: `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`. "
-              + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
-    except Exception:  # noqa: BLE001
-        pass
+    for line in directory_lines(_num_of(live or lookup(cwd, names))):
+        print(line)
     try:  # تحذيرٌ فقط (لا حجب): شجرةٌ بلا ترقية مهارة الهويّة البصريّة (#897) تعمل بنسخةٍ قديمةٍ منها
         import subprocess
 

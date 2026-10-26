@@ -44,6 +44,7 @@ sys.path.insert(0, str(HERE))
 import approval_check as ac  # noqa: E402
 import ledger  # noqa: E402
 import ledger_sync  # noqa: E402
+import pump_health  # noqa: E402
 import push_approved  # noqa: E402
 
 HEAD_RE = re.compile(r"(?:(?:بالرأس|للرأس|الرأس)\s+|[@＠]\s*)([0-9a-f]{8,40})")
@@ -165,18 +166,58 @@ def _tail(text: str, n: int = 160) -> str:
     return ((text or "").strip().splitlines()[-1:] or [""])[0][:n]
 
 
-def approve_pass(states: dict[str, dict], apply: bool) -> list[str]:
+def owner_list(states: dict[str, dict], git=None, platform: str | None = None) -> list[str]:
+    """(W-20261023-016) قائمةُ اعتمادٍ واحدةٌ للمالك: كلُّ بطاقةٍ ready_for_review لها رأسٌ (معلَنٌ أو مشتقّ) بلا اعتمادٍ ثابت.
+    تُقرأ من المصدر فلا حاجةَ لرسالةٍ من جلسةٍ؛ وما فيها ينتظر المالكَ وحدَه."""
+    rows = []
+    for cid, item in sorted(states.items()):
+        if item.get("state") != "ready_for_review":
+            continue
+        head = ready_head(item) or derive_head(cid, git, platform)[0]
+        if head and not approval_ok(cid, head):
+            rows.append(f"{cid} @ {head}")
+    return rows
+
+
+def derive_head(cid: str, git=None, platform: str | None = None) -> tuple[str | None, str]:
+    """(W-20261023-016، مرحلة ready_derive) الرأسُ المشتقّ من الفرع: الفرعُ المحلّيّ المسموح (claude/* أو w*) في مستودع المنصّة الذي في
+    إيداعاته رمزُ البطاقة ولم يُدمج في origin/main. فرعٌ وحيدٌ ← رأسُه (8 خانات)؛ لا فرعَ أو أكثرُ من فرعٍ ← لا اشتقاق مع السبب.
+    الاشتقاقُ لا يعتمد شيئاً: الاعتمادُ يبقى لـapproval_check على هذا الرأس بعينه، فرأسٌ مشتقٌّ بلا اعتمادٍ ينتظر."""
+    git = git or push_approved._git
+    platform = platform or PLATFORM_DIR
+    if not _is_platform(platform, git):
+        return None, "ليست بطاقةَ منصّة"
+    cands = []
+    for name, sha in _local_branches(platform, git):
+        if not push_approved.PUMP_BRANCH_RE.match(name):
+            continue
+        rc, log = git(platform, "log", "-1", "--format=%H", f"--grep={cid}", name, "^origin/main")
+        if not rc and log.strip():
+            cands.append((name, sha))
+    if not cands:
+        return None, "لا فرعَ محلّيّاً بإيداعٍ يحمل رمزَها"
+    if len(cands) > 1:
+        return None, "التباس — أكثرُ من فرع: " + "، ".join(n for n, _ in cands)
+    return cands[0][1][:8], cands[0][0]
+
+
+def approve_pass(states: dict[str, dict], apply: bool, git=None, platform: str | None = None) -> list[str]:
     out: list[str] = []
     for cid, item in sorted(states.items()):
         if item.get("state") != "ready_for_review":
             continue
         head = ready_head(item)
+        derived = False
         if not head:
-            out.append(f"{cid}: بلا رأسٍ معلَن في المذكّرات — لا نقل")
-            continue
+            head, why = derive_head(cid, git, platform)
+            derived = bool(head)
+            if not head:
+                out.append(f"{cid}: بلا رأسٍ معلَن ولا مشتقّ ({why}) — لا نقل")
+                continue
         if not approval_ok(cid, head):
             cond = "visual_evidence" if "بصري" in approval_why(cid, head) else "head_unapproved"
-            out.append(f"{cid}: رأس {head} بلا اعتمادٍ ثابت (أو ينقصه دليلٌ بصريّ) — {hand_off(cid, cond, item, apply)}")
+            src = " (مشتقّ من الفرع)" if derived else ""
+            out.append(f"{cid}: رأس {head}{src} بلا اعتمادٍ ثابت (أو ينقصه دليلٌ بصريّ) — {hand_off(cid, cond, item, apply)}")
             continue
         if not apply:
             out.append(f"{cid}: رأس {head} معتمَد ← approved (عرض)")
@@ -1065,6 +1106,9 @@ def _run(argv=None) -> int:
     states = load()
     for line in approve_pass(states, a.apply):
         print("اعتماد: " + line)
+    waiting = owner_list(states)
+    if waiting:
+        print(f"قائمة اعتماد المالك ({len(waiting)}): " + "؛ ".join(waiting))
     states = reload(states)
     prs: list[dict] = []
     prs_ok = True
@@ -1116,6 +1160,16 @@ def _run(argv=None) -> int:
     orig_move = ledger.move  # ledger_sync لا يمرّر by؛ يسجّلها المضخّة باسم 0101 (مسجِّلٌ مسموح لـmerged/published)
     ledger.move = lambda *args, **kw: orig_move(*args, **{"by": SENDER, **kw})
     rc = ledger_sync.cycle(a.apply, 80)
+    print("— صحة المضخّة (تصعيد الركود) —")
+    try:
+        evs = ledger.load_events()
+        st = ledger.reduce_state(evs)
+        for line in pump_health.escalation_pass({c: v for c, v in st.items() if c not in a.skip}, a.apply):
+            print("تصعيد: " + line)
+        if a.apply and pump_health.write_daily(st, evs):
+            print("صحة: كُتبت لقطةُ اليوم")
+    except Exception as exc:  # الرصدُ لا يُسقط الدورة
+        print(f"صحة المضخّة: تعذّر ({exc})")
     if a.apply:
         from datetime import datetime
 

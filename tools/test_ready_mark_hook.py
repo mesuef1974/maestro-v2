@@ -48,13 +48,16 @@ class Hook(unittest.TestCase):
         ledger.append_event("state", CARD, {"state": "in_progress", "by": "0702", "held_by": "0702"}, self.ledger)
 
     def payload(self, text, tool="SendMessage"):
-        return {"tool_name": tool, "tool_input": {"to": "local_x", "message": text}}
+        return {"tool_name": tool, "session_id": "sid", "cwd": "D:/x", "tool_input": {"to": "local_x", "message": text}}
 
     def msg(self, head=None, card=CARD, by="0702"):
         return f"جاهزٌ للمعاينة ({by}) {card} الرأس {head or self.head} الرابط http://localhost:8500/x/ الدور principal"
 
+    sender = "0702"
+
     def run_hook(self, payload):
-        with mock.patch.dict(os.environ, {"SCHOOLOS_REPO": self.repo}):
+        title = None if self.sender is None else f"{self.sender} · جلسة"
+        with mock.patch.dict(os.environ, {"SCHOOLOS_REPO": self.repo}), mock.patch.object(hook.session_identity, "app_title", return_value=(title, [])):
             return hook.handle(payload, path=self.ledger)
 
     def state(self):
@@ -71,7 +74,7 @@ class Hook(unittest.TestCase):
         self.assertEqual(self.state(), "in_progress")
 
     def test_a_message_missing_card_head_or_session_does_nothing(self):
-        for text in (f"جاهزٌ للمعاينة (0702) الرأس {self.head}", f"جاهزٌ للمعاينة (0702) {CARD}", f"جاهزٌ للمعاينة {CARD} الرأس {self.head}"):
+        for text in (f"جاهزٌ للمعاينة (0702) الرأس {self.head}", f"جاهزٌ للمعاينة (0702) {CARD}"):
             self.assertEqual(self.run_hook(self.payload(text)), [])
         self.assertEqual(self.state(), "in_progress")
 
@@ -81,8 +84,27 @@ class Hook(unittest.TestCase):
         self.assertEqual(self.state(), "in_progress")
 
     def test_a_session_cannot_mark_a_card_held_by_another(self):
+        self.sender = "0409"
         out = self.run_hook(self.payload(self.msg(by="0409")))
         self.assertIn("حاملتُها", out[0])
+        self.assertEqual(self.state(), "in_progress")
+
+    def test_sender_comes_from_session_id_not_message_text(self):
+        # جلسةٌ 0409 تنتحل 0702 في النصّ: يُرفض ولا تُسجَّل
+        self.sender = "0409"
+        out = self.run_hook(self.payload(self.msg(by="0702")))
+        self.assertIn("يخالف", out[0])
+        self.assertEqual(self.state(), "in_progress")
+
+    def test_text_without_number_uses_derived_sender(self):
+        text = f"جاهزٌ للمعاينة {CARD} الرأس {self.head}"
+        out = self.run_hook(self.payload(text))
+        self.assertTrue(out[0].startswith("ok:"), out)
+
+    def test_unresolvable_sender_is_skipped_even_if_text_names_holder(self):
+        self.sender = None
+        out = self.run_hook(self.payload(self.msg()))
+        self.assertIn("تعذّر", out[0])
         self.assertEqual(self.state(), "in_progress")
 
     def test_main_is_always_silent_and_exits_0_even_on_garbage_or_missing_ledger(self):

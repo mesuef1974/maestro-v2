@@ -48,7 +48,7 @@ def test_waiver_only_for_0501_and_docs(tmp_path):
 
 def test_ui_paths_are_detected_and_others_are_not():
     assert ac._is_ui_path("templates/dashboard/roles/director.html")
-    assert ac._is_ui_path("D:/shschool_mvp/static/css/custom/40-themes.css")
+    assert ac._is_ui_path(ac.REPO_DIR.rstrip("/") + "/static/css/custom/40-themes.css")
     assert ac._is_ui_path("static" + chr(92) + "js" + chr(92) + "app.js")
     assert not ac._is_ui_path("operations/schedule_evaluator.py")
     assert not ac._is_ui_path("docs/visual_gate.md")
@@ -209,3 +209,42 @@ def test_identity_ack_cutoff_by_card_creation_date(monkeypatch):
     monkeypatch.setattr(ac, "IDENTITY_ACK_FROM", "2026-10-12")
     assert ac.identity_ack_problem("W-1", "abcd1234", "2026-10-11") is None
     assert ac.identity_ack_problem("W-1", "abcd1234", "2026-10-12")
+
+
+class TestHeadFromTargetColumn:
+    """W-20261025-018: الرأسُ من عمود الهدف «بطاقة @رأس» لا من أوّل «الرأس/@» في السطر."""
+
+    ROW = "| 2026-10-25 12:00 | 0101 (إفادةُ جلسة) | هل أعتمد على @11111111 كما سبق؟ | «اعتمد» | W-20261025-099 @22222222 |"
+
+    def test_before_cutoff_keeps_old_head_but_warns_on_mismatch(self):
+        head, warn = ac.row_head(self.ROW, date(2026, 10, 31))
+        assert head == "11111111" and "22222222" in warn and "11111111" in warn
+
+    def test_from_cutoff_reads_the_target_column(self):
+        head, warn = ac.row_head(self.ROW, date(2026, 11, 1))
+        assert head == "22222222" and warn == ""
+
+    def test_agreeing_row_has_no_warning(self):
+        row = "| 2026-10-25 12:00 | 0101 | س | «اعتمد» | W-1 @abcd1234 |"
+        assert ac.row_head(row, date(2026, 10, 25)) == ("abcd1234", "")
+
+    def test_missing_head_in_column_becomes_none_after_cutoff(self):
+        row = "| 2026-10-25 | 0101 | الرأس aaaa1111 في السؤال | «اعتمد» | W-1 |"
+        assert ac.row_head(row, date(2026, 11, 2))[0] is None
+        assert ac.row_head(row, date(2026, 10, 30))[0] == "aaaa1111"
+
+    def test_non_table_line_keeps_old_behaviour(self):
+        assert ac.row_head("اعتُمد من المالك — الرأس abcd1234", date(2026, 12, 1)) == ("abcd1234", "")
+
+    def test_refusal_text_never_counts_as_approval_even_with_matching_head(self, tmp_path):
+        f = tmp_path / "oc.md"
+        f.write_text("| 2026-10-25 | 0101 | هل أدمج؟ | «لا، ارفضه ولا تدمج» | W-20261025-098 @abcd1234 |\n", encoding="utf-8")
+        rows = ac._confirmation_rows("W-20261025-098", "abcd1234", False, f)
+        assert rows and rows[0][1] == "rejected"
+
+    def test_confirmation_uses_column_head_after_cutoff(self, tmp_path, monkeypatch):
+        f = tmp_path / "oc.md"
+        f.write_text("| 2026-10-25 | 0101 | هل على @11111111؟ | «اعتمد» | W-20261025-097 @22222222 |\n", encoding="utf-8")
+        monkeypatch.setattr(ac, "COLUMN_HEAD_FROM", date(2000, 1, 1))
+        assert ac._confirmation_rows("W-20261025-097", "22222222", False, f)[0][1] == "ok"
+        assert ac._confirmation_rows("W-20261025-097", "11111111", False, f)[0][1] == "stale"

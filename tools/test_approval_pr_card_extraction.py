@@ -101,3 +101,17 @@ def test_owner_lines_recorded_under_the_card_name_are_found_for_a_pr(
 def test_gh_failure_still_returns_nothing(monkeypatch):
     monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (1, ""))
     assert ac.pr_evidence("7") == ([], None, None)
+
+
+def test_repo_option_is_passed_to_gh(monkeypatch):
+    seen = []
+
+    def fake(cmd, cwd=None):
+        seen.append(cmd)
+        return 0, json.dumps(_pr(branch=f"claude/{CARD}-x"))
+
+    monkeypatch.setattr(ac, "run", fake)
+    ac.pr_evidence("7", "mesuef1974/maestro-v2")
+    assert seen[-1][-2:] == ["--repo", "mesuef1974/maestro-v2"]
+    ac.pr_evidence("7")
+    assert "--repo" not in seen[-1]

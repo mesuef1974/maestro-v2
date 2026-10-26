@@ -62,6 +62,10 @@ REPEAT_HOURS = 24  # بطاقةٌ لم تتغيّر بصمتُها (id، الح�
 MAX_SESSIONS_PER_RUN = 5  # لا انفجارَ رسائل: أقدمُ خمسِ جلساتٍ في الدورة والباقي في الساعة التالية
 STALE_PER_MSG = 5  # أقدمُ خمس بطاقاتٍ لكلّ رسالة
 PAYLOAD = "{id} {state} — اقرأ: python tools/ledger.py show {id}"
+CLEAR_ID = "after_clear"  # معرّفٌ خاصٌّ لإيقاظ ما بعد المسح: لا بطاقةَ له
+CLEAR_MSG = "بعد المسح — اقرأ بطاقتك role_cards/{num}.md ثمّ شغّل: python tools/my_state.py {num}"
+AUTO_CLEAR_STATE = "auto_clear"  # الطلبُ صادرٌ عن خطّاف Stop عند 175 ألفاً لا عن مسحٍ جرى (W-20261025-015)
+AUTO_CLEAR_MSG = "سياقك بلغ 175 ألفاً — نفّذ المسح الذاتيّ كما في role_cards/COMMON.md ثمّ اقرأ بطاقتك role_cards/{num}.md وشغّل: python tools/my_state.py {num}"
 PAYLOAD_OK = re.compile(r"^W-\d{8}-\d{3} [a-z_]+ — اقرأ: python tools/ledger\.py show W-\d{8}-\d{3}$")
 
 
@@ -88,7 +92,11 @@ def read_events(path: Path) -> list[dict]:
     return out
 
 
-def payload(item_id: str, state: str) -> str:
+def payload(item_id: str, state: str, num: str = "") -> str:
+    if item_id == CLEAR_ID:
+        if not SESSION_NUM.match(num):
+            raise ValueError("إيقاظُ ما بعد المسح بلا رقم جلسة")
+        return (AUTO_CLEAR_MSG if state == AUTO_CLEAR_STATE else CLEAR_MSG).format(num=num)
     text = PAYLOAD.format(id=item_id, state=state)
     if not PAYLOAD_OK.match(text):
         raise ValueError(f"حمولةٌ خارج الصيغة المسموحة: {text!r}")
@@ -124,7 +132,8 @@ def sender_count(sender: str, path: Path = COUNTER) -> int:
 def cap_live(p: "WakePlan", live) -> None:
     """سقفُ التزامن MAX_LIVE: الموقَظةُ الحيّةُ أصلاً لا تزيد العدّ؛ الجديدةُ تُقبل بقدر ما بقي من السقف بترتيب الخطّة، والباقي يُؤجَّل
     (p.deferred فلا يتقدّم المؤشّر فيعاد في الدورة التالية). إن امتلأ السقفُ فلا إيقاظ وتُسجَّل halted."""
-    fresh = [h for h in p.wakes if h not in live]
+    # رسالتا المسح وما بعده (CLEAR_ID) خارج السقف (W-20261025-025): جلسةٌ ممسوحةٌ خاملةٌ لا يوقظها غيرُ هذه الرسالة فيبقى تأجيلُها تعطيلاً لها
+    fresh = [h for h in p.wakes if h not in live and not any(i == CLEAR_ID for i, _ in p.wakes[h])]
     room = max(0, MAX_LIVE - len(set(live)))
     if len(fresh) <= room:
         return
@@ -253,7 +262,7 @@ def pending_wakes(now: datetime, path: Path | None = None) -> list[dict]:
     return out
 
 
-def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, pending=()) -> WakePlan:
+def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=(), auto=frozenset(), pending=()) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
     aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
     دالّةٌ نقيّةٌ إلّا ما يفعله verify. الحالةُ هي المُطلِق لا الحدث."""
@@ -316,9 +325,23 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
                 p.wakes.setdefault(num, []).append((item_id, st))
             else:
                 p.skipped.append((item_id, "فشل ground_truth: لا إرسال"))
-    if len(p.wakes) > MAX_SESSIONS_PER_RUN:
-        oldest = sorted(p.wakes, key=lambda n: min(since[i] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
-        for num in [n for n in p.wakes if n not in oldest]:
+    for num in sorted(set(cleared)):  # جلسةٌ عليها علامةُ «مسح معلّق» ورُصدت خاملةً: تُوقَظ لتقرأ بطاقتها (W-20261025-001)
+        if num in live:
+            p.skipped.append((num, "علامةُ مسحٍ لجلسةٍ حيّةٍ تعمل: لا إيقاظ"))
+        elif channel is not None and num not in channel:
+            p.skipped.append((num, "خارج القناة"))
+        elif num not in directory:
+            p.skipped.append((num, f"لا معرّفَ للجلسة {num}"))
+        elif num in last_wake and now - last_wake[num] < timedelta(minutes=REWAKE_MIN):
+            p.skipped.append((num, f"أُوقظت قبل أقلّ من {REWAKE_MIN} دقيقة"))
+        else:
+            p.wakes.setdefault(num, []).append((CLEAR_ID, AUTO_CLEAR_STATE if num in auto else "pending_clear"))
+            since[CLEAR_ID + num] = now
+    # رسائل المسح وما بعده (CLEAR_ID) خارج قطع الخمس كما هي خارج cap_live: تأجيلُها دورةً قد يُنهي صلاحيةَ علامة المسح المعلّق (W-20261025-028)
+    ordinary = [n for n in p.wakes if not any(i == CLEAR_ID for i, _ in p.wakes[n])]
+    if len(ordinary) > MAX_SESSIONS_PER_RUN:
+        oldest = sorted(ordinary, key=lambda n: min(since[i] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
+        for num in [n for n in ordinary if n not in oldest]:
             p.skipped.append((num, "يُؤجَّل إلى الدورة التالية (حدُّ الجلسات في الدورة)"))
             del p.wakes[num]
     if p.wakes and day_count + len(p.wakes) > DAILY_CAP:
@@ -410,13 +433,19 @@ def running_from_arg(text: str | None) -> set[str] | None:
     return {t for t in re.split(r"[,\s]+", text.strip()) if SESSION_NUM.match(t) and len(t) == 4}
 
 
+def live_minus_cleared(live: set[str], cleared, running: set[str] | None) -> set[str]:
+    """جلسةٌ عليها علامةُ مسحٍ معلَّقةٍ لم تُستهلك لا تُعدّ حيّةً بنافذة النشاط: المسحُ نفسُه يجدّد ختمَ نشاطها فتبدو عاملةً وهي خاملة
+    (تجربة 0101 على 0301: تُخطّيَت «حيّةً تعمل»). أمّا إن قُدِّم `--running` الفعليُّ فيُحكَم به وحدَه."""
+    return set(live) if running is not None else set(live) - set(cleared)
+
+
 def live_for(a) -> set[str]:
     running = running_from_arg(getattr(a, "running", None))
     return running if running is not None else live_sessions()
 
 
 def message_for(session: str, rows: list[tuple[str, str]]) -> str:
-    return "\n".join(payload(i, s) for i, s in rows)
+    return "\n".join(payload(i, s, session) for i, s in rows)
 
 
 def watch_lines(p: WakePlan, directory: dict[str, str], seen: set) -> list[str]:
@@ -424,7 +453,7 @@ def watch_lines(p: WakePlan, directory: dict[str, str], seen: set) -> list[str]:
     ما أُعلن بالنصّ نفسِه لا يُعاد؛ لا خرجَ إن لم يتغيّر شيء. توقّفُ الخطّة (halted) يُعلن مرّةً بنصّه."""
     out = []
     for num, rows in sorted(p.wakes.items()):
-        text = " ؛ ".join(payload(i, s) for i, s in rows)
+        text = " ؛ ".join(payload(i, s, num) for i, s in rows)
         if (num, text) not in seen:
             seen.add((num, text))
             out.append(f"إيقاظ\t{num}\t{directory.get(num, '—')}\t{text}")
@@ -439,8 +468,12 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
     aliases = sa.number_map()
     if a.stale:
         now = datetime.now().astimezone()
-        return stale_plan(events, directory, live_for(a), now, log=read_log(), channel=channel, sent=sender_count(a.sender),
-                          aliases=aliases, pending=pending_wakes(now))
+        import session_state
+
+        cleared = session_state.pending_markers(ROOT, now)
+        auto = session_state.auto_clear_nums(ROOT, now)
+        return stale_plan(events, directory, live_minus_cleared(live_for(a), cleared, running_from_arg(getattr(a, "running", None))), now,
+                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto, pending=pending_wakes(now))
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
