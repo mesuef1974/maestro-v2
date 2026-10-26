@@ -115,3 +115,9 @@ def test_archived_is_skipped(tmp_path):
 def test_nested_isarchived_does_not_skip_live_session(tmp_path):
     got = _run(tmp_path, [("0301 حيّة", {"cliSessionId": "SID-1", "meta": {"isArchived": True}}, 100)])
     assert got == ("0301 حيّة", [])
+
+
+def test_my_state_command_carries_arabic_description_hint():
+    """W-20261025-029: lang_guard يرفض Bash بلا وصفٍ عربيّ، فالهويّةُ تأمر بوصفٍ عربيّ مع الأمر."""
+    msg = si.message("0601 · الإصدار", "t")
+    assert "my_state.py 0601" in msg and "بالعربيّة" in msg

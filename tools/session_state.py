@@ -919,12 +919,9 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         card_num = ("04" if not (main_root(root) / "role_cards" / f"{num}.md").exists() else num) if num.startswith("04") and "-" not in num else num  # 0702 جلسةٌ حيّةٌ مستقلّة ببطاقتها
         card = main_root(root) / "role_cards" / f"{card_num}.md"
         ident = f"هويّتك: الجلسة {num}؛ معرّف الجلسة للمراسلة {local_session_id(sid)}؛ ملفُّ حالتك المعياريّ handover_notes/state_{num}.json وتركيزك handover_notes/focus_{num}.json" + (f"؛ بطاقتك role_cards/{card_num}.md" if card.exists() else "")
-        extra = session_identity.directory_lines() if hasattr(session_identity, "directory_lines") else []  # جلساتُ مجلّد delivery_manager_work لا يطبع لها session_identity
-        if num == "0101":
-            extra = extra[2:]  # قاعدةُ «أرسل إلى 0101» وبروتوكولُ الإحالة لغير المايسترو؛ دليلُ العناوين وحدَه لها
         verdict, issues = reconcile(state, derive(num, state.get("session_label", ""), now, root, cwd=cwd or None))
         verdict_line = f"[مطابقة العودة مع الدفتر وgit] {verdict}" + ("؛ " + "؛ ".join(issues[:5]) if issues else "")
-        text = "\n".join([resume_head(state), ident, *extra, render(state), verdict_line])
+        text = "\n".join([resume_head(state), ident, render(state), verdict_line])  # أسطرُ قاعدة المالك والإحالة والعناوين يطبعها session_identity وحدَه (W-20261025-029)
         if via_pending:
             text = "[مستنتج من ملف معلَّق: الجلسةُ مجهولةُ العنوان فحُسمت بعلامة مسحٍ معلَّقةٍ لهذه الشجرة]\n" + text
         for f in pend_files:  # استعمالٌ واحد
