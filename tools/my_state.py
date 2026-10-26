@@ -217,6 +217,12 @@ def main() -> None:
         sys.exit("رقمُ الجلسة أربعةُ أرقام، مثلاً 0402")
     args.session = m.group(1)
     sys.stdout.reconfigure(encoding="utf-8")
+    try:  # أوّلُ تشغيلٍ بعد المسح = استعادة: تُحذف علامتا المسح فلا يوقظها الكنّاسُ ثانيةً (W-20261026-007)
+        import session_state
+
+        session_state.clear_markers(args.session)
+    except Exception:  # noqa: BLE001 — قراءةُ البطاقات لا تسقط بسبب العلامات
+        pass
     if args.brief:
         print(brief_report(args.session, ledger.load_events()))
         return

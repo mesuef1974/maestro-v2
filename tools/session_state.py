@@ -58,7 +58,8 @@ RULES = (  # قواعدُ حكمٍ ثابتة تُحمَل مع الحالة و�
     "استأنِف من work: focus ثمّ recent ثمّ git.dirty؛ وما غاب عنها فاقرأه من الدفتر",
 )
 TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "duties", "waiting", "next_due", "rules"}
-PENDING_TTL_S = 900  # علامةُ «مسح قيد الانتظار»: 15 دقيقةً ثمّ تُهمَل (W-20261024-005)
+PENDING_TTL_S = 900  # مهلةُ علامة «مسح قيد الانتظار» لحسم الشجرة في خطّاف SessionStart (find_pending): 15 دقيقةً (W-20261024-005)
+MARKER_MAX_AGE_S = 86_400  # علامتا المسح (pending_clear وauto_clear) تبقيان حتى الاستعادة بسقفٍ 24 ساعةً للعلامة اليتيمة (W-20261026-007)
 CLEAR_AT_TOKENS = 175_000  # عتبةُ المسح الذاتي: سياقُ آخر رسالةٍ في transcript (W-20261025-015)
 TRANSCRIPT_TAIL = 400_000  # يُقرأ ذيلُ الملفّ فقط: الاستهلاكُ في آخر رسالة مساعد
 DUTIES_MAX = 6
@@ -564,7 +565,8 @@ def find_pending(cwd: str, root: Path | None = None, now: datetime | None = None
 
 
 def pending_markers(root: Path | None = None, now: datetime | None = None) -> dict[str, Path]:
-    """{الرقم: ملفُّ علامة المسح المعلَّق} للعلامات الصالحة غيرِ المنتهية (يستعملها wake_monitor لإيقاظ الجلسة الخاملة بعد المسح)."""
+    """{الرقم: ملفُّ علامة المسح المعلَّق} للعلامات الصالحة غيرِ المنتهية (يستعملها wake_monitor لإيقاظ الجلسة الخاملة بعد المسح).
+    تبقى العلامةُ حتى تُحذف عند الاستعادة (clear_markers) بسقف MARKER_MAX_AGE_S، لا بمهلة ttl_s التي يفوتها الكنّاسُ الساعيّ."""
     now = now or _now()
     out: dict[str, Path] = {}
     for f in sorted(state_path("0000", root).parent.glob("pending_clear_*.json")):
@@ -572,11 +574,26 @@ def pending_markers(root: Path | None = None, now: datetime | None = None) -> di
             d = json.loads(f.read_text(encoding="utf-8"))
             if not (isinstance(d, dict) and set(d) == {"num", "cwd", "created_at", "ttl_s"} and SESSION_RE.match(str(d["num"])) and isinstance(d["ttl_s"], int)):
                 continue
-            if now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=d["ttl_s"]):
+            if now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=MARKER_MAX_AGE_S):
                 out[d["num"]] = f
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return out
+
+
+def clear_markers(num: str, root: Path | None = None) -> int:
+    """يحذف علامتَي المسح لرقمٍ بعد أن استعادت الجلسةُ حالتَها (my_state أو restore)؛ يعيد عددَ الملفّات المحذوفة. لا يرفع استثناءً."""
+    if not SESSION_RE.match(num):
+        return 0
+    notes = state_path(num, root).parent
+    removed = 0
+    for f in [auto_clear_path(num, root), *notes.glob(f"pending_clear_*_{num}.json")]:
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def context_tokens(transcript: str | Path) -> int | None:
@@ -611,13 +628,13 @@ def auto_clear_path(num: str, root: Path | None = None) -> Path:
 
 
 def auto_clear_nums(root: Path | None = None, now: datetime | None = None) -> set[str]:
-    """أرقامُ الجلسات التي طلب الخطّافُ مسحَها الذاتيّ وطلبُها غيرُ منتهٍ (يقرؤها wake_monitor ليغيّر نصَّ الإيقاظ)."""
+    """أرقامُ الجلسات التي طلب الخطّافُ مسحَها الذاتيّ وطلبُها غيرُ منتهٍ: يبقى حتى الاستعادة بسقف MARKER_MAX_AGE_S (يقرؤها wake_monitor ليغيّر نصَّ الإيقاظ)."""
     now = now or _now()
     out: set[str] = set()
     for f in sorted(state_path("0000", root).parent.glob("auto_clear_*.json")):
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
-            if SESSION_RE.match(str(d["num"])) and now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=PENDING_TTL_S):
+            if SESSION_RE.match(str(d["num"])) and now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=MARKER_MAX_AGE_S):
                 out.add(d["num"])
         except (OSError, ValueError, KeyError, TypeError):
             continue
@@ -1149,6 +1166,7 @@ def main(argv: list[str] | None = None) -> int:
             print("لا حالةَ صالحة", file=sys.stderr)
             return 4
         print(render(st))
+        clear_markers(a.num)  # الاستعادةُ تمّت: لا إيقاظَ «بعد المسح» بعدها (W-20261026-007)
         return 0
     return 2
 
