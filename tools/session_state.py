@@ -1025,6 +1025,17 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
                     block = self_clear_block(num, cleared, local_session_id(sid))
             except Exception as exc:  # noqa: BLE001  # يسقط بصمت: التجديدُ نجح ولا يُفسَد بالمسح
                 outcome += f" | مسحٌ ذاتيّ: {type(exc).__name__}"
+        if not block and not hook.get("stop_hook_active"):  # W-20261026-015: واردٌ غيرُ مسلَّم يمنع الإنهاءَ مرّةً لكلّ دفعة، والمحتوى في سبب المنع
+            try:
+                import inbox
+
+                batch = inbox.claim_block(num, main_root(root))
+                if batch:
+                    outcome += f" | وارد: {len(batch)}"
+                    reason = "[صندوق الوارد] وصلك قبل الإنهاء:\n" + inbox.render(batch) + "\nنفّذ ما فيه أو ردّ عليه بـpython tools/inbox.py send ثمّ أنهِ."
+                    block = json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
+            except Exception as exc:  # noqa: BLE001  # الصندوقُ لا يُسقط التجديد
+                outcome += f" | صندوق: {type(exc).__name__}"
     except Exception as exc:  # noqa: BLE001
         outcome += f" ({type(exc).__name__})"
         try:  # لا يسقط الجلسةَ، لكنّ الفشلَ يُسجَّل ليُعرف أنّ الخطّاف يعمل في شجرات worktree
