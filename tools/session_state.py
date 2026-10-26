@@ -948,11 +948,24 @@ def _log_stop_call(root: Path | None, cwd: str, sid: str, outcome: str) -> None:
         pass
 
 
+def self_clear_block(num: str, cleared: str, local_sid: str) -> str:
+    """قرارُ Stop بالمنع (decision=block) فيُكمل Claude دورَه بهذا النصّ: أمرُ المسح الذاتيّ فور كتابة الطلب (COMMON: المسح الذاتيّ).
+
+    السببُ (W-20261026-001): الطلبُ كان لا يُنفَّذ إلا بإيقاظ الكنّاس، والكنّاسُ كلَّ ساعةٍ وصلاحيّةُ الطلب 15 دقيقة، وقد توقّف الكنّاس."""
+    m = re.search(r"(\d+)", cleared)
+    reason = (f"[مسحٌ ذاتيّ] سياقُك بلغ {m.group(1) if m else '175 ألف'} توكناً (العتبة {CLEAR_AT_TOKENS}) وحارسُ المسح ناجح؛ نفِّذ الآن بلا سؤال: "
+              "1) أنهِ ما بيدك وسجّل ما يلزم (ledger.py، session_state.py focus وwaiting للإحالات المعلّقة). "
+              f"2) شغّل `python C:/Users/mesue/delivery_manager_work/tools/session_state.py guard {num}` (وصفٌ عربيّ للأداة) فإن رفض فأصلح ولا تتجاوز. "
+              f"3) امسح جلستك بأداة clear_session لمعرّفك `{local_sid}`. "
+              f"4) بعد المسح اقرأ بطاقتك `role_cards/{num}.md` ثمّ شغّل `python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` واستأنف من work: focus.")
+    return json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
+
+
 def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str:
     """Stop: يجدّد ملفَّ حالة الجلسة بعد كلّ دورٍ (idempotent) حتى لا يُطلب منها كتابتُه برسالة. لا يسقط الجلسةَ أبداً.
 
     كلُّ استدعاءٍ يُسجَّل في stop_hook_calls.log، ولا رجوعَ صامتاً: يُذكر الرقمُ المحلول أو سببُ التخطّي."""
-    cwd, sid, outcome = "", "", "تخطّي: تعذّرت قراءةُ الحمولة"
+    cwd, sid, outcome, block = "", "", "تخطّي: تعذّرت قراءةُ الحمولة", ""
     try:
         hook = json.loads(stdin_text or "{}")
         import session_identity
@@ -974,7 +987,10 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
         outcome = f"{num}: جُدِّد"
         if tpath:
             try:
-                outcome += f" | {maybe_auto_clear(num, cwd, tpath, root)}"
+                cleared = maybe_auto_clear(num, cwd, tpath, root)
+                outcome += f" | {cleared}"
+                if "كُتب طلبُ المسح" in cleared and not hook.get("stop_hook_active"):  # W-20261026-001: الجلسةُ تُنبَّه في دورها نفسِه لا بكنّاسٍ قد يتوقّف
+                    block = self_clear_block(num, cleared, local_session_id(sid))
             except Exception as exc:  # noqa: BLE001  # يسقط بصمت: التجديدُ نجح ولا يُفسَد بالمسح
                 outcome += f" | مسحٌ ذاتيّ: {type(exc).__name__}"
     except Exception as exc:  # noqa: BLE001
@@ -986,7 +1002,7 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
             pass
     finally:
         _log_stop_call(root, cwd, sid, outcome)
-    return ""
+    return block
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1031,7 +1047,12 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     if a.cmd == "stop-hook":
-        cmd_stop_hook(sys.stdin.read())
+        out = cmd_stop_hook(sys.stdin.read())
+        if out:
+            try:
+                sys.stdout.write(out) if sys.stdout else os.write(1, out.encode("utf-8"))  # pythonw بلا sys.stdout لكنّ المقبضَ الموروث يعمل
+            except OSError:
+                pass
         return 0
     if a.cmd == "hook":
         out = cmd_hook(sys.stdin.read())
