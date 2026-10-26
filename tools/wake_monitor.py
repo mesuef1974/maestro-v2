@@ -66,6 +66,8 @@ CLEAR_ID = "after_clear"  # معرّفٌ خاصٌّ لإيقاظ ما بعد ا�
 CLEAR_MSG = "بعد المسح — اقرأ بطاقتك role_cards/{num}.md ثمّ شغّل: python tools/my_state.py {num}"
 AUTO_CLEAR_STATE = "auto_clear"  # الطلبُ صادرٌ عن خطّاف Stop عند 175 ألفاً لا عن مسحٍ جرى (W-20261025-015)
 AUTO_CLEAR_MSG = "سياقك بلغ 175 ألفاً — نفّذ المسح الذاتيّ كما في role_cards/COMMON.md ثمّ اقرأ بطاقتك role_cards/{num}.md وشغّل: python tools/my_state.py {num}"
+INBOX_ID = "inbox_bell"  # جرسُ الوارد للخاملة: رسالةٌ واحدةٌ لكلّ جلسة، والمحتوى في ledger/inbox لا في الرسالة (W-20261026-015)
+INBOX_MSG = "وصلك واردٌ في صندوقك — شغّل (اكتب وصفَ أداة Bash بالعربيّة): python tools/inbox.py read {num}"
 PAYLOAD_OK = re.compile(r"^W-\d{8}-\d{3} [a-z_]+ — اقرأ: python tools/ledger\.py show W-\d{8}-\d{3}$")
 
 
@@ -97,6 +99,10 @@ def payload(item_id: str, state: str, num: str = "") -> str:
         if not SESSION_NUM.match(num):
             raise ValueError("إيقاظُ ما بعد المسح بلا رقم جلسة")
         return (AUTO_CLEAR_MSG if state == AUTO_CLEAR_STATE else CLEAR_MSG).format(num=num)
+    if item_id == INBOX_ID:
+        if not SESSION_NUM.match(num):
+            raise ValueError("جرسُ الوارد بلا رقم جلسة")
+        return INBOX_MSG.format(num=num)
     text = PAYLOAD.format(id=item_id, state=state)
     if not PAYLOAD_OK.match(text):
         raise ValueError(f"حمولةٌ خارج الصيغة المسموحة: {text!r}")
@@ -133,7 +139,7 @@ def cap_live(p: "WakePlan", live) -> None:
     """سقفُ التزامن MAX_LIVE: الموقَظةُ الحيّةُ أصلاً لا تزيد العدّ؛ الجديدةُ تُقبل بقدر ما بقي من السقف بترتيب الخطّة، والباقي يُؤجَّل
     (p.deferred فلا يتقدّم المؤشّر فيعاد في الدورة التالية). إن امتلأ السقفُ فلا إيقاظ وتُسجَّل halted."""
     # رسالتا المسح وما بعده (CLEAR_ID) خارج السقف (W-20261025-025): جلسةٌ ممسوحةٌ خاملةٌ لا يوقظها غيرُ هذه الرسالة فيبقى تأجيلُها تعطيلاً لها
-    fresh = [h for h in p.wakes if h not in live and not any(i == CLEAR_ID for i, _ in p.wakes[h])]
+    fresh = [h for h in p.wakes if h not in live and not any(i in (CLEAR_ID, INBOX_ID) for i, _ in p.wakes[h])]
     room = max(0, MAX_LIVE - len(set(live)))
     if len(fresh) <= room:
         return
@@ -262,7 +268,7 @@ def pending_wakes(now: datetime, path: Path | None = None) -> list[dict]:
     return out
 
 
-def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=(), auto=frozenset(), pending=()) -> WakePlan:
+def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=(), auto=frozenset(), pending=(), inbox=()) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
     aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
     دالّةٌ نقيّةٌ إلّا ما يفعله verify. الحالةُ هي المُطلِق لا الحدث."""
@@ -337,8 +343,22 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         else:
             p.wakes.setdefault(num, []).append((CLEAR_ID, AUTO_CLEAR_STATE if num in auto else "pending_clear"))
             since[CLEAR_ID + num] = now
-    # رسائل المسح وما بعده (CLEAR_ID) خارج قطع الخمس كما هي خارج cap_live: تأجيلُها دورةً قد يُنهي صلاحيةَ علامة المسح المعلّق (W-20261025-028)
-    ordinary = [n for n in p.wakes if not any(i == CLEAR_ID for i, _ in p.wakes[n])]
+    for num in sorted(set(inbox)):  # واردٌ غيرُ مسلَّم لجلسةٍ خاملة: جرسٌ واحدٌ (W-20261026-015)؛ الحيّةُ يحقنه لها خطّافُ PostToolUse
+        if num in live:
+            p.skipped.append((num, "وارداً لجلسةٍ حيّةٍ تعمل: يحقنه الخطّاف"))
+        elif channel is not None and num not in channel:
+            p.skipped.append((num, "خارج القناة"))
+        elif num not in directory:
+            p.skipped.append((num, f"لا معرّفَ للجلسة {num}"))
+        elif num in last_wake and now - last_wake[num] < timedelta(minutes=REWAKE_MIN):
+            p.skipped.append((num, f"أُوقظت قبل أقلّ من {REWAKE_MIN} دقيقة"))
+        elif any(i == INBOX_ID for i, _ in p.wakes.get(num, [])):
+            continue
+        else:
+            p.wakes.setdefault(num, []).append((INBOX_ID, "inbox"))
+            since[INBOX_ID + num] = now
+    # رسائل المسح وما بعده (CLEAR_ID) وجرسُ الوارد (INBOX_ID، W-20261026-015) خارج قطع الخمس كما هي خارج cap_live: تأجيلُها دورةً قد يُنهي صلاحيةَ علامة المسح المعلّق (W-20261025-028)
+    ordinary = [n for n in p.wakes if not any(i in (CLEAR_ID, INBOX_ID) for i, _ in p.wakes[n])]
     if len(ordinary) > MAX_SESSIONS_PER_RUN:
         oldest = sorted(ordinary, key=lambda n: min(since[i] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
         for num in [n for n in ordinary if n not in oldest]:
@@ -472,8 +492,11 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
 
         cleared = session_state.pending_markers(ROOT, now)
         auto = session_state.auto_clear_nums(ROOT, now)
+        import inbox
+
+        waiting_inbox = inbox.pending_nums(ROOT)
         return stale_plan(events, directory, live_minus_cleared(live_for(a), cleared, running_from_arg(getattr(a, "running", None))), now,
-                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto, pending=pending_wakes(now))
+                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto, pending=pending_wakes(now), inbox=waiting_inbox)
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
