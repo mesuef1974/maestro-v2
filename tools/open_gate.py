@@ -16,7 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-MAESTRO = Path(os.environ.get("MAESTRO_HOME", "C:/Users/mesue/delivery_manager_work"))
+# جذرُ المستودع من موضع الملف نفسه فيعمل في CI وفي أيّ نسخة (MAESTRO_HOME يتقدّم عليه)
+MAESTRO = Path(os.environ.get("MAESTRO_HOME") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(MAESTRO / "tools"))
 sys.path.insert(0, str(MAESTRO / "skills" / "maestro-spawn" / "scripts"))
 import spawn_preflight as sp  # noqa: E402

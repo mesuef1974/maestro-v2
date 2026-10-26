@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: تثبيت pytest
-        run: python -m pip install pytest
+      - name: تثبيت pytest وtzdata (منطقة Asia/Qatar على Windows)
+        run: python -m pip install pytest tzdata
       - name: اختبارات tools
         run: python -m pytest tools -q -p no:cacheprovider
