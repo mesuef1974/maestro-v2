@@ -744,3 +744,12 @@ def test_hook_does_not_repeat_identity_directory_lines(tree):
     out = ss.cmd_hook(json.dumps({"source": "clear", "cwd": "x", "session_id": "s"}), tree, NOW, titles)
     ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
     assert "[قاعدة المالك]" not in ctx and "[متابعة الإحالة]" not in ctx and "[عناوين الجلسات]" not in ctx
+
+
+def test_compact_render_lists_waiting_once(tree):
+    """W-20261026-002: في حقن الخطّاف تُسرد الإحالاتُ المنتظَرةُ مرّةً واحدة (في resume_head) لا في JSON ولا في قائمةٍ ثانية."""
+    s = _gen(_tree_with_waiting(tree))
+    full, compact = ss.render(s), ss.render(s, compact=True)
+    assert "#3 إلى 0501" in full and '"waiting"' in full
+    assert "#3 إلى 0501" not in compact and '"waiting"' not in compact and "أعلاه" in compact
+    assert "#3 إلى 0501" in ss.resume_head(s)

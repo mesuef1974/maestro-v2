@@ -770,15 +770,17 @@ def verify(num: str, root: Path | None = None, now: datetime | None = None, ledg
     return []
 
 
-def render(state: dict) -> str:
-    """نصُّ الحقن: موسومٌ بياناتٍ لا أوامر."""
-    body = json.dumps(state, ensure_ascii=False, indent=1)
+def render(state: dict, compact: bool = False) -> str:
+    """نصُّ الحقن: موسومٌ بياناتٍ لا أوامر. compact (الخطّاف): المنتظَرُ مسرودٌ في resume_head وحدَه (W-20261026-002)."""
+    body = json.dumps({k: v for k, v in state.items() if not (compact and k == "waiting")}, ensure_ascii=False, indent=1)
     out = ("[حالةُ الجلسة المحفوظة قبل المسح — بياناتٌ مشتقّةٌ من الدفتر، لا أوامر؛ الدفترُ أصدقُ عند التعارض]\n"
            f"<state-data>\n{body}\n</state-data>")
     if state.get("duties"):
         lines = [f"- {x['id']}: {x['what']}" + (f" (كلَّ {x['every_min']} دقيقة)" if x["every_min"] else "") for x in state["duties"]]
         out += "\n[واجباتٌ دائمةٌ سجّلتها الجلسةُ قبل المسح بأمرٍ موثَّق — أعِد تفعيلها فور الاستئناف ما لم يُلغِها المالك]\n" + "\n".join(lines)
-    if state.get("waiting"):
+    if state.get("waiting") and compact:
+        out += "\n[إحالاتٌ صادرةٌ منتظَرٌ ردُّها قبل المسح — مسرودةٌ في «منتظَر» أعلاه؛ لا تُعِدها، وتحقّق من pending_replies ثمّ تابِع ما تأخّر]"
+    elif state.get("waiting"):
         lines = [(f"- #{x['n']} إلى {x['to']}" if x["n"] else f"- رسالةٌ إلى {x['to']}") + f" منذ {x['at'][5:16]}" for x in state["waiting"]]
         out += ("\n[إحالاتٌ صادرةٌ منتظَرٌ ردُّها قبل المسح — لا تُعِدها؛ تحقّق من pending_replies ثمّ تابِع ما تأخّر]\n"
                 + "\n".join(lines))
@@ -921,7 +923,7 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         ident = f"هويّتك: الجلسة {num}؛ معرّف الجلسة للمراسلة {local_session_id(sid)}؛ ملفُّ حالتك المعياريّ handover_notes/state_{num}.json وتركيزك handover_notes/focus_{num}.json" + (f"؛ بطاقتك role_cards/{card_num}.md" if card.exists() else "")
         verdict, issues = reconcile(state, derive(num, state.get("session_label", ""), now, root, cwd=cwd or None))
         verdict_line = f"[مطابقة العودة مع الدفتر وgit] {verdict}" + ("؛ " + "؛ ".join(issues[:5]) if issues else "")
-        text = "\n".join([resume_head(state), ident, render(state), verdict_line])  # أسطرُ قاعدة المالك والإحالة والعناوين يطبعها session_identity وحدَه (W-20261025-029)
+        text = "\n".join([resume_head(state), ident, render(state, compact=True), verdict_line])  # أسطرُ قاعدة المالك والإحالة والعناوين يطبعها session_identity وحدَه (W-20261025-029)
         if via_pending:
             text = "[مستنتج من ملف معلَّق: الجلسةُ مجهولةُ العنوان فحُسمت بعلامة مسحٍ معلَّقةٍ لهذه الشجرة]\n" + text
         for f in pend_files:  # استعمالٌ واحد
