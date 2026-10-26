@@ -725,9 +725,13 @@ class PushPass(unittest.TestCase):
         self.assertEqual((pushes, item["state"]), ([], "approved"))
         self.assertIn("prepush", lines[0])
 
-    def test_a_repo_without_prepush_tool_is_exempt_from_the_receipt_explicitly(self):
-        """(W-20261024-007، حالة 008) مستودعُ أدواتٍ بلا scripts/prepush_check.py لا يعلق دفعُه للأبد."""
+    def test_a_governance_repo_needs_the_substitute_receipt_not_an_exemption(self):
+        """(W-20261026-018) مستودعُ حوكمةٍ بلا scripts/prepush_check.py لا يُعفى: إيصالُه البديل pytest tools/ أخضرَ للرأس نفسه."""
         self.has_tool = False
+        lines, pushes, item = self.run_pass(receipt=False)
+        self.assertEqual((pushes, item["state"]), ([], "approved"))
+        (self.gitdir / fp.ledger.RECEIPT_NAME).write_text(
+            json.dumps({"head": "aaaaaaaa", "ok": True, "kind": fp.push_approved.GOV_RECEIPT_KIND}), encoding="utf-8")
         lines, pushes, item = self.run_pass(receipt=False)
         self.assertEqual((pushes, item["state"]), ([("push", "origin", "HEAD:refs/heads/w20261020-001-x")], "pushed"))
 
@@ -872,24 +876,66 @@ class PrepushPass(unittest.TestCase):
         self.assertEqual(self.runs(docker), [])
         self.assertIn("docker build", lines[0])
 
-    def test_a_dirty_tree_or_other_branch_or_other_repository_is_skipped(self):
-        for git in (self.git(dirty=" M x.py\n"), self.git(branch="main"), self.git(origin="https://github.com/x/maestro-v2.git"),
-                    self.git(head="b" * 40)):
+    def test_every_skip_prints_a_line_and_nothing_runs(self):
+        """(W-20261026-018) لا تخطٍّ صامتاً: شجرةٌ متسخة أو فرعٌ آخر أو رأسٌ مختلف يطبع سطراً ولا يشغّل شيئاً."""
+        for git in (self.git(dirty=" M x.py\n"), self.git(branch="main"), self.git(head="b" * 40)):
             lines, docker = self.run_pass(git=git)
-            if "maestro-v2" in git(".", "remote")[1]:  # غيرُ المنصّة: سطرٌ صريحٌ لا تخطٍّ صامت (W-20261024-007)
-                self.assertEqual(len(lines), 1)
-                self.assertIn("غيرُ المنصّة", lines[0])
-                self.assertEqual(docker.calls, [])
-            else:
-                self.assertEqual((lines, docker.calls), ([], []))
+            self.assertEqual(len(lines), 1, lines)
+            self.assertIn("⏭", lines[0])
+            self.assertEqual(docker.calls, [])
         self.assertIsNone(self.receipt())
 
-    def test_a_platform_tree_without_prepush_tool_says_so_instead_of_silent_skip(self):
+    def test_governance_tree_gets_the_pytest_substitute_receipt_only_when_green(self):
+        """(W-20261026-018) بلا scripts/prepush_check.py: pytest tools/ بدل الحاوية؛ الإيصالُ برمز 0 وحده."""
         (self.tree / "scripts" / "prepush_check.py").unlink()
-        lines, docker = self.run_pass()
-        self.assertEqual(len(lines), 1)
-        self.assertIn("prepush_check.py", lines[0])
+        ran = []
+        lines, docker = self.run_pass(pytest_run=lambda path, timeout: (ran.append(path) or (0, "1500 passed")))
+        self.assertEqual([Path(x) for x in ran], [self.tree])
         self.assertEqual(docker.calls, [])
+        self.assertIn("✔", lines[0])
+        self.assertEqual(self.receipt(), {"head": "aaaaaaaa", "ok": True, "kind": fp.push_approved.GOV_RECEIPT_KIND})
+
+    def test_governance_pytest_red_or_timeout_gives_no_receipt_and_is_not_retried_for_the_same_head(self):
+        (self.tree / "scripts" / "prepush_check.py").unlink()
+        calls = []
+
+        def red(path, timeout):
+            calls.append(1)
+            return 1, "FAILED tools/test_x.py::t\n1 failed, 3 passed"
+
+        lines, _ = self.run_pass(pytest_run=red)
+        self.assertIn("✘", lines[0])
+        self.assertIn("رمز الخروج 1", lines[0])
+        self.assertIsNone(self.receipt())
+        lines, _ = self.run_pass(pytest_run=red)
+        self.assertEqual(len(calls), 1)  # لا إعادة لرأسٍ فشل
+        self.assertIn("لم يُعَد", lines[0])
+        (self.tree / "x").touch()
+        lines, _ = self.run_pass(apply=False)
+        self.assertIsNone(self.receipt())
+
+    def test_governance_dry_run_only_announces_the_substitute_receipt(self):
+        (self.tree / "scripts" / "prepush_check.py").unlink()
+        lines, _ = self.run_pass(apply=False, pytest_run=lambda p, t: (_ for _ in ()).throw(AssertionError("لا تشغيل في العرض")))
+        self.assertIn("إيصالاً بديلاً", lines[0])
+        self.assertIsNone(self.receipt())
+
+    def test_governance_head_changed_during_pytest_gives_no_receipt(self):
+        (self.tree / "scripts" / "prepush_check.py").unlink()
+        base, state = self.git(), {"done": False}
+
+        def git(repo, *args):
+            if args == ("rev-parse", "HEAD"):
+                return 0, ("b" if state["done"] else "a") * 40 + chr(10)
+            return base(repo, *args)
+
+        def run(path, timeout):
+            state["done"] = True
+            return 0, "ok"
+
+        lines, _ = self.run_pass(git=git, pytest_run=run)
+        self.assertIsNone(self.receipt())
+        self.assertIn("تغيّر أثناء الفحص", lines[0])
 
     def test_head_changed_during_the_run_gives_no_receipt(self):
         heads = iter(["a" * 40, "b" * 40])
