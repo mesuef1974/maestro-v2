@@ -122,11 +122,26 @@ def set_focus(num: str, card: str, step: int, root: Path | None = None, ledger_p
     return p
 
 
+def clear_focus(num: str, root: Path | None = None) -> bool:
+    """يُفرّغ تركيزَ الجلسة (W-20261026-008): جلسةٌ بلا بطاقةٍ نشطة تعلن ذلك بـfocus NNNN --clear فلا تُستأنف من بطاقةٍ منتهية. يعيد هل وُجد."""
+    try:
+        focus_path(num, root).unlink()
+    except OSError:
+        return False
+    return True
+
+
 def renew_focus(num: str, root: Path | None = None, ledger_path: Path | None = None) -> bool:
     """يجدّد ختمَ focus المعلَن بالبطاقة والخطوة نفسيهما (W-20261025-024): كلُّ حدثٍ جديدٍ في الدفتر يقدّم «آخر حدثٍ للجلسة»
     فيسقط الحارسُ بلا ذنب. لا يُنشئ تركيزاً لم تعلنه الجلسة؛ يعيد False إن لم يوجد أو صارت بطاقتُه خارج الدفتر."""
     cur = _load_focus(num, root)
     if cur is None:
+        return False
+    import ledger
+
+    items = ledger.reduce_state(ledger.load_events(ledger_path or (main_root(root) / "ledger" / "events.jsonl")))
+    if (items.get(cur["card"]) or {}).get("state") in ledger.RELEASING_STATES:  # بطاقةُ التركيز نُشرت/أُغلقت: يُفرَّغ بدل أن يُجدَّد (W-20261026-008)
+        clear_focus(num, root)
         return False
     try:
         set_focus(num, cur["card"], cur["step"], root, ledger_path)
@@ -1040,8 +1055,9 @@ def main(argv: list[str] | None = None) -> int:
     gp.add_argument("num")
     fp = sub.add_parser("focus", help="يحفظ تركيزَ الجلسة: بطاقةٌ وخطوة")
     fp.add_argument("num")
-    fp.add_argument("--card", required=True)
-    fp.add_argument("--step", type=int, required=True)
+    fp.add_argument("--card")
+    fp.add_argument("--step", type=int)
+    fp.add_argument("--clear", action="store_true", help="يُفرّغ التركيز: لا بطاقةَ نشطة")
     dp = sub.add_parser("duties", help="يسجّل الواجباتِ الدائمة أو يصرّح بخلوّها")
     dp.add_argument("num")
     dg = dp.add_mutually_exclusive_group(required=True)
@@ -1115,6 +1131,12 @@ def main(argv: list[str] | None = None) -> int:
         print("سليم" if not errs else "فشل: " + "؛ ".join(errs))
         return 0 if not errs else 5
     if a.cmd == "focus":
+        if a.clear:
+            print("فُرّغ التركيز" if clear_focus(a.num) else "لا تركيزَ معلَناً")
+            return 0
+        if a.card is None or a.step is None:
+            print("رُفض: --card و--step مطلوبان (أو --clear)", file=sys.stderr)
+            return 3
         try:
             print(f"كُتب: {set_focus(a.num, a.card, a.step)}")
         except ValueError as e:
@@ -1165,6 +1187,12 @@ def main(argv: list[str] | None = None) -> int:
         if st is None or validate(st):
             print("لا حالةَ صالحة", file=sys.stderr)
             return 4
+        try:  # W-20261026-008: الاستعادةُ تعيد الاشتقاقَ من الدفتر الآن لا تطبع محفوظاً قديماً
+            renew_focus(a.num)
+            write_state(a.num, derive(a.num, st.get("session_label", ""), _now(), None, cwd=os.getcwd()))
+            st = load_state(a.num) or st
+        except Exception as e:  # noqa: BLE001 — تُطبع المحفوظةُ مع تنبيه
+            print(f"تنبيه: تعذّرت إعادة الاشتقاق ({e}); المطبوع هو المحفوظ", file=sys.stderr)
         print(render(st))
         clear_markers(a.num)  # الاستعادةُ تمّت: لا إيقاظَ «بعد المسح» بعدها (W-20261026-007)
         return 0

@@ -37,10 +37,10 @@ DONE = ("published", "closed", "deferred")
 
 #: الأفعالُ الخمسة بترتيب العرض.
 ACTIONS = (
-    ("roadmap", "بعد الدمج: أبلغي 0701 برقم الطلب"),
-    ("now", "عليكِ الآن"),
-    ("push", "اعتُمدت: ادفعي بالرأس المعتمَد"),
-    ("waiting", "تنتظر غيرَكِ"),
+    ("roadmap", "بعد الدمج: أبلغ 0701 برقم الطلب"),
+    ("now", "عليك الآن"),
+    ("push", "اعتُمدت: ادفع بالرأس المعتمَد"),
+    ("waiting", "تنتظر غيرَك"),
     ("late", "متأخّرة: حان بدؤها ولم تبدأ"),
 )
 
@@ -165,9 +165,9 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
         lines.append(role_warn + chr(10))
     if warn:
         lines.append(f"!! تحذير: بطاقات pushed بلا فرع بعيد ({len(warn)}): {'، '.join(warn)}\n")
-    lines.append(f"== {session}: {len(mine)} بطاقةً بالمالك المستنتَج")
+    lines.append(f"== {session}: {len(held)} بطاقةً محجوزةً (held_by)، {len(mine)} بالمالك المستنتَج")  # W-20261026-008: المحجوزة فعلاً أوّلاً
     if held:
-        lines.append(f"محجوزةٌ باسمكِ (held_by) ({len(held)}):")
+        lines.append(f"محجوزةٌ باسمك (held_by) ({len(held)}):")
         lines.extend(f"  {i['id']} [{i.get('state', '?')}] {i.get('priority', '')} {str(i.get('problem', ''))[:60]}"
                      for i in sorted(held, key=ledger.order_key))
     empty = True
@@ -176,8 +176,10 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
             empty = False
             lines.append(f"\n{label} ({len(groups[key])}):")
             lines.extend(describe(i) for i in groups[key])
-    if empty:
-        lines.append("\nلا شيءَ يلزمكِ الآن.")
+    if empty and held:
+        lines.append(f"\nلا فعلَ مستنتَجاً عليك، لكنّ {len(held)} بطاقةً محجوزةً باسمك أعلاه لم تنتهِ.")
+    elif empty:
+        lines.append("\nلا شيءَ يلزمك الآن.")
     if show_all and finished:
         lines.append(f"\nمنتهية ({len(finished)}):")
         lines.extend(describe(i) for i in finished)
@@ -196,9 +198,10 @@ def brief_report(session: str, events: list[dict], now: datetime | None = None) 
         action = classify(item, events, late_ids)
         if action is not None:
             rows.append(f"{item['id']} [{item.get('state', '?')}] {label[action]}")
-    head = f"== {session}: {len(mine)} بطاقةً، المطلوب {len(rows)}"
+    held = [i for i in items.values() if i.get("held_by") == session and i.get("state") not in DONE]
+    head = f"== {session}: {len(held)} محجوزةً، {len(mine)} بالمالك المستنتَج، المطلوب {len(rows)}"
     if not rows:
-        return head + " — لا شيءَ يلزم الآن."
+        return head + (" — لا فعلَ مستنتَجاً لكنّ المحجوزة لم تنتهِ." if held else " — لا شيءَ يلزم الآن.")
     lines = [head, *rows[:10]]
     if len(rows) > 10:
         lines.append(f"+{len(rows) - 10} أخرى")

@@ -810,3 +810,34 @@ def test_restore_command_clears_markers(tree, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["session_state.py", "restore", "0108"])
     ss.main()
     assert ss.pending_markers(tree, NOW) == {}
+
+
+def _append_event(tree, ev):
+    with (tree / "ledger" / "events.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(ev, ensure_ascii=False) + chr(10))
+
+
+def test_focus_clear_removes_declared_focus(tree, monkeypatch, capsys):
+    """W-20261026-008: focus NNNN --clear يُفرّغ التركيز؛ وبلا --card/--step يُرفض."""
+    ss.set_focus("0108", "W-1", 1, tree)
+    monkeypatch.setattr(ss, "ROOT", tree)
+    monkeypatch.setattr("sys.argv", ["session_state.py", "focus", "0108", "--clear"])
+    assert ss.main() == 0 and not ss.focus_path("0108", tree).exists()
+    monkeypatch.setattr("sys.argv", ["session_state.py", "focus", "0108"])
+    assert ss.main() == 3
+
+
+def test_renew_focus_clears_when_focus_card_is_published(tree):
+    ss.set_focus("0108", "W-2", 1, tree)
+    assert ss.renew_focus("0108", tree) is True  # merged: يجدَّد
+    _append_event(tree, _ev("2026-10-23T13:00:00+03:00", "W-2", "state", {"state": "published", "by": "0601"}))
+    assert ss.renew_focus("0108", tree) is False and not ss.focus_path("0108", tree).exists()
+
+
+def test_restore_rederives_from_ledger_not_stale_saved_state(tree, monkeypatch, capsys):
+    ss.write_state("0108", _gen(tree), tree)
+    _append_event(tree, _ev("2026-10-23T19:30:00+03:00", "W-9", "created", {"source": "owner", "problem": "جديدة", "held_by": "0108"}))
+    monkeypatch.setattr(ss, "ROOT", tree)
+    monkeypatch.setattr("sys.argv", ["session_state.py", "restore", "0108"])
+    assert ss.main() == 0
+    assert "W-9" in capsys.readouterr().out
