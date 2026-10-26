@@ -198,10 +198,62 @@ def directory_lines(num: str | None = None) -> list[str]:
     return out
 
 
+#: بدءٌ ملتبسٌ (المعرّفُ لم يُكتب بعدُ): علامةٌ تُحذف عند أوّل رسالةٍ تنجح فيها إعادةُ التعرّف، وتُهمَل بعد ساعة (W-20261026-017)
+PENDING_TTL_S = 3600
+
+
+def _pending_path(session_id: str, root: Path | None = None) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:60]
+    return (root or ROOT) / "handover_notes" / f"identity_pending_{safe}.json"
+
+
+def mark_pending(session_id: str, cwd: str, root: Path | None = None, now: datetime | None = None) -> None:
+    """يسجّل بدءاً ملتبساً لتُعاد الهويّةُ عند أوّل رسالة (UserPromptSubmit). لا يرفع استثناءً ولا يُبطئ البدء."""
+    if not session_id:
+        return
+    try:
+        p = _pending_path(session_id, root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"session_id": session_id, "cwd": cwd, "at": (now or datetime.now()).isoformat(timespec="seconds")}, ensure_ascii=False) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def prompt_identity(raw: str, root: Path | None = None, resolver=None, now: datetime | None = None) -> list[str]:
+    """خطّاف UserPromptSubmit: إن كانت لهذه الجلسة علامةُ بدءٍ ملتبس وصار عنوانُها الحيُّ معروفاً (cliSessionId كُتب) فتُحقن سطورُ
+    الهويّة الصحيحة مرّةً واحدةً وتُحذف العلامة؛ وإلا لا شيء (فلا إبطاءَ للرسائل العاديّة: فحصُ وجود ملفٍّ واحد)."""
+    try:
+        hook = json.loads(raw or "{}")
+        sid, cwd = str(hook.get("session_id", "")), str(hook.get("cwd", ""))
+        if not sid:
+            return []
+        p = _pending_path(sid, root)
+        if not p.is_file():
+            return []
+        mark = json.loads(p.read_text(encoding="utf-8"))
+        if ((now or datetime.now()) - datetime.fromisoformat(mark["at"])).total_seconds() > PENDING_TTL_S:
+            p.unlink(missing_ok=True)
+            return []
+        where = cwd or mark.get("cwd", "")
+        live, _ = resolver(where, sid) if resolver else app_title(where, sid, wait_s=0)
+        if live is None:
+            return []
+        p.unlink(missing_ok=True)
+        return ["[تصحيح هويّة الجلسة — كان بدؤك ملتبساً]", message(live, None), *directory_lines(_num_of(live))]
+    except Exception:  # noqa: BLE001 — الخطّاف لا يُسقط الجلسة
+        return []
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--cwd")
+    ap.add_argument("--prompt", action="store_true", help="خطّاف UserPromptSubmit: يعيد التعرّفَ بعد بدءٍ ملتبس ويحقن الهويّة مرّةً واحدة")
     args = ap.parse_args()
+    if args.prompt:
+        sys.stdout.reconfigure(encoding="utf-8")
+        for line in prompt_identity(sys.stdin.read()):
+            print(line)
+        return 0
     cwd = args.cwd
     session_id = ""
     if not cwd:
@@ -217,6 +269,8 @@ def main() -> int:
             live, candidates = app_title(cwd, session_id)
         except Exception:  # noqa: BLE001
             live, candidates = None, []
+        if live is None:
+            mark_pending(session_id, cwd)
         if live is not None:
             print(message(live, None))
         elif candidates:
@@ -242,6 +296,7 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         live, candidates = None, []
     if live is None and len(candidates) > 1:
+        mark_pending(session_id, cwd)
         print("[هويّة الجلسة] تشترك في هذه الشجرة (" + tree + ") جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
               + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
     else:
