@@ -841,3 +841,19 @@ def test_restore_rederives_from_ledger_not_stale_saved_state(tree, monkeypatch, 
     monkeypatch.setattr("sys.argv", ["session_state.py", "restore", "0108"])
     assert ss.main() == 0
     assert "W-9" in capsys.readouterr().out
+
+
+def test_stop_hook_blocks_once_per_undelivered_inbox_batch(tree):
+    """W-20261026-015: واردٌ غيرُ مسلَّم يمنع الإنهاءَ مرّةً واحدةً لكلّ دفعة ومحتواه في سبب المنع."""
+    import inbox
+
+    hook = json.dumps({"cwd": "D:/w", "session_id": "s"})
+    titles = lambda c, i: ("0108 · التقييم", [])  # noqa: E731
+    assert ss.cmd_stop_hook(hook, tree, titles) == ""
+    inbox.send("0108", "0101", "نفّذ الخطوة 2", tree)
+    out = json.loads(ss.cmd_stop_hook(hook, tree, titles))
+    assert out["decision"] == "block" and "نفّذ الخطوة 2" in out["reason"] and "من 0101" in out["reason"]
+    assert ss.cmd_stop_hook(hook, tree, titles) == ""  # سُلِّمت: لا حلقةَ منع
+    active = json.dumps({"cwd": "D:/w", "session_id": "s", "stop_hook_active": True})
+    inbox.send("0108", "0101", "أخرى", tree)
+    assert ss.cmd_stop_hook(active, tree, titles) == ""  # stop_hook_active لا يُمنع ثانيةً

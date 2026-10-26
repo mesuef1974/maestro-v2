@@ -536,3 +536,24 @@ def test_two_hour_old_marker_wakes_idle_session_under_stale(tmp_path):
     assert p.wakes == {"0201": [(wm.CLEAR_ID, "pending_clear")]}
     ss.clear_markers("0201", tmp_path)
     assert wm.stale_plan([], DIR, set(), now, verify=ok, cleared=ss.pending_markers(tmp_path, now)).wakes == {}
+
+
+# ===== جرس الوارد للخاملة (W-20261026-015) =====
+def test_inbox_bell_wakes_idle_session_once_with_single_message():
+    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, inbox={"0201": 3})
+    assert p.wakes == {"0201": [(wm.INBOX_ID, "inbox")]}
+    msg = wm.message_for("0201", p.wakes["0201"])
+    assert "inbox.py read 0201" in msg and chr(10) not in msg
+
+
+def test_inbox_bell_skips_live_unknown_and_recently_woken():
+    assert wm.stale_plan([], DIR, {"0201"}, _NOW, verify=ok, inbox={"0201": 1}).wakes == {}
+    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, inbox={"0999": 1})
+    assert p.wakes == {} and p.skipped
+    log = [{"ts": (_NOW - timedelta(minutes=2)).isoformat(), "wakes": {"0201": ["x"]}, "pairs": []}]
+    assert wm.stale_plan([], DIR, set(), _NOW, log=log, verify=ok, inbox={"0201": 1}).wakes == {}
+
+
+def test_inbox_bell_payload_needs_valid_number():
+    with pytest.raises(ValueError):
+        wm.payload(wm.INBOX_ID, "inbox", "")
