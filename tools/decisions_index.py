@@ -68,7 +68,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
-    fresh = render(SRC.read_bytes().decode("utf-8").replace("\r\n", "\n"))
+    arch = SRC.with_name("decisions_archive.md")  # الفهرسُ يغطّي الأرشيفَ والحيَّ معاً (W-20261025-016)
+    old = arch.read_bytes().decode("utf-8").replace("\r\n", "\n") + "\n" if arch.is_file() else ""
+    fresh = render(old + SRC.read_bytes().decode("utf-8").replace("\r\n", "\n"))
     if a.check:
         cur = OUT.read_bytes().decode("utf-8").replace("\r\n", "\n") if OUT.exists() else ""
         if cur != fresh:

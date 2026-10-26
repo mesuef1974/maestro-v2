@@ -48,7 +48,7 @@ def test_waiver_only_for_0501_and_docs(tmp_path):
 
 def test_ui_paths_are_detected_and_others_are_not():
     assert ac._is_ui_path("templates/dashboard/roles/director.html")
-    assert ac._is_ui_path("D:/shschool_mvp/static/css/custom/40-themes.css")
+    assert ac._is_ui_path(ac.REPO_DIR.rstrip("/") + "/static/css/custom/40-themes.css")
     assert ac._is_ui_path("static" + chr(92) + "js" + chr(92) + "app.js")
     assert not ac._is_ui_path("operations/schedule_evaluator.py")
     assert not ac._is_ui_path("docs/visual_gate.md")
