@@ -48,6 +48,10 @@ def _scoped_git_run(cmd, env=None, timeout=None):
 
 
 pc._run = _scoped_git_run
+import check_migration_collisions as cmc  # noqa: E402 — من scripts/ المنصّة (في sys.path أعلاه)
+import git_open_prs  # noqa: E402 — بجوار هذا الملف (/runner)
+
+pc.check_migration_collisions = lambda: git_open_prs.check(pc, cmc)  # صورةٌ بلا gh: فروعُ git بدل gh pr list (W-20261026-014)
 pc.check_pre_commit_hook = _direct_ruff
 pc.write_receipt = lambda: None
 sys.exit(pc.main(sys.argv[1:]))

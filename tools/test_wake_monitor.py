@@ -452,3 +452,17 @@ def test_cleared_session_not_live_by_window_but_running_wins():
     assert wm.live_minus_cleared({"0301"}, {"0301": "x"}, {"0301"}) == {"0301"}
     p = wm.stale_plan([], DIR, wm.live_minus_cleared({"0201"}, {"0201": "x"}, None), _NOW, verify=lambda *_: True, cleared={"0201": "x"})
     assert "0201" in p.wakes
+
+
+def test_two_hour_old_marker_wakes_idle_session_under_stale(tmp_path):
+    """W-20261026-007: علامةٌ عمرها ساعتان ولم تُستعد الجلسةُ يُخرجها --stale رسالةَ «بعد المسح»؛ وبعد حذفها لا إيقاظ."""
+    import session_state as ss
+
+    now = datetime(2026, 10, 26, 12, 0, tzinfo=timezone(timedelta(hours=3)))
+    ss.write_pending("0201", "D:/a", tmp_path, now - timedelta(hours=2))
+    cleared = ss.pending_markers(tmp_path, now)
+    assert set(cleared) == {"0201"}
+    p = wm.stale_plan([], DIR, set(), now, verify=ok, cleared=cleared)
+    assert p.wakes == {"0201": [(wm.CLEAR_ID, "pending_clear")]}
+    ss.clear_markers("0201", tmp_path)
+    assert wm.stale_plan([], DIR, set(), now, verify=ok, cleared=ss.pending_markers(tmp_path, now)).wakes == {}

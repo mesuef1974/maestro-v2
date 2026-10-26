@@ -90,7 +90,7 @@ class MyStateWarning(unittest.TestCase):
         out = my_state.report("0402", self.EVENTS, remote_lookup=lambda b: None)
         self.assertTrue(out.startswith("!! تحذير: بطاقات pushed بلا فرع بعيد"))
         self.assertIn("W-1", out.splitlines()[0])
-        self.assertIn("محجوزةٌ باسمكِ", out)
+        self.assertIn("محجوزةٌ باسمك", out)
 
     def test_held_cards_show_their_state_one_per_line(self):
         out = my_state.report("0402", self.EVENTS)

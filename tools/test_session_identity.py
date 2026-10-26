@@ -135,3 +135,88 @@ def test_directory_line_limited_to_own_id_and_0101(monkeypatch, capsys):
     line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("[عناوين الجلسات]"))
     assert "0601=local_0601" in line and "0101=local_0101" in line
     assert "0108=" not in line and "0301=" not in line and "session_directory.py" in line
+
+
+def test_late_cli_session_id_is_found_by_rereading_within_wait(tmp_path):
+    """W-20261026-006: التطبيق يكتب cliSessionId بعد SessionStart؛ إعادة القراءة تجده قبل السقوط إلى الشجرة الملتبسة."""
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE, cli="old-1")
+    _session(tmp_path, "2", "local_2", "0104 · عاملة", TREE, cli="cli-2")
+    sleeps = []
+
+    def sleep(s):
+        sleeps.append(s)
+        _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE, cli="new-1")  # يصل المعرّف الجديد أثناء الانتظار
+
+    assert si.app_title(TREE, "new-1", tmp_path, wait_s=3.0, pending=set(), sleep=sleep) == ("0101 · خفيفة", [])
+    assert len(sleeps) == 1
+
+
+def test_unmatched_id_falls_back_after_wait_and_stops_polling(tmp_path):
+    _session(tmp_path, "1", "local_1", "0105 · وحيدة", TREE)
+    sleeps = []
+    assert si.app_title(TREE, "never", tmp_path, wait_s=1.0, pending=set(), sleep=sleeps.append) == ("0105 · وحيدة", [])
+    assert len(sleeps) == 2
+
+
+def test_ambiguity_picks_the_session_with_live_auto_clear_marker(tmp_path):
+    """التباس 0101/0104 بعلامة مسحٍ ذاتيّ سارية لـ0101 يطبع هويّة 0101."""
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE)
+    _session(tmp_path, "2", "local_2", "0104 · عاملة", TREE)
+    assert si.app_title(TREE, "", tmp_path, pending={"0101"}) == ("0101 · خفيفة", [])
+    assert si.app_title(TREE, "", tmp_path, pending={"0101", "0104"}) == (None, ["0101 · خفيفة", "0104 · عاملة"])
+    assert si.app_title(TREE, "", tmp_path, pending=set()) == (None, ["0101 · خفيفة", "0104 · عاملة"])
+
+
+def test_auto_clear_nums_ignores_expired_and_corrupt_markers(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    notes = tmp_path / "handover_notes"
+    notes.mkdir()
+    now = datetime.now(timezone.utc)
+    (notes / "auto_clear_0101.json").write_text(json.dumps({"num": "0101", "created_at": now.isoformat()}), encoding="utf-8")
+    (notes / "auto_clear_0104.json").write_text(json.dumps({"num": "0104", "created_at": (now - timedelta(hours=1)).isoformat()}), encoding="utf-8")
+    (notes / "auto_clear_0108.json").write_text("{", encoding="utf-8")
+    assert si.auto_clear_nums(tmp_path) == {"0101"}
+
+
+# ===== فرع المجلّد الجذر والأرقام الفرعيّة (منقولةٌ من ec1116d) =====
+ROOT_CWD = r"C:\Users\mesue\delivery_manager_work"
+
+
+def _run_main(monkeypatch, capsys, cwd, result):
+    monkeypatch.setattr("sys.argv", ["session_identity.py", "--cwd", cwd])
+    monkeypatch.setattr(si, "app_title", lambda c, sid="", base=None: result)
+    monkeypatch.setattr(si, "directory_lines", lambda num=None: ["[دليل]"])
+    si.main()
+    return capsys.readouterr().out
+
+
+def test_root_folder_session_gets_identity_from_live_title(monkeypatch, capsys):
+    out = _run_main(monkeypatch, capsys, ROOT_CWD, ("0108 · الجامع", []))
+    assert "0108" in out and "[دليل]" in out
+
+
+def test_root_folder_sub_session_number_is_accepted(monkeypatch, capsys):
+    out = _run_main(monkeypatch, capsys, ROOT_CWD, ("0101-أ · فرعيّة", []))
+    assert "0101" in out and "[دليل]" in out
+
+
+def test_root_folder_worktree_cwd_is_still_root_branch(monkeypatch, capsys):
+    out = _run_main(monkeypatch, capsys, ROOT_CWD + r"\tools", ("0109 · س", []))
+    assert "0109" in out
+
+
+def test_root_folder_ambiguity_asks_0101(monkeypatch, capsys):
+    out = _run_main(monkeypatch, capsys, ROOT_CWD, (None, ["0104 · أ", "0108 · ب"]))
+    assert "اسأل 0101" in out and "0104 · أ" in out
+
+
+def test_root_folder_without_live_title_stays_silent(monkeypatch, capsys):
+    assert _run_main(monkeypatch, capsys, ROOT_CWD, (None, [])) == ""
+
+
+def test_longest_tree_wins_when_nested_entries_match(tmp_path):
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", r"C:\Users\mesue\delivery_manager_work")
+    _session(tmp_path, "2", "local_2", "0420 · فرعيّة", r"C:\Users\mesue\delivery_manager_work\sub\deep")
+    title, _ = si.app_title(r"C:\Users\mesue\delivery_manager_work\sub\deep\x", "", tmp_path)
+    assert title == "0420 · فرعيّة"

@@ -118,7 +118,7 @@ class Report(unittest.TestCase):
         text = my_state.report("0402", events, now=NOW)
         self.assertIn("W-1", text)
         self.assertNotIn("W-2", text)
-        self.assertIn("أبلغي 0701", text)
+        self.assertIn("أبلغ 0701", text)
         self.assertIn("(مستنتَج)", text)
 
     def test_finished_cards_appear_only_with_all(self):
@@ -130,6 +130,28 @@ class Report(unittest.TestCase):
         self.assertNotIn("W-1", my_state.report("0402", events, now=NOW))
         self.assertIn("W-1", my_state.report("0402", events, show_all=True, now=NOW))
 
+
+class HeldHonesty(unittest.TestCase):
+    """W-20261026-008: الحالةُ تعدّ المحجوزة فعلاً ولا تقول «لا شيء يلزمك» مع بطاقاتٍ معلّقة، وبلا خطابٍ مؤنّث."""
+
+    def _events(self):
+        ev = created("W-1")
+        held = {"ts": "2026-10-01T08:30:00+03:00", "id": "W-1", "kind": "state", "data": {"state": "routed", "by": "0101", "held_by": "0301"}}
+        return [ev, held]
+
+    def test_held_cards_are_counted_and_not_reported_as_nothing(self):
+        text = my_state.report("0301", self._events(), now=NOW)
+        self.assertIn("1 بطاقةً محجوزةً (held_by)", text)
+        self.assertNotIn("لا شيءَ يلزم", text)
+        self.assertIn("لم تنتهِ", text)
+
+    def test_nothing_held_still_says_nothing_to_do(self):
+        self.assertIn("لا شيءَ يلزمك الآن", my_state.report("0999", self._events(), now=NOW))
+
+    def test_no_feminine_address_in_output(self):
+        text = my_state.report("0301", self._events(), now=NOW) + my_state.brief_report("0301", self._events(), now=NOW)
+        for bad in ("باسمكِ", "يلزمكِ", "عليكِ", "غيرَكِ", "أبلغي", "ادفعي"):
+            self.assertNotIn(bad, text)
 
 if __name__ == "__main__":
     unittest.main()

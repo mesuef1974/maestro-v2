@@ -58,7 +58,8 @@ RULES = (  # قواعدُ حكمٍ ثابتة تُحمَل مع الحالة و�
     "استأنِف من work: focus ثمّ recent ثمّ git.dirty؛ وما غاب عنها فاقرأه من الدفتر",
 )
 TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "duties", "waiting", "next_due", "rules"}
-PENDING_TTL_S = 900  # علامةُ «مسح قيد الانتظار»: 15 دقيقةً ثمّ تُهمَل (W-20261024-005)
+PENDING_TTL_S = 900  # مهلةُ علامة «مسح قيد الانتظار» لحسم الشجرة في خطّاف SessionStart (find_pending): 15 دقيقةً (W-20261024-005)
+MARKER_MAX_AGE_S = 86_400  # علامتا المسح (pending_clear وauto_clear) تبقيان حتى الاستعادة بسقفٍ 24 ساعةً للعلامة اليتيمة (W-20261026-007)
 CLEAR_AT_TOKENS = 175_000  # عتبةُ المسح الذاتي: سياقُ آخر رسالةٍ في transcript (W-20261025-015)
 TRANSCRIPT_TAIL = 400_000  # يُقرأ ذيلُ الملفّ فقط: الاستهلاكُ في آخر رسالة مساعد
 DUTIES_MAX = 6
@@ -121,11 +122,26 @@ def set_focus(num: str, card: str, step: int, root: Path | None = None, ledger_p
     return p
 
 
+def clear_focus(num: str, root: Path | None = None) -> bool:
+    """يُفرّغ تركيزَ الجلسة (W-20261026-008): جلسةٌ بلا بطاقةٍ نشطة تعلن ذلك بـfocus NNNN --clear فلا تُستأنف من بطاقةٍ منتهية. يعيد هل وُجد."""
+    try:
+        focus_path(num, root).unlink()
+    except OSError:
+        return False
+    return True
+
+
 def renew_focus(num: str, root: Path | None = None, ledger_path: Path | None = None) -> bool:
     """يجدّد ختمَ focus المعلَن بالبطاقة والخطوة نفسيهما (W-20261025-024): كلُّ حدثٍ جديدٍ في الدفتر يقدّم «آخر حدثٍ للجلسة»
     فيسقط الحارسُ بلا ذنب. لا يُنشئ تركيزاً لم تعلنه الجلسة؛ يعيد False إن لم يوجد أو صارت بطاقتُه خارج الدفتر."""
     cur = _load_focus(num, root)
     if cur is None:
+        return False
+    import ledger
+
+    items = ledger.reduce_state(ledger.load_events(ledger_path or (main_root(root) / "ledger" / "events.jsonl")))
+    if (items.get(cur["card"]) or {}).get("state") in ledger.RELEASING_STATES:  # بطاقةُ التركيز نُشرت/أُغلقت: يُفرَّغ بدل أن يُجدَّد (W-20261026-008)
+        clear_focus(num, root)
         return False
     try:
         set_focus(num, cur["card"], cur["step"], root, ledger_path)
@@ -564,7 +580,8 @@ def find_pending(cwd: str, root: Path | None = None, now: datetime | None = None
 
 
 def pending_markers(root: Path | None = None, now: datetime | None = None) -> dict[str, Path]:
-    """{الرقم: ملفُّ علامة المسح المعلَّق} للعلامات الصالحة غيرِ المنتهية (يستعملها wake_monitor لإيقاظ الجلسة الخاملة بعد المسح)."""
+    """{الرقم: ملفُّ علامة المسح المعلَّق} للعلامات الصالحة غيرِ المنتهية (يستعملها wake_monitor لإيقاظ الجلسة الخاملة بعد المسح).
+    تبقى العلامةُ حتى تُحذف عند الاستعادة (clear_markers) بسقف MARKER_MAX_AGE_S، لا بمهلة ttl_s التي يفوتها الكنّاسُ الساعيّ."""
     now = now or _now()
     out: dict[str, Path] = {}
     for f in sorted(state_path("0000", root).parent.glob("pending_clear_*.json")):
@@ -572,11 +589,26 @@ def pending_markers(root: Path | None = None, now: datetime | None = None) -> di
             d = json.loads(f.read_text(encoding="utf-8"))
             if not (isinstance(d, dict) and set(d) == {"num", "cwd", "created_at", "ttl_s"} and SESSION_RE.match(str(d["num"])) and isinstance(d["ttl_s"], int)):
                 continue
-            if now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=d["ttl_s"]):
+            if now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=MARKER_MAX_AGE_S):
                 out[d["num"]] = f
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return out
+
+
+def clear_markers(num: str, root: Path | None = None) -> int:
+    """يحذف علامتَي المسح لرقمٍ بعد أن استعادت الجلسةُ حالتَها (my_state أو restore)؛ يعيد عددَ الملفّات المحذوفة. لا يرفع استثناءً."""
+    if not SESSION_RE.match(num):
+        return 0
+    notes = state_path(num, root).parent
+    removed = 0
+    for f in [auto_clear_path(num, root), *notes.glob(f"pending_clear_*_{num}.json")]:
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def context_tokens(transcript: str | Path) -> int | None:
@@ -611,13 +643,13 @@ def auto_clear_path(num: str, root: Path | None = None) -> Path:
 
 
 def auto_clear_nums(root: Path | None = None, now: datetime | None = None) -> set[str]:
-    """أرقامُ الجلسات التي طلب الخطّافُ مسحَها الذاتيّ وطلبُها غيرُ منتهٍ (يقرؤها wake_monitor ليغيّر نصَّ الإيقاظ)."""
+    """أرقامُ الجلسات التي طلب الخطّافُ مسحَها الذاتيّ وطلبُها غيرُ منتهٍ: يبقى حتى الاستعادة بسقف MARKER_MAX_AGE_S (يقرؤها wake_monitor ليغيّر نصَّ الإيقاظ)."""
     now = now or _now()
     out: set[str] = set()
     for f in sorted(state_path("0000", root).parent.glob("auto_clear_*.json")):
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
-            if SESSION_RE.match(str(d["num"])) and now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=PENDING_TTL_S):
+            if SESSION_RE.match(str(d["num"])) and now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=MARKER_MAX_AGE_S):
                 out.add(d["num"])
         except (OSError, ValueError, KeyError, TypeError):
             continue
@@ -1023,8 +1055,9 @@ def main(argv: list[str] | None = None) -> int:
     gp.add_argument("num")
     fp = sub.add_parser("focus", help="يحفظ تركيزَ الجلسة: بطاقةٌ وخطوة")
     fp.add_argument("num")
-    fp.add_argument("--card", required=True)
-    fp.add_argument("--step", type=int, required=True)
+    fp.add_argument("--card")
+    fp.add_argument("--step", type=int)
+    fp.add_argument("--clear", action="store_true", help="يُفرّغ التركيز: لا بطاقةَ نشطة")
     dp = sub.add_parser("duties", help="يسجّل الواجباتِ الدائمة أو يصرّح بخلوّها")
     dp.add_argument("num")
     dg = dp.add_mutually_exclusive_group(required=True)
@@ -1098,6 +1131,12 @@ def main(argv: list[str] | None = None) -> int:
         print("سليم" if not errs else "فشل: " + "؛ ".join(errs))
         return 0 if not errs else 5
     if a.cmd == "focus":
+        if a.clear:
+            print("فُرّغ التركيز" if clear_focus(a.num) else "لا تركيزَ معلَناً")
+            return 0
+        if a.card is None or a.step is None:
+            print("رُفض: --card و--step مطلوبان (أو --clear)", file=sys.stderr)
+            return 3
         try:
             print(f"كُتب: {set_focus(a.num, a.card, a.step)}")
         except ValueError as e:
@@ -1148,7 +1187,14 @@ def main(argv: list[str] | None = None) -> int:
         if st is None or validate(st):
             print("لا حالةَ صالحة", file=sys.stderr)
             return 4
+        try:  # W-20261026-008: الاستعادةُ تعيد الاشتقاقَ من الدفتر الآن لا تطبع محفوظاً قديماً
+            renew_focus(a.num)
+            write_state(a.num, derive(a.num, st.get("session_label", ""), _now(), None, cwd=os.getcwd()))
+            st = load_state(a.num) or st
+        except Exception as e:  # noqa: BLE001 — تُطبع المحفوظةُ مع تنبيه
+            print(f"تنبيه: تعذّرت إعادة الاشتقاق ({e}); المطبوع هو المحفوظ", file=sys.stderr)
         print(render(st))
+        clear_markers(a.num)  # الاستعادةُ تمّت: لا إيقاظَ «بعد المسح» بعدها (W-20261026-007)
         return 0
     return 2
 

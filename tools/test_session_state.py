@@ -412,8 +412,9 @@ def test_waiting_empty_by_default_and_not_rendered(tree):
 
 def test_pending_markers_only_valid_unexpired(tree):
     ss.write_pending("0108", "D:/a", tree, NOW)
-    ss.write_pending("0201", "D:/b", tree, NOW - timedelta(hours=2))
-    assert set(ss.pending_markers(tree, NOW)) == {"0108"}
+    ss.write_pending("0201", "D:/b", tree, NOW - timedelta(hours=2))  # W-20261026-007: ساعتان لا تُسقطان العلامة
+    ss.write_pending("0202", "D:/c", tree, NOW - timedelta(seconds=ss.MARKER_MAX_AGE_S + 1))
+    assert set(ss.pending_markers(tree, NOW)) == {"0108", "0201"}
 
 
 def test_local_session_id_maps_cli_id_or_falls_back(tmp_path):
@@ -623,7 +624,8 @@ class TestAutoClear:
     def test_request_expires_after_ttl(self, tree, tmp_path):
         self._ready(tree)
         ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(0, 180_000, 0)), tree, NOW)
-        assert ss.auto_clear_nums(tree, NOW + timedelta(seconds=ss.PENDING_TTL_S + 1)) == set()
+        assert ss.auto_clear_nums(tree, NOW + timedelta(hours=2)) == {"0108"}  # W-20261026-007: تبقى حتى الاستعادة
+        assert ss.auto_clear_nums(tree, NOW + timedelta(seconds=ss.MARKER_MAX_AGE_S + 1)) == set()  # سقفُ العلامة اليتيمة
 
     def test_guard_failure_is_silent_and_writes_nothing(self, tree, tmp_path):
         ss.write_state("0108", ss.derive("0108", "0108 · التقييم والعصف", NOW, tree, cwd="D:/w"), tree)  # بلا focus ولا واجبات
@@ -787,3 +789,55 @@ class TestSelfClearBlock:
     def test_below_threshold_stays_silent(self, tree):
         hook = self._setup(tree, 100_000)
         assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
+
+
+def test_clear_markers_removes_both_markers_of_that_number_only(tree):
+    """W-20261026-007: الاستعادة تحذف pending_clear وauto_clear للرقم وحده."""
+    ss.write_pending("0108", "D:/a", tree, NOW)
+    ss.write_pending("0108", "D:/b", tree, NOW)
+    ss.write_pending("0201", "D:/c", tree, NOW)
+    ss.auto_clear_path("0108", tree).write_text(json.dumps({"num": "0108", "tokens": 1, "created_at": ss._fmt(NOW)}), encoding="utf-8")
+    ss.auto_clear_path("0201", tree).write_text(json.dumps({"num": "0201", "tokens": 1, "created_at": ss._fmt(NOW)}), encoding="utf-8")
+    assert ss.clear_markers("0108", tree) == 3
+    assert set(ss.pending_markers(tree, NOW)) == {"0201"} and ss.auto_clear_nums(tree, NOW) == {"0201"}
+    assert ss.clear_markers("0108", tree) == 0 and ss.clear_markers("xx", tree) == 0
+
+
+def test_restore_command_clears_markers(tree, monkeypatch, capsys):
+    ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
+    ss.write_pending("0108", "D:/a", tree, NOW)
+    monkeypatch.setattr(ss, "ROOT", tree)
+    monkeypatch.setattr("sys.argv", ["session_state.py", "restore", "0108"])
+    ss.main()
+    assert ss.pending_markers(tree, NOW) == {}
+
+
+def _append_event(tree, ev):
+    with (tree / "ledger" / "events.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(ev, ensure_ascii=False) + chr(10))
+
+
+def test_focus_clear_removes_declared_focus(tree, monkeypatch, capsys):
+    """W-20261026-008: focus NNNN --clear يُفرّغ التركيز؛ وبلا --card/--step يُرفض."""
+    ss.set_focus("0108", "W-1", 1, tree)
+    monkeypatch.setattr(ss, "ROOT", tree)
+    monkeypatch.setattr("sys.argv", ["session_state.py", "focus", "0108", "--clear"])
+    assert ss.main() == 0 and not ss.focus_path("0108", tree).exists()
+    monkeypatch.setattr("sys.argv", ["session_state.py", "focus", "0108"])
+    assert ss.main() == 3
+
+
+def test_renew_focus_clears_when_focus_card_is_published(tree):
+    ss.set_focus("0108", "W-2", 1, tree)
+    assert ss.renew_focus("0108", tree) is True  # merged: يجدَّد
+    _append_event(tree, _ev("2026-10-23T13:00:00+03:00", "W-2", "state", {"state": "published", "by": "0601"}))
+    assert ss.renew_focus("0108", tree) is False and not ss.focus_path("0108", tree).exists()
+
+
+def test_restore_rederives_from_ledger_not_stale_saved_state(tree, monkeypatch, capsys):
+    ss.write_state("0108", _gen(tree), tree)
+    _append_event(tree, _ev("2026-10-23T19:30:00+03:00", "W-9", "created", {"source": "owner", "problem": "جديدة", "held_by": "0108"}))
+    monkeypatch.setattr(ss, "ROOT", tree)
+    monkeypatch.setattr("sys.argv", ["session_state.py", "restore", "0108"])
+    assert ss.main() == 0
+    assert "W-9" in capsys.readouterr().out
