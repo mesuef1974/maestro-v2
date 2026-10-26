@@ -16,6 +16,8 @@ import json
 import os
 import re
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -56,7 +58,47 @@ def _newest_first(base: Path) -> list[Path]:
     return [f for _, f in out]
 
 
-def app_title(cwd: str, session_id: str = "", base: Path | None = None) -> tuple[str | None, list[str]]:
+#: التطبيقُ يكتب cliSessionId الجديد في ملفّ الجلسة بعد SessionStart لا قبله (مقيس 2026-10-26 بعد مسح 0101 الذاتيّ، W-20261026-006)
+ID_WAIT_S = 3.0
+ID_POLL_S = 0.5
+#: عمرُ علامة المسح الذاتيّ السارية (يطابق PENDING_TTL_S في session_state)
+AUTO_CLEAR_TTL_S = 900
+
+
+def auto_clear_nums(root: Path | None = None) -> set[str]:
+    """أرقامُ الجلسات صاحبة علامة مسحٍ ذاتيّ سارية (handover_notes/auto_clear_<رقم>.json)؛ تتجاهل التالف والمنتهي."""
+    out: set[str] = set()
+    for f in ((root or ROOT) / "handover_notes").glob("auto_clear_*.json"):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            created = datetime.fromisoformat(d["created_at"])
+            if (datetime.now(created.tzinfo) - created).total_seconds() <= AUTO_CLEAR_TTL_S:
+                out.add(str(d["num"]))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: float = ID_WAIT_S,
+              pending: set[str] | None = None, sleep=time.sleep) -> tuple[str | None, list[str]]:
+    """(العنوانُ الحيّ، المرشَّحون) كما في `_resolve`؛ مع معرّفِ جلسةٍ لم يُطابَق بعدُ نعيد قراءةَ الملفّات حتى `wait_s` ثانيةً
+    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook). وعند الالتباس تُختار صاحبةُ علامة المسح السارية إن كانت وحيدة."""
+    waited = 0.0
+    while True:
+        title, candidates, by_id = _resolve(cwd, session_id, base)
+        if by_id or not session_id or waited >= wait_s:
+            break
+        sleep(ID_POLL_S)
+        waited += ID_POLL_S
+    if title is None and len(candidates) > 1:
+        marked = auto_clear_nums() if pending is None else pending
+        owners = [c for c in candidates if _num_of(c) in marked]
+        if len(owners) == 1:
+            return owners[0], []
+    return title, candidates
+
+
+def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, list[str], bool]:
     """(العنوانُ الحيّ، المرشَّحون عند الالتباس): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)، ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
 
     شجرةٌ تشترك فيها جلستان حيّتان بلا معرّفٍ يميّز: (None، العناوين) فيسأل الهوك 0101 بدل أن يخمّن ويضلّل."""
@@ -80,11 +122,11 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None) -> tuple
             if not NUM.match(title) or d.get("isArchived"):
                 continue
             if session_id in (d.get("sessionId"), d.get("cliSessionId")):
-                return title, []
+                return title, [], True
             if prior_hit is None and session_id in (d.get("priorCliSessionIds") or []):
                 prior_hit = title
         if prior_hit is not None:
-            return prior_hit, []
+            return prior_hit, [], True
     for f in files:
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
@@ -95,13 +137,18 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None) -> tuple
             continue
         ids = {d.get("sessionId"), d.get("cliSessionId"), *(d.get("priorCliSessionIds") or [])}
         if session_id and session_id in ids:
-            return title, []
+            return title, [], True
         tree = _norm(str(d.get("worktreePath") or d.get("cwd") or ""))
         if tree and _norm(cwd).startswith(tree):
             by_tree[title] = tree
     if len(by_tree) == 1:
-        return next(iter(by_tree)), []
-    return None, sorted(by_tree)
+        return next(iter(by_tree)), [], False
+    return None, sorted(by_tree), False
+
+
+def _num_of(title: str | None) -> str | None:
+    m = re.match(r"\s*(\d{4})\b", title or "")
+    return m.group(1) if m else None
 
 
 def message(title: str | None, tree: str | None) -> str:
@@ -161,7 +208,7 @@ def main() -> int:
         d = session_directory.entries()
         shown = {k: v for k, v in d.items() if k in (own, "0101")}  # معرّفُ الجلسة نفسها و0101 فقط؛ لغيرهما session_directory.py (W-20261026-002)
         print("[قاعدة المالك] المالكُ في الاعتماد والمعاينة فقط: لا تسأله «هل أرفع/أكلّف/أبلغ؟» ولا تطلب منه إذنًا بالتوجيه بين الجلسات؛ أرسل إلى 0101 بالمعرّف (هو من يوجّه المنفّذين ولا تتجاوزه إلى جلسةٍ منفّذة)، أو إلى الجلسة صاحبة السلسلة المقرَّرة في الفلو (0501←0601←0701)، ثمّ أبلغ المالكَ بما تمّ. ما عدا ذلك قرارُه وحده: دمجٌ وقراراتٌ تغيّر قاعدةً.")
-        print("[متابعة الإحالة] كلُّ إحالةٍ تُتابَع بقراءة نتيجةِ الإرسال: `delivered` = مبلّغة (بلغت)؛ `queued` = في الطابور فلا تُعاد، وتحقّق بعد دقيقتين من list_events ثمّ أعِدها مرةً واحدةً إن لم تبدأ؛ `undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة. أبلغ الحالةَ بإحدى ثلاث: (بلغت / في الطابور / لم تبلغ)، ولا تسأل المالكَ عن إعادة الإرسال. وبعد 30 دقيقةً تحقّق من git/الدفتر أنّ عملاً ظهر (فرعٌ أو إيداعٌ أو حالةُ بطاقة)، وإلا فأعِد الإحالةَ وأبلغ 0101.")
+        print("[متابعة الإحالة] كلُّ إحالةٍ تُتابَع بقراءة نتيجةِ الإرسال: `delivered` = مبلّغة (بلغت)؛ `queued` = في الطابور فلا تُعاد، وتحقّق بعد دقيقتين من list_events ثمّ أعِدها مرةً واحدةً إن لم تبدأ؛ `undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة. أبلغ الحالةَ بإحدى ثلاث: (بلغت / في الطابور / لم تبلغ)، ولا تسأل المالكَ عن إعادة الإرسال. وبعد دقيقتين اقرأ list_events للجلسة المستقبِلة وأبلغ ما وجدتَه فوراً: بدأت أو امتنعت أو سألت؛ فإن لم يظهر شيءٌ فأعِد الإحالةَ مرةً واحدةً وأبلغ 0101.")
         print("[عناوين الجلسات] أرسل بالمعرّف `to: local_<uuid>` لا بالاسم، ولا تُمرِّر رسالتك عبر المالك (دورُه الاعتماد والمعاينة فقط). "
               "المعرّفُ يتبدّل عند إعادة التشغيل فتحقّق قبل الإرسال: `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`. "
               + "؛ ".join(f"{k}={v['id']}" for k, v in shown.items()))
