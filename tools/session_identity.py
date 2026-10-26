@@ -114,7 +114,7 @@ def message(title: str | None, tree: str | None) -> str:
     card = "role_cards/04.md (المرنة) ثمّ ledger.py show <رمز بطاقتك>" if flexible else f"role_cards/{num}.md"
     return (f"[هويّة الجلسة] أنت «{title}» — رقمُك {num}. "
             f"اقرأ بطاقتك `C:/Users/mesue/delivery_manager_work/{card}` ثمّ شغّل "
-            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ. "
+            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ (اكتب وصفَ أداة Bash بالعربيّة، مثل «قراءة حالة جلستي»، وإلا رفضه lang_guard). "
             + ("" if flexible else "لا تفترض أنّك مرنة 04SS. ")
             + "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل.")
 
@@ -154,15 +154,17 @@ def main() -> int:
               + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
     else:
         print(message(live or lookup(cwd, names), tree))
+    own = (re.match(r"\s*(\d{4})\b", live or lookup(cwd, names) or "") or [None, None])[1]
     try:  # دليلُ عناوين الجلسات: الإرسالُ بالمعرّف لا بالاسم (الاسمُ لا يوقظ خاملةً) — لا يُسقط الـhook أبداً
         import session_directory
 
         d = session_directory.entries()
+        shown = {k: v for k, v in d.items() if k in (own, "0101")}  # معرّفُ الجلسة نفسها و0101 فقط؛ لغيرهما session_directory.py (W-20261026-002)
         print("[قاعدة المالك] المالكُ في الاعتماد والمعاينة فقط: لا تسأله «هل أرفع/أكلّف/أبلغ؟» ولا تطلب منه إذنًا بالتوجيه بين الجلسات؛ أرسل إلى 0101 بالمعرّف (هو من يوجّه المنفّذين ولا تتجاوزه إلى جلسةٍ منفّذة)، أو إلى الجلسة صاحبة السلسلة المقرَّرة في الفلو (0501←0601←0701)، ثمّ أبلغ المالكَ بما تمّ. ما عدا ذلك قرارُه وحده: دمجٌ وقراراتٌ تغيّر قاعدةً.")
         print("[متابعة الإحالة] كلُّ إحالةٍ تُتابَع بقراءة نتيجةِ الإرسال: `delivered` = مبلّغة (بلغت)؛ `queued` = في الطابور فلا تُعاد، وتحقّق بعد دقيقتين من list_events ثمّ أعِدها مرةً واحدةً إن لم تبدأ؛ `undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة. أبلغ الحالةَ بإحدى ثلاث: (بلغت / في الطابور / لم تبلغ)، ولا تسأل المالكَ عن إعادة الإرسال. وبعد 30 دقيقةً تحقّق من git/الدفتر أنّ عملاً ظهر (فرعٌ أو إيداعٌ أو حالةُ بطاقة)، وإلا فأعِد الإحالةَ وأبلغ 0101.")
         print("[عناوين الجلسات] أرسل بالمعرّف `to: local_<uuid>` لا بالاسم، ولا تُمرِّر رسالتك عبر المالك (دورُه الاعتماد والمعاينة فقط). "
               "المعرّفُ يتبدّل عند إعادة التشغيل فتحقّق قبل الإرسال: `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`. "
-              + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
+              + "؛ ".join(f"{k}={v['id']}" for k, v in shown.items()))
     except Exception:  # noqa: BLE001
         pass
     try:  # تحذيرٌ فقط (لا حجب): شجرةٌ بلا ترقية مهارة الهويّة البصريّة (#897) تعمل بنسخةٍ قديمةٍ منها

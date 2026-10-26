@@ -115,3 +115,23 @@ def test_archived_is_skipped(tmp_path):
 def test_nested_isarchived_does_not_skip_live_session(tmp_path):
     got = _run(tmp_path, [("0301 حيّة", {"cliSessionId": "SID-1", "meta": {"isArchived": True}}, 100)])
     assert got == ("0301 حيّة", [])
+
+
+def test_my_state_command_carries_arabic_description_hint():
+    """W-20261025-029: lang_guard يرفض Bash بلا وصفٍ عربيّ، فالهويّةُ تأمر بوصفٍ عربيّ مع الأمر."""
+    msg = si.message("0601 · الإصدار", "t")
+    assert "my_state.py 0601" in msg and "بالعربيّة" in msg
+
+
+def test_directory_line_limited_to_own_id_and_0101(monkeypatch, capsys):
+    """W-20261026-002: سطر [عناوين الجلسات] يقتصر على معرّف الجلسة نفسها و0101، ولغيرهما session_directory.py."""
+    import session_directory
+
+    entries = {n: {"id": f"local_{n}"} for n in ("0101", "0108", "0301", "0601", "0701")}
+    monkeypatch.setattr(session_directory, "entries", lambda: entries)
+    monkeypatch.setattr(si, "app_title", lambda c, sid="", base=None: ("0601 · الإصدار", []))
+    monkeypatch.setattr("sys.argv", ["session_identity.py", "--cwd", r"D:\shschool_mvp\.claude\worktrees\amazing-x-1"])
+    si.main()
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("[عناوين الجلسات]"))
+    assert "0601=local_0601" in line and "0101=local_0101" in line
+    assert "0108=" not in line and "0301=" not in line and "session_directory.py" in line
