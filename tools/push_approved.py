@@ -71,6 +71,10 @@ def receipt_problem(repo: str, head: str, git=_git) -> str | None:
     return None
 
 
+#: نوعُ الإيصال البديل لمستودعات الحوكمة (W-20261026-018): pytest tools/ أخضر للرأس نفسه في شجرةٍ نظيفة
+GOV_RECEIPT_KIND = "pytest-tools"
+
+
 def has_prepush_tool(repo: str) -> bool:
     """(W-20261024-007) المستودعُ يحمل scripts/prepush_check.py، أي ممّا يُنتج إيصالَ prepush؛ المنصّةُ وحدَها تحمله."""
     return (Path(repo) / "scripts" / "prepush_check.py").is_file()

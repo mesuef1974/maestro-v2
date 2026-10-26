@@ -202,3 +202,14 @@ def test_guard_still_rejects_a_head_that_differs_within_the_shared_prefix():
         return
     raise AssertionError("رأسٌ مخالف يجب أن يُرفض")
 
+
+
+def test_governance_substitute_receipt_is_accepted_without_the_prepush_tool(tmp_path):
+    """(W-20261026-018) إيصالُ pytest tools/ البديل يُقبل لمستودعٍ بلا scripts/prepush_check.py دون إعفاء."""
+    import json
+
+    repo = tmp_path / "gov"
+    repo.mkdir()
+    g = receipt_git(tmp_path)
+    (tmp_path / pa.ledger.RECEIPT_NAME).write_text(json.dumps({"head": "aaaaaaaa", "ok": True, "kind": pa.GOV_RECEIPT_KIND}), encoding="utf-8")
+    assert pa.guard("W-1", "claude/x", str(repo), ITEMS, g, ok, require_receipt=True) == HEAD

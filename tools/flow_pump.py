@@ -410,7 +410,7 @@ def push_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = No
             for line in deferred:
                 _log_once("دفع: " + line)
     results = push_watch.scan(items, where_repos, apply, path, by=SENDER,
-                              branch_re=push_approved.PUMP_BRANCH_RE, require_receipt=True, exempt_no_prepush=True, **kw) if items else []
+                              branch_re=push_approved.PUMP_BRANCH_RE, require_receipt=True, exempt_no_prepush=False, **kw) if items else []
     out, quiet = list(deferred), 0
     for r in results:
         if r["status"] == "skipped" and push_watch.QUIET in r["reason"]:
@@ -429,6 +429,7 @@ PREPUSH_IMAGE = "maestro-prepush:1"
 #: بطاقةٌ واحدةٌ في الدورة: التشغيلُ يستغرق دقائق والقفلُ يُعدّ ميتاً بعد STALE_LOCK_S (900 ثانية)
 PREPUSH_MAX = 1
 PREPUSH_TIMEOUT_S = 780
+GOV_PYTEST_TIMEOUT_S = 900  # إيصال الحوكمة البديل: pytest tools/ كاملاً (نحو ثلاث دقائق محلّياً)
 PREPUSH_DB_IMAGE = "postgres:16-alpine"  # كـCI (native-postgres: postgres 16)؛ بيانات اعتماد اختبارٍ فقط، لا منفذَ على المضيف
 PREPUSH_DB_WAIT = 40
 PREPUSH_OK_LINE = "الفحوصُ السريعةُ ناجحة"
@@ -506,8 +507,47 @@ def _attempts() -> dict:
         return {}
 
 
+def _pytest_run(path: str, timeout: int) -> tuple[int, str]:
+    """(رمز الخروج، المخرَج) لـ pytest tools/ في شجرة الحوكمة؛ المهلةُ 124 وتعذّرُ التشغيل 127."""
+    try:
+        p = subprocess.run([sys.executable, "-m", "pytest", "tools", "-q", "-p", "no:cacheprovider"], cwd=path, capture_output=True,  # noqa: S603
+                           text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, "تجاوز المهلة"
+    except OSError as exc:
+        return 127, f"pytest غير متاح: {exc}"
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_run=None, timeout: int = GOV_PYTEST_TIMEOUT_S) -> str:
+    """(W-20261026-018) مستودعُ الحوكمة بلا scripts/prepush_check.py: الإيصالُ البديل pytest tools/ أخضرَ للرأس نفسه في الشجرة النظيفة.
+    لا يُكتب إلا برمز خروج 0 وبقاءِ الرأس ونظافةِ الشجرة بعد التشغيل؛ والفشلُ يُسجَّل لرأسه فلا يُعاد حتى يتغيّر الرأس.
+    يعيد سطرَ النتيجة المطبوع."""
+    rc, gitdir = git(path, "rev-parse", "--absolute-git-dir")
+    if rc or not gitdir.strip():
+        return f"{cid}: ✘ تعذّرت قراءةُ مجلّد git للشجرة — لا إيصال بديل"
+    code, log = (pytest_run or _pytest_run)(path, timeout)
+    _, head_after = git(path, "rev-parse", "HEAD")
+    _, dirty_after = git(path, "status", "--porcelain", "--untracked-files=no")
+    if code == 0 and head_after.strip() == head and not dirty_after.strip():
+        (Path(gitdir.strip()) / ledger.RECEIPT_NAME).write_text(
+            json.dumps({"head": head[:8], "ok": True, "kind": push_approved.GOV_RECEIPT_KIND}), encoding="utf-8")
+        _log_once(f"prepush-حوكمة: {cid} {head[:8]} ✔")
+        return f"{cid}: ✔ pytest tools/ أخضر للرأس {head[:8]} — كُتب الإيصال البديل (حوكمة)"
+    why = ("الرأس أو الشجرة تغيّر أثناء الفحص" if code == 0 else "تجاوز المهلة" if code == 124 else f"رمز الخروج {code}")
+    tail = " | ".join((log or "").strip().splitlines()[-3:])[:300]
+    tried[f"{cid}:{head[:8]}"] = why
+    try:
+        PREPUSH_ATTEMPTS.write_text(json.dumps(tried), encoding="utf-8")
+        (PREPUSH_ATTEMPTS.parent / f"prepush_{cid}_{head[:8]}.log").write_text(log or "", encoding="utf-8")
+    except OSError:
+        pass
+    _log_once(f"prepush-حوكمة: {cid} {head[:8]} ✘ {why}")
+    return f"{cid}: ✘ pytest tools/ لم يُنتج إيصالاً بديلاً للرأس {head[:8]} — {why}: {tail}"
+
+
 def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = None, git=None, docker=None,
-                 limit: int = PREPUSH_MAX, timeout: int = PREPUSH_TIMEOUT_S) -> list[str]:
+                 limit: int = PREPUSH_MAX, timeout: int = PREPUSH_TIMEOUT_S, pytest_run=None) -> list[str]:
     """(W-20261023-016) بطاقةٌ approved سيرفضها حارسُ الدفع لغياب إيصال prepush: يُشغَّل prepush_check في الحاوية، وإن خرج بـ0
     (كلُّ الحرّاس قيست ونجحت) كُتب الإيصالُ للرأس نفسه في مجلّد git للشجرة. غيرُ ذلك لا إيصال: الفشلُ وغيرُ المقيس يبقيان ظاهرَين.
     رأسٌ جُرِّب وفشل لا يُعاد تجريبُه حتى يتغيّر الرأس (prepush_attempts.json). حدٌّ أقصى `limit` بطاقةً في الدورة، ولا رسائل."""
@@ -525,16 +565,15 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
         want = items[cid]["approved_head"].strip()
         tree, _why = push_watch.find_tree(cid, want, where_repos, git, push_approved.PUMP_BRANCH_RE)
         if tree is None:
-            continue
-        if not _is_platform(tree["path"], git):
-            out.append(f"{cid}: مستودعٌ غيرُ المنصّة ({Path(tree['path']).name}) — بلا إيصال prepush ولا يُشترط (إعفاءٌ صريح، W-20261024-007)")
+            out.append(f"{cid}: ⏭ لا شجرةَ على الرأس المعتمَد {want[:8]} لبطاقةٍ معتمَدة — لا إيصال ({_why})")
             continue
         path = tree["path"]
         rc, head = git(path, "rev-parse", "HEAD")
         head = head.strip()
         rc2, dirty = git(path, "status", "--porcelain", "--untracked-files=no")
         if rc or rc2 or not head or dirty.strip() or not same_head(head, want):
-            continue  # حارسُ الدفع سيرفضه بسببه؛ لا إيصالَ لرأسٍ غير الرأس المعتمَد أو لشجرةٍ متسخة
+            out.append(f"{cid}: ⏭ الشجرةُ ليست على الرأس المعتمَد {want[:8]} نظيفةً — لا إيصال (حارسُ الدفع يرفضها بسببه)")
+            continue
         if push_approved.receipt_problem(path, head, git) is None:
             continue  # الإيصالُ قائم
         key = f"{cid}:{head[:8]}"
@@ -545,7 +584,11 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             out.append(f"{cid}: ⏸ prepush في الدورة التالية (الحدّ {limit} في الدورة)")
             continue
         if not push_approved.has_prepush_tool(path):
-            out.append(f"{cid}: لا scripts/prepush_check.py في الشجرة — إيصال prepush غيرُ ممكنٍ هنا ولا يُشترط")
+            ran += 1
+            if not apply:
+                out.append(f"{cid}: يُشغَّل pytest tools/ إيصالاً بديلاً (حوكمة) للرأس {head[:8]} (عرض)")
+                continue
+            out.append(governance_receipt(cid, path, head, git, tried, pytest_run))
             continue
         if not apply:
             out.append(f"{cid}: يُشغَّل prepush في الحاوية للرأس {head[:8]} (عرض)")
