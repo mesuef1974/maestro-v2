@@ -308,9 +308,11 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         else:
             p.wakes.setdefault(num, []).append((CLEAR_ID, AUTO_CLEAR_STATE if num in auto else "pending_clear"))
             since[CLEAR_ID + num] = now
-    if len(p.wakes) > MAX_SESSIONS_PER_RUN:
-        oldest = sorted(p.wakes, key=lambda n: min(since[i if i != CLEAR_ID else CLEAR_ID + n] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
-        for num in [n for n in p.wakes if n not in oldest]:
+    # رسائل المسح وما بعده (CLEAR_ID) خارج قطع الخمس كما هي خارج cap_live: تأجيلُها دورةً قد يُنهي صلاحيةَ علامة المسح المعلّق (W-20261025-028)
+    ordinary = [n for n in p.wakes if not any(i == CLEAR_ID for i, _ in p.wakes[n])]
+    if len(ordinary) > MAX_SESSIONS_PER_RUN:
+        oldest = sorted(ordinary, key=lambda n: min(since[i] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
+        for num in [n for n in ordinary if n not in oldest]:
             p.skipped.append((num, "يُؤجَّل إلى الدورة التالية (حدُّ الجلسات في الدورة)"))
             del p.wakes[num]
     if p.wakes and day_count + len(p.wakes) > DAILY_CAP:

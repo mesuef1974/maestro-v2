@@ -426,6 +426,14 @@ def test_after_clear_wakes_idle_session_with_card_reading_message():
     assert "role_cards/0201.md" in msg and "my_state.py 0201" in msg
 
 
+def test_after_clear_wakes_are_not_cut_by_the_per_run_session_limit():
+    """W-20261025-028: أكثر من خمس جلساتٍ ممسوحةٍ معاً تُوقَظ كلُّها في الدورة نفسها (وإلا انقضت علامةُ المسح المعلّق)."""
+    nums = [f"0{n}01" for n in range(2, 9)]
+    directory = {n: f"local_{n}" for n in nums}
+    p = wm.stale_plan([], directory, set(), _NOW, verify=ok, cleared={n: "x" for n in nums})
+    assert sorted(p.wakes) == nums and len(nums) > wm.MAX_SESSIONS_PER_RUN
+
+
 def test_after_clear_skips_live_or_outside_channel_or_unknown():
     assert wm.stale_plan([], DIR, {"0201"}, _NOW, verify=ok, cleared={"0201": "x"}).wakes == {}
     assert wm.stale_plan([], DIR, set(), _NOW, verify=ok, channel={"0301"}, cleared={"0201": "x"}).wakes == {}
