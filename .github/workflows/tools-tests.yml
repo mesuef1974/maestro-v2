@@ -19,12 +19,17 @@ jobs:
     timeout-minutes: 20
     env:
       PYTHONUTF8: "1"
+      # مستودعٌ يوجد في CI بدل المسار المحلّي المطلق D:/shschool_mvp الذي تفترضه الأدوات
+      SCHOOLOS_REPO: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: تثبيت pytest وtzdata (منطقة Asia/Qatar على Windows)
-        run: python -m pip install pytest tzdata
+      - name: bash الخاصّ بـGit قبل bash الخاصّ بـWSL (اختبارات release_follow)
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "C:\Program Files\Git\bin"
+      - name: تثبيت pytest وtzdata وtiktoken (منطقة Asia/Qatar على Windows)
+        run: python -m pip install pytest tzdata tiktoken
       - name: اختبارات tools
         run: python -m pytest tools -q -p no:cacheprovider
