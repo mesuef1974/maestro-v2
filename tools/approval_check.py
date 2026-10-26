@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 ROOT = Path(__file__).resolve().parent.parent
-REPO_DIR = os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp")
+REPO_DIR = os.environ.get("SCHOOLOS_REPO", "D:/shschool_mvp").replace("\\", "/")
 APPROVED_STATES = {"approved", "pushed", "merged", "published", "closed"}
 APPROVAL_LINE = re.compile(r"اعتُمد من المالك[^\n]*|اعتمد المالك[^\n]*")
 
