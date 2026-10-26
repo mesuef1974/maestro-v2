@@ -71,10 +71,17 @@ def receipt_problem(repo: str, head: str, git=_git) -> str | None:
     return None
 
 
+def has_prepush_tool(repo: str) -> bool:
+    """(W-20261024-007) المستودعُ يحمل scripts/prepush_check.py، أي ممّا يُنتج إيصالَ prepush؛ المنصّةُ وحدَها تحمله."""
+    return (Path(repo) / "scripts" / "prepush_check.py").is_file()
+
+
 def guard(card: str, branch: str, repo: str, items: dict, git=_git, approved=approval_ok,
-          branch_re: re.Pattern = BRANCH_RE, require_receipt: bool = False) -> str:
+          branch_re: re.Pattern = BRANCH_RE, require_receipt: bool = False, exempt_no_prepush: bool = False) -> str:
     """يعيد رأسَ الشجرة الكامل إن اجتاز كلُّ الحرّاس، وإلا يرفع PushRefused بالسبب.
-    require_receipt (المضخّة، D-450م): إيصالُ prepush الناجح للرأس نفسه شرطٌ إضافيّ."""
+    require_receipt (المضخّة، D-450م): إيصالُ prepush الناجح للرأس نفسه شرطٌ إضافيّ.
+    exempt_no_prepush (W-20261024-007، حالة 008): بمسارٍ صريحٍ يُعفى من الإيصال مستودعٌ بلا scripts/prepush_check.py
+    (مستودعاتُ الأدوات لا تملك ما يُنتجه فيعلق دفعُها للأبد)؛ الافتراضيُّ False فلا إعفاءَ ضمنيّ."""
     if not branch_re.match(branch) or ".." in branch:
         label = "claude/<اسم>" if branch_re is BRANCH_RE else branch_re.pattern
         raise PushRefused(f"الفرعُ «{branch}» ليس {label}: تدفع هذه الأداةُ فروعَ البطاقات فقط (لا main)")
@@ -95,7 +102,7 @@ def guard(card: str, branch: str, repo: str, items: dict, git=_git, approved=app
     rc, dirty = git(repo, "status", "--porcelain", "--untracked-files=no")
     if rc or dirty.strip():
         raise PushRefused("في الشجرة تعديلٌ غيرُ مودَع لملفٍّ متتبَّع: الملفّاتُ تغيّرت بعد الاعتماد")
-    if require_receipt:
+    if require_receipt and not (exempt_no_prepush and not has_prepush_tool(repo)):
         problem = receipt_problem(repo, head, git)
         if problem:
             raise PushRefused(problem)
@@ -105,9 +112,9 @@ def guard(card: str, branch: str, repo: str, items: dict, git=_git, approved=app
 
 
 def push(card: str, branch: str, repo: str, apply: bool = False, path=None, git=_git, approved=approval_ok, by: str | None = None,
-         branch_re: re.Pattern = BRANCH_RE, require_receipt: bool = False) -> str:
+         branch_re: re.Pattern = BRANCH_RE, require_receipt: bool = False, exempt_no_prepush: bool = False) -> str:
     items = ledger.reduce_state(ledger.load_events(path))
-    head = guard(card, branch, repo, items, git, approved, branch_re, require_receipt)
+    head = guard(card, branch, repo, items, git, approved, branch_re, require_receipt, exempt_no_prepush)
     if not apply:
         return f"عرض: يُدفع {head[:8]} إلى origin/{branch} (HEAD:refs/heads/{branch}) ثمّ يُدوَّن pushed — أضف --apply"
     rc, out = git(repo, "push", "origin", f"HEAD:refs/heads/{branch}")

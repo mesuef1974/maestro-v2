@@ -244,6 +244,7 @@ def collect(th: dict, live: bool = True, project: str = "schoolos") -> list[dict
     alerts.extend(security_alerts(th.get("security_repo")))
     alerts.extend(late_start_alerts())
     alerts.extend(pr_watch_alerts())
+    alerts.extend(monitor_of_monitor_alerts())
     try:
         alerts.extend(approved_stall_alerts())
         alerts.extend(p0_captured_alerts())
@@ -315,7 +316,40 @@ def pr_watch_alerts(now: datetime | None = None, age_min: float | None = -1.0) -
     if age_min is None or not 7 <= now.astimezone(DOHA).hour < 23 or age_min <= pr_watch.HEARTBEAT_STALE_MIN:
         return []
     return [alert("pr_watch_dead", "warn", f"مراقبُ الطلبات متوقّفٌ منذ {int(age_min)} د",
-                  "0601: أعِد تسليحَه بأداة Monitor: python C:/Users/mesue/delivery_manager_work/tools/pr_watch.py --loop")]
+                  "0601: المهمّةُ المجدولة تكتب النبضة (pr_watch.py --once)؛ افحصها بـ mcp__scheduled-tasks__list_task_runs وأعِد تشغيلها. (pr_watch_loop.log ميتٌ منذ 10-17 ولا يُقرأ نبضةً)")]
+
+
+WATCHED_ARTIFACTS = (  # (الرمز، الملف، ما يدلّ على توقّفه) — عمرُ آخر كتابةٍ لا وجودُ الملف
+    ("wake_monitor", "wake_log.jsonl", "مراقبُ الإيقاظ (wake-monitor-sweep)"),
+    ("flow_pump", "ledger/flow_pump.log", "مضخّةُ الفلو (flow_pump)"),
+)
+MONITOR_STALE_MIN = 30
+
+
+def monitor_of_monitor_alerts(now: datetime | None = None, ages: dict[str, float | None] | None = None) -> list[dict]:
+    """مراقبُ المراقب (W-20261024-007): المراقباتُ تكتب أثراً كلَّ دورة، فأثرٌ أقدمُ من 30 د = المراقبُ توقّف والصمتُ يُقرأ نجاحاً.
+
+    العمرُ من mtime الملفّ (آخرُ كتابةٍ فعليّة). غيابُ الملف = توقّفٌ لا تجاهل. لا تنبيهَ ليلاً (23:00–07:00 الدوحة) كما في pr_watch_alerts.
+    """
+    sys.path.insert(0, str(HERE))
+    import pr_watch
+    now = now or datetime.now(timezone.utc)
+    if not 7 <= now.astimezone(DOHA).hour < 23:
+        return []
+    if ages is None:
+        ages = {}
+        for code, rel, _ in WATCHED_ARTIFACTS:
+            f = HERE.parent / rel
+            ages[code] = (now.timestamp() - f.stat().st_mtime) / 60 if f.is_file() else None
+        ages["pr_watch"] = pr_watch.heartbeat_age(now)
+    names = {c: d for c, _, d in WATCHED_ARTIFACTS} | {"pr_watch": "مراقبُ الطلبات (pr_watch --once)"}
+    out = []
+    for code, age in ages.items():
+        if age is None or age > MONITOR_STALE_MIN:
+            when = "لا أثرَ له" if age is None else f"آخرُ أثرٍ قبل {int(age)} د"
+            out.append(alert("monitor_silent", "high", f"{names.get(code, code)}: {when} (الحدّ {MONITOR_STALE_MIN} د)",
+                             "0601: افحص المهمّةَ المجدولة وأعِد تشغيلَها؛ المراقبُ الصامتُ لا يُعدّ سليماً"))
+    return out
 
 
 def backup_age_severity(age_h: float | None, failed: bool, max_age_h: float) -> str | None:

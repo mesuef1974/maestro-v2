@@ -7,6 +7,7 @@ import re
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -77,7 +78,7 @@ class DerivedFlow(unittest.TestCase):
     def test_waits_for_owner_and_is_listed_once(self):
         with mock.patch.object(fp, "_is_platform", return_value=True), mock.patch.object(fp, "approval_ok", return_value=False):
             self.assertEqual(fp.owner_list(self.STATES, self.GIT(), "P"), ["W-1 @ aaaaaaaa"])
-            self.assertIn("ينتظر", fp.approve_pass(self.STATES, False, self.GIT(), "P")[0])
+            self.assertIn("[مالك=0101]", fp.approve_pass(self.STATES, False, self.GIT(), "P")[0])  # يُسمّى المالكُ بدل «ينتظر» (W-20261024-007)
 
     def test_owner_approval_moves_it_with_the_derived_head_and_no_message(self):
         with (
@@ -111,11 +112,14 @@ class ApprovePass(unittest.TestCase):
     def test_a_card_without_approval_proof_waits_and_is_never_moved(self):
         with (
             mock.patch.object(fp, "approval_ok", return_value=False),
+            mock.patch.object(fp, "approval_why", return_value="لا اعتماد"),
+            mock.patch.object(fp, "PENDING", Path(tempfile.mkdtemp()) / "p.jsonl"),
             mock.patch.object(fp.subprocess, "run") as run,
         ):
             lines = fp.approve_pass({"W-1": self.STATES["W-1"]}, apply=True)
         run.assert_not_called()
-        self.assertIn("ينتظر", lines[0])
+        self.assertNotIn("ينتظر", lines[0])  # يُسمّى المالكُ بدل «ينتظر» (W-20261024-007)
+        self.assertIn("[مالك=0101]", lines[0])
 
     def test_dry_run_reports_but_does_not_move(self):
         with (
@@ -674,6 +678,10 @@ class PushPass(unittest.TestCase):
         fp.ledger.move(self.card, "approved", path=self.path, note="اعتمد المالك على 8500", head="aaaaaaaa", by="0501", waive_spec="اختبار")
         self.gitdir = self.tmp / "gitdir"
         self.gitdir.mkdir()
+        self.has_tool = True  # المستودعُ الوهميُّ منصّةٌ تحمل scripts/prepush_check.py ما لم يُقل غيرُه
+        p = mock.patch.object(fp.push_approved, "has_prepush_tool", lambda repo: self.has_tool)
+        p.start()
+        self.addCleanup(p.stop)
 
     def git(self, branch):
         head = "a" * 40
@@ -716,6 +724,12 @@ class PushPass(unittest.TestCase):
         lines, pushes, item = self.run_pass(receipt=False)
         self.assertEqual((pushes, item["state"]), ([], "approved"))
         self.assertIn("prepush", lines[0])
+
+    def test_a_repo_without_prepush_tool_is_exempt_from_the_receipt_explicitly(self):
+        """(W-20261024-007، حالة 008) مستودعُ أدواتٍ بلا scripts/prepush_check.py لا يعلق دفعُه للأبد."""
+        self.has_tool = False
+        lines, pushes, item = self.run_pass(receipt=False)
+        self.assertEqual((pushes, item["state"]), ([("push", "origin", "HEAD:refs/heads/w20261020-001-x")], "pushed"))
 
     def test_other_branches_are_never_pushed(self):
         for branch in ("main", "feature/x"):
@@ -862,8 +876,20 @@ class PrepushPass(unittest.TestCase):
         for git in (self.git(dirty=" M x.py\n"), self.git(branch="main"), self.git(origin="https://github.com/x/maestro-v2.git"),
                     self.git(head="b" * 40)):
             lines, docker = self.run_pass(git=git)
-            self.assertEqual((lines, docker.calls), ([], []))
+            if "maestro-v2" in git(".", "remote")[1]:  # غيرُ المنصّة: سطرٌ صريحٌ لا تخطٍّ صامت (W-20261024-007)
+                self.assertEqual(len(lines), 1)
+                self.assertIn("غيرُ المنصّة", lines[0])
+                self.assertEqual(docker.calls, [])
+            else:
+                self.assertEqual((lines, docker.calls), ([], []))
         self.assertIsNone(self.receipt())
+
+    def test_a_platform_tree_without_prepush_tool_says_so_instead_of_silent_skip(self):
+        (self.tree / "scripts" / "prepush_check.py").unlink()
+        lines, docker = self.run_pass()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("prepush_check.py", lines[0])
+        self.assertEqual(docker.calls, [])
 
     def test_head_changed_during_the_run_gives_no_receipt(self):
         heads = iter(["a" * 40, "b" * 40])
@@ -1405,3 +1431,35 @@ def test_pr_body_names_only_its_own_card():
     """وصفُ الطلب يذكر بطاقتَه وحدها: رقمُ بطاقة المضخّة فيه كان يُوهم مضخّةَ التدفّق بتعارضٍ فترفض الطلب."""
     body = fp._pr_body("سطر الاعتماد", "W-20261013-004", {"problem": "م", "accept": "ق"})
     assert body.count("W-") == 1 and "W-20261013-004" in body
+
+
+class HandOff(unittest.TestCase):
+    """جدولُ شرط←مالك: يسمّي المالك، ويكتب صفَّ إيقاظٍ عند التطبيق فقط، ولا يكرّره خلال ست ساعات."""
+
+    def setUp(self):
+        self.path = Path(tempfile.mkdtemp()) / "pending_wakes.jsonl"
+        self.item = {"state": "approved", "held_by": "0408"}
+
+    def _rows(self):
+        return [json.loads(x) for x in self.path.read_text(encoding="utf-8").splitlines()] if self.path.is_file() else []
+
+    def test_owner_table(self):
+        for cond, owner in (("visual_evidence", "0502"), ("head_unapproved", "0101"), ("migrations", "0601"), ("prepush", "0501")):
+            self.assertEqual(fp.hand_off("W-1", cond, self.item, False, self.path), f"[مالك={owner}]")
+
+    def test_pushed_no_pr_goes_to_card_holder_and_unknown_is_marked(self):
+        self.assertEqual(fp.hand_off("W-1", "pushed_no_pr", self.item, False, self.path), "[مالك=0408]")
+        self.assertEqual(fp.hand_off("W-1", "pushed_no_pr", {"state": "approved"}, False, self.path), "[مالك=؟]")
+
+    def test_dry_run_writes_nothing(self):
+        fp.hand_off("W-1", "prepush", self.item, False, self.path)
+        self.assertEqual(self._rows(), [])
+
+    def test_apply_writes_row_once_within_six_hours(self):
+        t0 = datetime(2026, 10, 24, 10, 0).astimezone()
+        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0)
+        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0 + timedelta(hours=5))
+        self.assertEqual(len(self._rows()), 1)
+        self.assertEqual(self._rows()[0]["owner"], "0501")
+        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0 + timedelta(hours=7))
+        self.assertEqual(len(self._rows()), 2)

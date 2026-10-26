@@ -78,7 +78,7 @@ def find_tree(card: str, want8: str, repos: list[str], git=push_approved._git,
 
 def scan(items: dict, repos: list[str], apply: bool = True, path=None, git=push_approved._git,
          approved=push_approved.approval_ok, by: str = "0701", branch_re=push_approved.BRANCH_RE,
-         require_receipt: bool = False) -> list[dict]:
+         require_receipt: bool = False, exempt_no_prepush: bool = False) -> list[dict]:
     """نتيجةُ كلّ بطاقةٍ approved: {card, status: pushed|dry|refused|skipped, branch, head, reason, holder}.
     branch_re وrequire_receipt تمرَّران للحارس (المضخّة: فروع claude/* أو w* وإيصالُ prepush للرأس، D-450م)."""
     out = []
@@ -98,7 +98,7 @@ def scan(items: dict, repos: list[str], apply: bool = True, path=None, git=push_
         base["branch"] = tree["branch"]
         try:
             msg = push_approved.push(card, tree["branch"], tree["path"], apply, path=path, git=git, approved=approved, by=by,
-                                     branch_re=branch_re, require_receipt=require_receipt)
+                                     branch_re=branch_re, require_receipt=require_receipt, exempt_no_prepush=exempt_no_prepush)
         except (push_approved.PushRefused, ledger.LedgerError) as exc:
             out.append({**base, "status": "refused", "reason": str(exc)})
         else:

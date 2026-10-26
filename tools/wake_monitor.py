@@ -42,7 +42,6 @@ FINGERPRINT = ROOT / "wake_fingerprint.json"  # بصمةُ آخر حالةٍ ع�
 MAX_BATCH = 20
 MAX_PER_MINUTE = 3  # أقصى جلساتٍ تُوقَظ (تبدأ عملاً) في الدقيقة؛ الزائدُ يُؤجَّل لا يُسقط (أمر المالك 10-20 بند5)
 MAX_LIVE = 6  # الموجة 0.13 (W-20261023-004): لا أكثر من 6 جلسات تعمل معاً (الحيّةُ + الموقَظةُ)؛ الزائدُ يُؤجَّل في الطابور لا يُسقط
-TEST_CHANNEL = frozenset({"0701", "0301"})  # أسبوعُ التجربة (W-20261017-007) قبل تعميم الإرسال؛ خرجت 0702 و0102 بدمجهما في 0701 و0103 (أمر المالك 2026-10-21)، ثمّ صارت 0103 ← 0301 بترقيم 01 (14:02)
 COUNTER_MARGIN = 60  # هامشٌ تحت الحصّة لا يُرسَل بعده
 COUNTER_GUARD = msg_counter.LIMIT - COUNTER_MARGIN  # فوقه (من الحصّة المقروءة) لا إرسال ويُبلَّغ 0101
 COUNTER = ROOT / "msg_counter.json"
@@ -58,7 +57,8 @@ STALE_RULES = {
     "merged": ("0601", 3),
 }
 REWAKE_MIN = 10  # جلسةٌ أُوقظت للتوّ لا تُوقَظ ثانيةً قبل 10 دقائق (قرار المالك 2026-10-21؛ كان 60)
-DAILY_CAP = 60  # أقصى رسائل إيقاظٍ في 24 ساعة (حدُّ التراسل 150 لكلّ جلسة)
+DAILY_CAP = msg_counter.LIMIT // 3  # أقصى رسائل إيقاظٍ (رسالةٌ لكلّ جلسةٍ) في 24 ساعة: ثلثُ حصّة المرسِل (600، D-468م) فلا يبتلعها الإيقاظ
+REPEAT_HOURS = 24  # بطاقةٌ لم تتغيّر بصمتُها (id، الحالة، المُوقَظ) لا تُعاد لها الإيقاظةُ قبل مرور هذه المدّة
 MAX_SESSIONS_PER_RUN = 5  # لا انفجارَ رسائل: أقدمُ خمسِ جلساتٍ في الدورة والباقي في الساعة التالية
 STALE_PER_MSG = 5  # أقدمُ خمس بطاقاتٍ لكلّ رسالة
 PAYLOAD = "{id} {state} — اقرأ: python tools/ledger.py show {id}"
@@ -246,7 +246,23 @@ def read_log(path: Path = LOG) -> list[dict]:
     return out
 
 
-def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=(), auto=frozenset()) -> WakePlan:
+def pending_wakes(now: datetime, path: Path | None = None) -> list[dict]:
+    """صفوفُ ledger/pending_wakes.jsonl التي كتبتها flow_pump (شرطٌ عالقٌ باسم مالكه)؛ الأحدثُ من 24 ساعة فقط، والتالفُ يُهمَل."""
+    path = path or (ROOT / "ledger" / "pending_wakes.jsonl")
+    out: list[dict] = []
+    if not path.is_file():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+            if now - _dt(r["ts"]) <= timedelta(hours=24) and re.fullmatch(r"[a-z_]+", r["cond"]) and SESSION_NUM.match(r["owner"]):
+                out.append(r)
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=(), auto=frozenset(), pending=()) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
     aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
     دالّةٌ نقيّةٌ إلّا ما يفعله verify. الحالةُ هي المُطلِق لا الحدث."""
@@ -258,6 +274,7 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         if ev["kind"] == "state" and ev["data"].get("state"):
             since[ev["id"]] = _dt(ev["ts"])
     last_wake: dict[str, datetime] = {}
+    last_fp: dict[tuple, datetime] = {}  # بصمة (بطاقة، حالة، مُوقَظ) ← آخر إيقاظ
     day_count = 0
     for row in log:
         t = _dt(row["ts"])
@@ -265,6 +282,9 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
             last_wake[num] = max(t, last_wake.get(num, t))
             if now - t <= timedelta(hours=24):
                 day_count += 1
+        for fpr in (row.get("fps") or []):
+            key = tuple(fpr)
+            last_fp[key] = max(t, last_fp.get(key, t))
     cands: dict[str, list[tuple[datetime, str, str]]] = {}
     for item_id, it in items.items():
         st = it.get("state")
@@ -281,6 +301,13 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
             continue
         target = sa.canonical(target, aliases)
         cands.setdefault(target, []).append((since[item_id], item_id, st))
+    # شروطٌ عالقةٌ سمّتها flow_pump (W-20261024-007): الرمزُ حروفٌ لاتينيّة فيطابق PAYLOAD_OK؛ والبطاقةُ يجب أن تبقى في حالتها
+    for r in pending:
+        it = items.get(r.get("card"))
+        if it is None or it.get("state") != r.get("state"):
+            continue
+        t = sa.canonical(r["owner"], aliases)
+        cands.setdefault(t, []).append((_dt(r["ts"]), r["card"], r["cond"]))
     for num in sorted(cands):
         if channel is not None and num not in channel:
             p.skipped.append((num, "خارج القناة"))
@@ -291,8 +318,10 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         if num in last_wake and now - last_wake[num] < timedelta(minutes=REWAKE_MIN):
             p.skipped.append((num, f"أُوقظت قبل أقلّ من {REWAKE_MIN} دقيقة"))
             continue
-        for _t, item_id, st in sorted(cands[num])[:STALE_PER_MSG]:
-            if verify(item_id, st):
+        fresh = [c for c in sorted(cands[num])
+                 if (c[1], c[2], num) not in last_fp or now - last_fp[(c[1], c[2], num)] >= timedelta(hours=REPEAT_HOURS)]
+        for _t, item_id, st in fresh[:STALE_PER_MSG]:
+            if st in STALE_RULES and verify(item_id, st) or st not in STALE_RULES:
                 p.wakes.setdefault(num, []).append((item_id, st))
             else:
                 p.skipped.append((item_id, "فشل ground_truth: لا إرسال"))
@@ -435,7 +464,7 @@ def watch_lines(p: WakePlan, directory: dict[str, str], seen: set) -> list[str]:
 
 
 def make_plan(a, events, cursor, directory) -> WakePlan:
-    channel = None if a.all else TEST_CHANNEL
+    channel = None  # كلُّ الجلسات (W-20261024-007): لا قناةَ تجربة؛ --all مقبولٌ للتوافق ولا أثر له
     aliases = sa.number_map()
     if a.stale:
         now = datetime.now().astimezone()
@@ -444,7 +473,7 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
         cleared = session_state.pending_markers(ROOT, now)
         auto = session_state.auto_clear_nums(ROOT, now)
         return stale_plan(events, directory, live_minus_cleared(live_for(a), cleared, running_from_arg(getattr(a, "running", None))), now,
-                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto)
+                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto, pending=pending_wakes(now))
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
@@ -456,7 +485,7 @@ def main(argv=None) -> int:
     ap.add_argument("--commit", action="store_true", help="يقدّم المؤشّر ويسجّل wake_log ويزيد عدّاد المرسِل بعدد الرسائل")
     ap.add_argument("--sender", default="0701", help="الجلسة التي ترسل فعلاً (عدّادها هو المحروس)")
     ap.add_argument("--running", default="", help="أرقام الجلسات العاملة فعلاً (isRunning من list_sessions) مفصولةً بفواصل؛ تحلّ محلّ نافذة النشاط")
-    ap.add_argument("--all", action="store_true", help="يعمّم على كلّ الحاملين بدل قناة التجربة")
+    ap.add_argument("--all", action="store_true", help="للتوافق مع الاستدعاءات القديمة: الإيقاظ لكلّ الحاملين دائماً ولا قناة تجربة")
     ap.add_argument("--stale", action="store_true", help="يتتبّع الحالةَ القائمة لا الحدث: يعيد إيقاظَ مسؤولِ كلّ بطاقةٍ عالقةٍ كلَّ ساعة (بلا تقديمِ مؤشّر)")
     ap.add_argument("--json", action="store_true", help="خطّةٌ آليّة: قائمة {to,session_id,message}")
     ap.add_argument("--watch", action="store_true", help="مراقبةٌ (Monitor): سطرٌ لكلّ جلسةٍ عند التغيّر فقط، بلا كتابة ولا تقديمِ مؤشّر؛ الإرسالُ بيد المنفِّذ")
@@ -467,7 +496,6 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     import session_directory as sd
 
-    hist = woken_history()
     if a.watch:
         seen: set = set()
         last_fp = read_fingerprint() if a.changed_only else ""
@@ -527,7 +555,8 @@ def main(argv=None) -> int:
         with LOG.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(
                 {"ts": ledger.now_doha(), "wakes": {k: [i for i, _ in v] for k, v in p.wakes.items()},
-                 "pairs": [[i, st] for v in p.wakes.values() for i, st in v], "skipped": p.skipped, "halted": p.halted}, ensure_ascii=False) + "\n")
+                 "pairs": [[i, st] for v in p.wakes.values() for i, st in v],
+                 "fps": [[i, st, n] for n, v in p.wakes.items() for i, st in v], "skipped": p.skipped, "halted": p.halted}, ensure_ascii=False) + "\n")
         if p.wakes:
             subprocess.run([sys.executable, str(HERE / "msg_counter.py"), "add", a.sender, str(len(p.wakes))], check=False)  # noqa: S603
         if not p.halted and not p.deferred and not a.stale:
