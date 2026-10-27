@@ -86,11 +86,12 @@ def test_cli_wait_read_send_use_main_root_from_subtree(tmp_path, monkeypatch, ca
     assert (tmp_path / "ledger" / "inbox" / "0301.jsonl").exists() and not (sub / "ledger").exists()
 
 
-def test_wait_returns_incoming_at_once_acks_and_removes_beat(tmp_path):
+def test_wait_returns_incoming_at_once_without_ack_and_removes_beat(tmp_path):
     inbox.send("0301", "0101", "جاهز", tmp_path)
     msgs = inbox.wait("0301", tmp_path, sleep=lambda s: pytest.fail("لا نوم والواردُ حاضر"))
     assert [m["text"] for m in msgs] == ["جاهز"]
-    assert inbox.pending("0301", tmp_path) == []
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["جاهز"]  # لا إقرار: read يجده بعد الإيقاظ
+    assert [m["text"] for m in inbox.read("0301", True, tmp_path)] == ["جاهز"] and inbox.pending("0301", tmp_path) == []
     assert not inbox.watcher_alive("0301", tmp_path)  # خرج فحُذف نبضُه
 
 
@@ -153,4 +154,5 @@ def test_cli_wait_once_exits_at_first_message(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(inbox, "ROOT", tmp_path)
     inbox.send("0301", "0101", "س", tmp_path)
     assert inbox.main(["wait", "0301", "--once"]) == 0
-    assert "س" in capsys.readouterr().out and inbox.pending("0301", tmp_path) == []
+    assert "س" in capsys.readouterr().out
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["س"]  # W-20261027-001: --once لا يقرّ؛ read يجده بعد الإيقاظ
