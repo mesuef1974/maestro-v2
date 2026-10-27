@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SWOT منصّة SchoolOS على الإنتاج — 2026-10-27</title>
+<style>
+  :root { --ink:#1b1b1b; --muted:#5a5a5a; --line:#d9d9d9; --soft:#f5f5f5; --s:#e8f3ea; --w:#fbeaea; --o:#eaf0fb; --t:#fbf3e4; --hi:#f6d5d5; --mid:#fbe9c9; --lo:#e3efe4; }
+  html { font-family: system-ui, "Segoe UI", Tahoma, sans-serif; color: var(--ink); line-height: 1.7; }
+  body { max-width: 1160px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: 1.6rem; margin-block: 0 .25rem; }
+  h2 { font-size: 1.25rem; margin-block-start: 2rem; border-block-end: 2px solid var(--line); padding-block-end: .25rem; }
+  h3 { font-size: 1.05rem; margin-block: 1rem .4rem; }
+  .meta { color: var(--muted); font-size: .9rem; }
+  table { border-collapse: collapse; width: 100%; margin-block: .75rem; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .4rem .55rem; vertical-align: top; text-align: start; }
+  th { background: var(--soft); }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: .86em; background: var(--soft); padding: 0 .25em; border-radius: 3px; direction: ltr; unicode-bidi: embed; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .box { border: 1px solid var(--line); border-radius: 6px; padding: .75rem 1rem; }
+  .box.s { background: var(--s); } .box.w { background: var(--w); } .box.o { background: var(--o); } .box.t { background: var(--t); }
+  .box h3 { margin-block-start: 0; }
+  ol, ul { padding-inline-start: 1.4rem; margin-block: .3rem; }
+  li { margin-block: .25rem; }
+  .exec { background: var(--soft); border-inline-start: 4px solid #888; padding: .75rem 1rem; margin-block: 1rem; }
+  .exec p { margin: .25rem 0; }
+  .v { font-weight: 600; }
+  .bad { color: #8a1c1c; } .ok { color: #1f6b2e; } .mid { color: #8a5a00; }
+  .small { font-size: .85rem; color: var(--muted); }
+  .hi { background: var(--hi); } .md { background: var(--mid); } .lo { background: var(--lo); }
+  .matrix td { text-align: center; }
+  .ev { color: var(--muted); font-size: .85em; }
+</style>
+</head>
+<body>
+
+<h1>تقرير SWOT: منصّة SchoolOS كما تعمل على الإنتاج</h1>
+<p class="meta">التاريخ 2026-10-27 (الدوحة، 11:35–13:00) · الجلسة 0111 · البطاقة <code>W-20261027-017</code> — تقرير سواط المنصّة على الإنتاج · الإنتاج <code>https://shschoolmvp-production.up.railway.app</code> عند الإيداع <code>8a71a0b</code> المطابق لرأس <code>origin/main</code> · الشيفرة في <code>D:\shschool_mvp</code> قراءةً · قراءةٌ فقط: لم يُكتب شيءٌ على الإنتاج ولا في أيّ مستودع، ولا بياناتٍ شخصيّةً هنا · يبني على سواط 2026-10-21 (<code>handover_notes/swot_platform_2026-10-21.md</code>) ويذكر ما تغيّر في القسم 7.</p>
+
+<h2>1. الملخّص التنفيذيّ</h2>
+<div class="exec">
+<p>1. <span class="v">الإنتاج سليمٌ تقنيّاً وفارغٌ بشريّاً.</span> نقطة الصحّة 200 (قاعدة وذاكرة وثابت سليمة، 17.8 مل‌ث داخليّاً)، ورأسُ الإنتاج يطابق <code>main</code> بفارق صفر إيداع، وصفرُ 5xx وصفرُ خطأ في سجلّات الخدمات الثلاث. لكن سجلّ الوصول من 10-24 18:52 إلى 10-27 12:19 (نحو 2.7 يوم فيها يومان دراسيّان) يحوي <span class="bad">صفر طلب POST وصفر صفحة مصادَقة</span>؛ نحو 94% من الطلبات مجسّات مراقبة والباقي استقصاءُ هذا التقرير. المنصّة تُنشر 90 مرّة في الأسبوع ولا يستعملها أحد على الإنتاج.</p>
+<p>2. <span class="v">المنتج عميقٌ في جهة الكادر وشبه فارغٍ في جهة المستفيد.</span> 37 دوراً و101 قدرة و495 مساراً و163 نموذجاً؛ المدير 97 قدرة والمعلّم 28، أمّا الطالب ووليّ الأمر 4 قدرات لكلٍّ: بوّابة الأولياء مجمَّدة (<code>PARENTS_FROZEN</code> افتراضيّاً) وبلا مزوّد بريد أو رسائل في الإنتاج، وبلاطة «درجاتي» للطالب تنتهي بـ403 بلا اختبار يكشفها، و9 أدوار كادر بلا قدرة واحدة، و7 صفحات نائبة، ولا ترفيع ولا إقفال عام ولا جزاءات موظّفين ولا تصدير وزاريّ.</p>
+<p>3. <span class="v">الأمن: نواةٌ قويّة مؤكَّدةٌ حيّاً وثغراتٌ إعداديّة.</span> عزل الصفوف RLS مفروضٌ بدور تطبيقٍ مقيَّد على الويب والعامل والمجدوِل (الإقلاع يُرفض بلا كلمة سرّ الدور؛ المتغيّر مضبوطٌ على الخدمات الثلاث)، وCSP مفروضةٌ برمزٍ عشوائيّ، وHSTS سنةً مع التحميل المسبق، وحارسٌ يمشي كلّ مسار، و678 اختباراً أمنيّاً، وثغرةُ بحث المستخدمين من 10-21 مغلقة. في المقابل: <span class="bad">إلزام المصادقة الثنائيّة للكادر مطفأٌ صراحةً في الإنتاج</span> (<code>TWO_FACTOR_REQUIRED_FOR_STAFF=false</code> بينما افتراض الشيفرة true)، وترويسة Permissions-Policy غائبة، وCSP تسمح بالأنماط الداخليّة وبالمقابس إلى أيّ مضيف، و5 مواضع <code>|safe</code> داخل سكربت، و12 تنبيه Twisted بمهلة 2026-11-14.</p>
+<p>4. <span class="v">PDPPL: بنيةٌ جاهزة وأساسٌ قانونيّ ناقص.</span> 31 حقلاً مشفَّراً وتدويرُ مفاتيح واحتفاظٌ مجدوَل (730 يوماً) ومحوٌ وخرقٌ بمهل و603 اختبارات خصوصيّة؛ لكن الرقم الشخصيّ والجوّال والبريد نصٌّ صريح في جدول المستخدمين (ADR-0010 مقترحٌ لم يُنفَّذ)، وإشعار الخصوصيّة مسوّدةٌ غيرُ معروضة، وحقّ الاطّلاع (م.6) غائب، ولا DPIA ولا سجلّ معالِجين، وحاوية النسخ في <code>sjc</code> (الولايات المتّحدة) بينما خدمة الويب في أوروبا الغربيّة وإقليم القاعدة غيرُ مؤكَّد، وعلى جهاز التطوير 17.5 ميغابايت SQL صريح و77 نسخةً من القاعدة بجوار مفتاح Fernet.</p>
+<p>5. <span class="v">الأداء: مجهولُ 10-21 الأكبر حُسم إيجاباً.</span> <code>CELERY_ASYNC_ENABLED=true</code> على الخدمات الثلاث فالمهامّ غيرُ متزامنة فعلاً، وتتبّعُ Sentry مفعَّل. يبقى: 29 عرضَ تصديرٍ متزامن و35 نوعاً متزامناً مقابل 8 خلفيّة، واتّصالٌ جديد لكلّ طلب (<code>CONN_MAX_AGE=0</code>) بلا مجمّع ولا مهلة استعلام، والجلسات في القاعدة، ولا مصدرَ لـp95 الإنتاج، واختبارُ الحمل على قاعدةٍ بلا طلبة. المقيس من الخارج: TTFB وسيط 0.46 ث لصفحة الدخول (0.44 منها شبكة وحافّة).</p>
+<p>6. <span class="v">التجربة: RTL ورموزٌ ووصولٌ هيكليّ ممتاز، وأداءُ جوالٍ ضعيف.</span> 351 خاصيّة منطقيّة مقابل 7 فيزيائيّة موثَّقة، 0 لون حرفيّ، ليليٌّ بلا وميض، axe صفر مخالفة على 16 صفحة وLighthouse وصول 99، وأهدافُ لمسٍ صغيرة 0 من 431؛ لكن axe يغطّي 7.5% من الصفحات، وLCP الجوال 5.4–6.6 ث وأداء 54–69، و167 من 170 جدولاً بلا caption، و55% من الصفحات بلا نمط تخطيط، وCSS 243 من 270 كيلوبايت بعد رفع السقف 4 مرّات.</p>
+<p>7. <span class="v">التشغيل: نشرٌ آليٌّ سريع بلا شبكة أمانٍ مجرَّبة.</span> 90 نشرةَ ويب في 7 أيّام (82 آليّة من طابور الدمج، وسيط 14.4 دقيقة من الدمج)، نسخٌ يوميّ 33 من 34 وتمرينُ استعادة 8 من 8 في CI فقط؛ لكن سيرُ التراجع لم يُشغَّل قطّ، ولا بيئةَ تجريبيّة، ونسخةُ ويب واحدة، والعاملُ يُنشر يدويّاً مرّتين في الأسبوع فينحرف إصداره، والمراقبةُ الثانويّة بوتيرةٍ فعليّة 4–7% وتنبيهاتها قضايا GitHub بلا قناة بشريّة (سقوط 10-22 بقي 5 ساعات بلا تحليل)، و37% من الطلبات بوسم «نشر-عاجل» و15 إعادةَ تشغيلٍ وقتَ الدوام في أسبوع.</p>
+<p>8. <span class="v">صحّة الشيفرة: انضباطٌ نادر.</span> 163 ألف سطر تطبيق و10,434 اختباراً (1.15 سطر اختبار لكلّ سطر) على PostgreSQL، 166 ملفّ حراسة، وفي 14 يوماً 92 إيداعَ شيفرة كلُّها مع اختبارات و0 revert، والدَّينُ الطبقيّ 201→189 بلا زيادة، و0 دالّة بتعقيد E/F و9 TODO. ينقص: قراءةُ تغطيةٍ حديثة (نحو 75% مقابل عتبة 70)، و1,165 خطأ mypy مسجَّلاً، و11 ملفّاً فوق 1000 سطر، وJS بلا اختبارات.</p>
+<p>9. <span class="v">مصدر الحقيقة الوزاريّ: الأرقام الحاكمة مطابقة والسجلّ فارغ.</span> 24 قاعدة مطابقة (عتبات الغياب 5·8·11·15، 4 حصص، 41 مخالفة و23 سلّماً، 50/100، 40/60، الجبر) و3 مخالفات طفيفة و6 غير مرمَّزة و9 قرارات مدرسة موسومة و5 مواضع md متقادمة تناقض الشيفرة الصحيحة (أحدها يوصي بترميز رقم لا أصل له)؛ تطبيق <code>sot_registry</code> هيكلٌ بلا بيانات ولا روابط شيفرة ولا واجهة.</p>
+<p>10. <span class="v">التسليم:</span> الدفتر 763 بطاقة (587 منشورة)؛ وسيط الالتقاط إلى النشر 19.7 ساعة؛ وفي أسبوعين نُشر 113 بندَ أدواتٍ وحوكمة مقابل 62 بندَ منتج (1.8×). <span class="v">التقدير على سلّم 10-21 نفسه: 63 من 100</span> (كان 61 ثمّ 62): يرتفع الأداءُ بحسم التزامن، ويثبت الباقي؛ وما يرفع الدرجة فعلاً ليس شيفرةً بل ثلاثةُ قرارات: تشغيلُ المنصّة للمستخدمين، وتشغيلُ المصادقة الثنائيّة، وقرارُ الاستضافة والـDPIA.</p>
+</div>
+
+<h2>2. المنهج والمصادر المقيسة</h2>
+<table>
+<thead><tr><th>المصدر</th><th>الأداة والنطاق</th><th>ما قِيس</th><th>ما لم يُقَس</th></tr></thead>
+<tbody>
+<tr><td>الإنتاج من الخارج</td><td><code>curl</code> من جهاز المالك (الدوحة) إلى Railway EU West، 11:50–12:20</td><td>نقاط الصحّة وأجسامها، الرؤوس الأمنيّة، TTFB بعشر عيّنات لكلٍّ من <code>/health/</code> و<code>/auth/login/</code>، الأصول المخدَّمة وأحجامها المضغوطة ورؤوس التخزين، عامل الخدمة والمانيفست، سلوك 20 مساراً عامّاً</td><td><span class="bad">لوحات الأدوار بالدخول</span>: إضافةُ Claude in Chrome غيرُ متّصلة (5 محاولات)؛ لا HTTP/2 مقيس (الحافّة تخدم 1.1)</td></tr>
+<tr><td>Railway (قراءة)</td><td><code>railway status/deployment list/logs/variables --json</code></td><td>الخدمات الخمس وصورها، 90 نشرة في 7 أيّام، سجلّ الوصول لأربع نشرات (10-24 إلى 10-27)، سجلّ العامل والمجدوِل، أعلامُ الإعداد غير السرّيّة بقائمة سماح والأسرارُ بالوجود لا بالقيمة</td><td>الإقليم الفعليّ للقاعدة والحاوية، الذاكرة والمعالج والأقراص، سجلّ مرحلة ما قبل النشر، زمنُ الاستجابة (سجلّ daphne بلا حقل مدّة)</td></tr>
+<tr><td>GitHub (قراءة)</td><td><code>gh api</code>، <code>gh run list</code>، <code>gh pr list</code></td><td>تنبيهات dependabot وفحص الشيفرة، آخر تشغيلات 11 سير عمل، الطلبات المدمجة والمفتوحة، الإيداعات 10-13 إلى 10-26</td><td>artifact التغطية الليليّ، إعدادات CodeQL الافتراضيّة</td></tr>
+<tr><td>الشيفرة</td><td>8 وكلاء قراءةٍ متوازين على <code>8a71a0bf0</code> (grep/ast/radon/django.setup بإعدادات الاختبار/git log)، بلا تشغيل اختبارات ولا خادم</td><td>المحاور 1–5 و7 و9 بأدلّة <code>file:line</code> وأعداد</td><td>تشغيل الاختبارات، التغطية الفعليّة، قراءة PDF الوزاريّ (md هو المقيس)، أحجام الجداول</td></tr>
+<tr><td>الدفتر والقرارات</td><td><code>ledger.py list</code>، <code>ledger_lead_time.py</code>، <code>ledger_stale.py</code>، <code>flow_metrics.py</code></td><td>الحالات والأنواع وزمن الدورة والراكد</td><td>حالة بنود الخارطة في قاعدة الإنتاج (قُرئت الهجرات)</td></tr>
+<tr><td>Sentry</td><td>—</td><td>الإعداد من الشيفرة والمتغيّرات فقط</td><td>عدد القضايا والأداء الفعليّ (لا وصول للواجهة)</td></tr>
+</tbody>
+</table>
+<p class="small">قاعدة الصرامة من 10-21 مُطبَّقة: لا يُعدّ شيءٌ قوّةً إلا بحارسٍ آليّ أو قياسٍ؛ وكلُّ رقمٍ أدناه مع مصدره؛ وما تعارض فيه وكيلان نُقل بالوجهَين. الملفّات الخامّ للقياسات في مجلّد السكراتش الخاصّ بالجلسة ولم تُنقل إلى هنا.</p>
+
+<h2>3. SWOT بالمحاور التسعة</h2>
+
+<h3>3.1 المنتج والتغطية الوظيفيّة لكلّ دور</h3>
+<table>
+<thead><tr><th>الدور</th><th>القدرات / الوحدات</th><th>ما يعمل</th><th>ما ينقص أو يتعطّل</th><th>الدليل</th></tr></thead>
+<tbody>
+<tr><td>المدير</td><td class="num">97 / 18</td><td>لوحة مؤشّرات المدرسة، التحليلات، السلوك، العيادة، التقرير اليوميّ، المكتبة، الجودة، متابعة الغياب، النقل، الأعذار؛ الحضور والتقييم والكنترول وشؤون الطلبة والموظّفين والكشوف والجداول</td><td>توليد الجدول واعتماده محصوران بمطوّر المنصّة؛ لا ترفيع ولا إقفال عام (محرّك الحكم مطفأ)؛ لا سجلّ جزاءات موظّفين؛ لا تصدير وزاريّ (استيراد فقط)؛ التواصل مع الأولياء مجمَّد</td><td class="ev">base.py:225,846 · core/domain/grades.py:483-521 · quality/evaluation_services.py:185-200 · reports/services.py:1181</td></tr>
+<tr><td>النائب الأكاديميّ / الإداريّ</td><td class="num">75 / 16 · 79 / 18</td><td>يرثان المنسّق والمشرف الإداريّ؛ الجدول والزيارات والنصاب والكنترول للأوّل، والعيادة والنقل والغياب والأعذار للثاني</td><td>لوحة المدير نفسها بعنوانهما، لا لوحة خاصّة؛ توليد الجدول محجوب</td><td class="ev">core/dashboard_selectors.py:54,76-79 · core/views_dashboard.py:64-77</td></tr>
+<tr><td>المنسّق</td><td class="num">43 / 12</td><td>يرث المعلّم + اعتماد التبديل والتعويض وغياب معلّمي قسمه والزيارات والنصاب واستيراد الدرجات</td><td>يشارك المعلّم قالب لوحته؛ 7 من 25 صفحة في الإدارة الأكاديميّة نائبة «قيد التطوير»</td><td class="ev">templates/dashboard/main.html:17 · academic_management/views.py:21-71</td></tr>
+<tr><td>المعلّم</td><td class="num">28 / 12</td><td>حصص اليوم بحالة الرصد والحصّة التالية؛ رصد الحضور بالشبكة 07:10–14:00؛ الدرجات؛ المخالفات؛ التبديل والتعويض؛ إجازته؛ ملفّ الطالب؛ الكشوف</td><td>لا واجبات ولا خطّة درس (صفر)؛ جدوله الأسبوعيّ مرهون بمفتاحٍ مطفأ أو باعتماد الجدول</td><td class="ev">core/dashboard_selectors.py:240-294 · base.py:791-802</td></tr>
+<tr><td>الممرّض</td><td class="num">10 / 5 (21 مساراً)</td><td>سجلّ صحّيّ، زيارات، طابور سريع، إحالات، مستلزمات، تقرير شهريّ عدديّ، 7 نماذج منها الأدوية وموافقة الوليّ</td><td>إشعار الوليّ عند الإرسال للبيت محجوز بالتجميد؛ لا يرى جدول الطالب ولا حضوره</td><td class="ev">core/capabilities/clinic_library_transport.py:13-30 · notifications/hub.py:75-76</td></tr>
+<tr><td>الأخصّائيّ</td><td class="num">17 (اجتماعيّ) · 15 (نفسيّ)</td><td>السلوك كاملاً مع اللجنة والاستدعاء؛ أعذار الامتحان؛ لوحة الغياب المتكرّر والمخالفات والراسبين</td><td>لا نموذج حالة إرشاديّة ولا جلسة؛ الدور القديم «أخصّائيّ» 5 قدرات بلا لوحة؛ معالجا النطق والوظائفيّ 8 قدرات بلا وحدة علاج</td><td class="ev">core/dashboard_selectors.py:365-421 · core/landing.py:28-30</td></tr>
+<tr><td>وليّ الأمر</td><td class="num">4 / 4 (16 مساراً)</td><td>أبنائي، درجات وحضور وسلوك لكلّ ابن، موافقة حماية البيانات بوسيط إلزاميّ، تطبيق ويب تقدّميّ، 3 نقاط API</td><td>التواصل الصادر مجمَّد (D-268م، D-272م)؛ بريد الإنتاج بلا مزوّد؛ SMS/واتساب مطفآن؛ مفاتيح الدفع فارغة؛ لا مراسلة ولا طلبات من الوليّ</td><td class="ev">base.py:781-786 · production.py:14 · notifications/models.py:194,451 · أعلام Railway</td></tr>
+<tr><td>الطالب</td><td class="num">4 / 4</td><td>نسبة الحضور وحصص اليوم و3 بلاطات</td><td><span class="bad">بلاطة «درجاتي» تنتهي بـ403</span> (فهرس الكشوف محروس بقدرةٍ لا يملكها الطالب) بلا اختبار؛ قدرتا الجدول تفتحان عروض المعلّم لا جدوله؛ لوحة السلوك ترفضه</td><td class="ev">templates/dashboard/roles/student.html:29 → reports/views.py:251-253 → core/capabilities/assessment.py:55-57</td></tr>
+<tr><td>9 أدوار كادر</td><td class="num">0</td><td>—</td><td>فنّيّ المختبر، أمين المخزن، مشرف المقصف، المراسل، الاستقبال، ملاحظ الطلبة، المحاسب، عامل الخدمات، المرافق الداعم: لوحة «لم تُفعَّل صلاحيّاتك»</td><td class="ev">core/views_dashboard.py:126-127</td></tr>
+</tbody>
+</table>
+<p class="small">الأعداد: 37 دوراً (الخريطة تقول 36) · 101 قدرة في 32 مجالاً · 28 تطبيقاً (الخريطة 24) · 163 نموذجاً · 1,338 نقطة مسار منها 843 إدارة آليّة فالمنتج 495 · API v1: 28 نقطة · 390 قالباً · 10,416 دالّة اختبار. الرايات المطفأة افتراضيّاً: الجدول المؤقّت للمعلّم، محرّك الحكم، خطّ تسليم الإشعارات، رموز الدخول للـAPI، RUM؛ والمشغَّلة المقيِّدة: تجميد الأولياء، حصر الجدول بالمطوّر. إعدادات الاختبار تعكس التجميد والحصر فسلوك الإنتاج لهما غير مختبَر (<code>testing.py:113,141</code>).</p>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul>
+<li>سجلّ قدرات واحد بالفعل لا بالدور مع حارس تطابق يفشل عند أيّ حارسٍ خارجه؛ RLS لكلّ جدول مُنطاق.</li>
+<li>تغطية عميقة للعمليّات اليوميّة: حضور بشبكة ونافذة زمنيّة، تبديل وتعويض وبدلاء، سلوك بدليل 2026 ولجنة، شؤون طلبة 45 مساراً، موظّفين 31، جودة 50، كشوف وشهادات 11.</li>
+<li>العيادة اكتملت فيها الإحالات وكتالوج الأدوية وموافقة الوليّ منذ 10-21 (#1234، W-20261020-036).</li>
+</ul></div>
+<div class="box w"><h3>الضعف</h3><ul>
+<li><span class="v">تصويب 021 (10-27 15:20)</span>: «0 POST و0 صفحة مصادَقة في 2.7 يوم» قياسٌ صحيحٌ في نافذةٍ خاطئة — 24 إلى 27 أكتوبر عطلةُ نهاية الأسبوع ثمّ إجازةُ منتصف الفصل الأوّل (25–29 أكتوبر). في 15 يومَ دوامٍ بين 4 و22 أكتوبر: 482 دخولاً و16،611 طلبَ صفحةٍ مصادَقة بذروة 07:00–13:00؛ المنصّة مستعمَلة يوميّاً (<code>docs/platform_zero_traffic_2026-10-27.html</code>).</li>
+<li>طرف المستفيد شبه فارغ: الطالب والوليّ 4 قدرات لكلٍّ، وبلاطة درجات الطالب 403، والقناة الصادرة للأولياء مجمَّدة بلا بريد أو رسائل.</li>
+<li>9 أدوار بلا وظيفة؛ 7 صفحات نائبة؛ لا ترفيع ولا إقفال عام ولا جزاءات ولا تصدير وزاريّ؛ المكتبة والنقل هيكليّان؛ المدير محجوب عن توليد الجدول.</li>
+<li>بوّابات الوسيط للجدول والحضور والاستيراد مسجَّلة بمسارات غير موجودة («دَين معروف» بوسم xfail).</li>
+</ul></div>
+<div class="box o"><h3>الفرص</h3><ul>
+<li>فكّ التجميد مع مزوّد بريد يُفعّل 16 مساراً وتطبيقاً تقدّميّاً و3 نقاط API قائمةً بلا شيفرة جديدة.</li>
+<li>تشغيل محرّك الحكم يُحضر حالات الترفيع والدور الثاني الجاهزة؛ منح الطالب قدرة الكشوف المقيَّدة بذاته يُصلح 403 بسطر واختبار.</li>
+<li>تعريف الأدوار التسعة من دراسة سلطة الأدوار (<code>docs/rbac_role_authority_study_2026-09.md §8.4</code>)؛ نموذج حالة إرشاديّة فوق ملاحظات الطالب.</li>
+</ul></div>
+<div class="box t"><h3>التهديدات</h3><ul>
+<li>انحراف خريطة المنصّة عن الشيفرة (36/37 دوراً، 24/28 تطبيقاً) يُضلّ كلّ مراجعة تعتمدها.</li>
+<li>الاختبارات تعمل بالرايتين معكوستين؛ SMS/واتساب بمكتبة تُستورد عند التنفيذ وترفع خطأً إن غابت (<code>notifications/tasks.py:1285-1287</code>).</li>
+<li>تراكم المحجوب بقرار على الإنتاج (N-095 عزل المستخدمين، N-107 تسوية الرصد)؛ ووعدٌ في القائمة يُردّ بـ403 يضرب الثقة يومَ الفتح.</li>
+</ul></div>
+</div>
+
+<h3>3.2 التجربة: RTL والجوال والليليّ والوصول والاتّساق</h3>
+<table>
+<thead><tr><th>المقياس</th><th>القيمة</th><th>المصدر</th></tr></thead>
+<tbody>
+<tr><td>خصائص CSS منطقيّة / فيزيائيّة</td><td class="num">351 / 7 (border-right، مسجَّلة)؛ <code>left:/right:</code> 0</td><td>grep على <code>static/css/custom/</code>؛ <code>tests/design_ratchet_baseline.json</code></td></tr>
+<tr><td>ألوان حرفيّة خارج الرموز</td><td class="num">0 في CSS و0 في القوالب؛ الرموز 269 و152 تنقلب ليلاً</td><td>grep؛ <code>test_contrast_ratios.py</code> 37 زوجاً</td></tr>
+<tr><td>الوضع الليليّ</td><td>صنف <code>html.dark</code> + تخزين محلّيّ قبل الرسم؛ لا <code>prefers-color-scheme</code> (قرار المالك 2026-09-19)؛ 210 محدّد <code>.dark</code> في الملفّ المخدَّم حيّاً</td><td><code>base.html:12-17</code>؛ curl على <code>40-themes…css</code></td></tr>
+<tr><td>CSS المشحون</td><td class="num">242.6 KB مصغَّراً من سقف 270 KB (هامش 10%)؛ رُفع السقف 4 مرّات منذ 09-26؛ المخدَّم حيّاً 43 KB بـBrotli لثمانية ملفّات بتجزئة وimmutable</td><td><code>tests/test_css_budget.py:24-42</code>؛ رؤوس الإنتاج</td></tr>
+<tr><td>axe حيّ</td><td class="num">16 صفحة من 212 (7.5%) بصفر مخالفة؛ Chromium فقط</td><td><code>tests/test_a11y_live_pages.py:88-131</code>؛ <code>quality-gate.yml:643</code></td></tr>
+<tr><td>Lighthouse جوال (5 صفحات)</td><td class="num">وصول 99؛ أداء 54–69؛ LCP 5,384–6,634 مل‌ث؛ CLS 0؛ TBT 142–545</td><td><code>tests/lighthouse_baseline.json</code> (ليليّ معلوماتيّ)</td></tr>
+<tr><td>أهداف لمس أصغر من 44px</td><td class="num">0 من 431 (Chromium) و0 من 434 (WebKit)؛ كانت 58% في 09-20</td><td><code>tests/mobile_audit_baseline.json</code></td></tr>
+<tr><td>جداول بلا <code>caption</code></td><td class="num">167 من 170</td><td>grep على القوالب غير PDF</td></tr>
+<tr><td>صفحات بلا نمط تخطيط <code>layout-*</code></td><td class="num">102 من 187 (55%)</td><td><code>tests/page_layout_baseline.json</code></td></tr>
+<tr><td>سقّاطة الهويّة</td><td class="num">hex 0 · inline_style 0 · <code>!important</code> 6 · أزرار بلا <code>type</code> 75 · سكربت مضمَّن ~75 في 67 قالباً · Tailwind موروث 130</td><td><code>tests/design_ratchet_baseline.json</code>؛ <code>tailwind_freeze_baseline.json</code></td></tr>
+<tr><td>الاتّساق المركزيّ</td><td class="num"><code>{% callout %}</code> 182 ولا تنبيه محلّيّ؛ <code>{% icon %}</code> 654 مقابل 12 svg مضمَّناً؛ القاموس 136 أيقونة</td><td>grep؛ <code>core/icons.py</code></td></tr>
+<tr><td>HTMX</td><td class="num">189 سمة في 25 قالباً؛ شريط تحميل عامّ ومعالج أخطاء عامّ بالعربيّة؛ <span class="mid">معالج <code>htmx:responseError</code> مكرَّر</span> في <code>base.js:588</code> و<code>app.js:162</code></td><td>قراءة الملفّين</td></tr>
+<tr><td>صفحة الدخول حيّاً</td><td><code>lang=ar dir=rtl</code>، viewport سليم، <code>color-scheme=light</code> ثابت، 5.9 KB، 0 مضيف خارجيّ</td><td>curl</td></tr>
+</tbody>
+</table>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul><li>RTL منطقيّ بالكامل بحارس؛ الألوان رموز 100% بأربعة حرّاس تباين وتكافؤ ليليّ.</li><li>وصول هيكليّ متين: skip-nav، <code>sr-live</code>، 39 <code>:focus-visible</code> بحلقة ≥3:1، 0 صورة بلا alt، axe صفر، Lighthouse وصول 99، WCAG 2.2 K23 = 5/5.</li><li>الجوال انتقل من 58% أهداف صغيرة إلى 0% على محرّكَين؛ فيض أفقيّ 0.</li><li>اتّساق مركزيّ محروس: callouts وأيقونات من قاموس واحد وسقّاطات لا تزيد.</li></ul></div>
+<div class="box w"><h3>الضعف</h3><ul><li>التغطية الحيّة ضيّقة: axe على 7.5% من الصفحات ومعظمها بحساب المدير؛ المعلّم والوليّ والممرّض خارجها.</li><li>LCP الجوال 5.4–6.6 ث وأداء 54–69 مقابل هدف ≥90/≤2.5 ث، والحارس معلوماتيّ لا يحجب.</li><li>167/170 جدولاً بلا caption (WCAG 1.3.1؛ axe لا يطلبه فلم يُكشف)؛ 102 صفحة بلا نمط تخطيط.</li><li>75 زرّاً بلا <code>type</code>، ~75 سكربتاً مضمَّناً معتمداً على nonce، 130 صنف Tailwind موروث، 6 استعلامات <code>@media</code> خارج الحدود المعتمدة، فجوة اللوحيّ 641–1024.</li></ul></div>
+<div class="box o"><h3>الفرص</h3><ul><li>توسيع axe إلى رحلات الأدوار الخمس القائمة في <code>test_mobile_audit.py</code> (16 → ~41 صفحة بلا أداة جديدة).</li><li><code>&lt;caption class="sr-only"&gt;</code> مركزيّاً في وسم <code>table-wrap</code> يغلق 167 موضعاً بتعديل واحد.</li><li>LCP: ميزانيّة الخطوط 120 KB وJS 430 KB أوّل مرشّح (Chart.js 205 KB بلا defer)؛ خفض سقف CSS لا رفعه.</li><li>Q-09 قارئ الشاشة وتفعيل RUM (مطفأ) قبل أيّ بيان مطابقة.</li></ul></div>
+<div class="box t"><h3>التهديدات</h3><ul><li>CI أخضر على Chromium وحده؛ تراجع صامت في Safari/iOS.</li><li>CSS رُفع سقفه 4 مرّات في شهر والهامش 28 KB؛ أيّ ميزة واجهة تالية مقيَّدة.</li><li>كسر واحد في nonce يُسقط سلوك 67 صفحة؛ أدوار بلا رحلة جوال (مكتبة، نقل، سكرتير، أخصّائيّ) لا تُقاس أصلاً.</li></ul></div>
+</div>
+
+<h3>3.3 الأداء</h3>
+<table>
+<thead><tr><th>المقياس</th><th>القيمة</th><th>المصدر</th></tr></thead>
+<tbody>
+<tr><td>الإنتاج من الخارج</td><td class="num"><code>/health/</code> 10 عيّنات: أدنى 0.40 ث، وسيط 0.47، أقصى 1.15؛ <code>/auth/login/</code> وسيط 0.46 ث؛ الزمن الداخليّ المُعلَن 17.8 مل‌ث فالفارق شبكة وحافّة (الدوحة↔EU West، HTTP/1.1)</td><td>curl</td></tr>
+<tr><td>Celery في الإنتاج</td><td><span class="ok"><code>CELERY_ASYNC_ENABLED=true</code> على الخدمات الثلاث</span> (كان «غير معلوم» في 10-21)؛ الافتراض في الشيفرة يبقى eager بصمت إن حُذف العلم (<code>production.py:234</code>)</td><td><code>railway variables</code></td></tr>
+<tr><td>التصدير</td><td class="num">29 دالّة عرض تستدعي WeasyPrint/openpyxl متزامنةً و35 نوعاً <code>SYNC_ONLY</code> مقابل 8 أنواع في سجلّ التصدير الخلفيّ؛ ADR-0007 قاس 22 من 35 فوق 300 مل‌ث</td><td><code>tests/test_export_guards.py:14-62</code>؛ <code>core/exports/registry.py</code></td></tr>
+<tr><td>إعادة حساب نتائج الشعبة</td><td class="num">متزامنة بعد كلّ حفظ درجات: نحو 250–300 استعلام كتابيّ في الطلب</td><td><code>assessments/services.py:556-600</code></td></tr>
+<tr><td>قاعدة البيانات</td><td><code>CONN_MAX_AGE=0</code> (اتّصال لكلّ طلب) بلا مجمّع؛ <code>DB_STATEMENT_TIMEOUT_MS</code> غير مضبوط؛ الجلسات في DB (<code>USE_REDIS_SESSIONS</code> غير مضبوط)</td><td><code>production.py:23-41,198</code>؛ أعلام Railway</td></tr>
+<tr><td>N+1</td><td class="num">select_related 506 / prefetch 36 / annotate 140 لـ503 عرض؛ 119 حارس عدد استعلامات في 39 ملفّاً؛ 13 خاصيّة نموذج تستعلم (فخّ كامن)</td><td>grep؛ <code>tests/test_n_plus_one_queries.py</code></td></tr>
+<tr><td>الفهارس والهجرات</td><td class="num">Index 104 · UniqueConstraint 80 · db_index 58؛ CONCURRENTLY في 2 من 34 هجرة فهرس؛ <code>migration-timing.yml</code> بلا عتبة</td><td>grep؛ قراءة السير</td></tr>
+<tr><td>العامل</td><td class="num">concurrency 2، طابور واحد (<code>EXPORT_JOB_QUEUE</code> غير مضبوط)، حتى 24 مهمّة دوريّة منها اثنتان كلّ دقيقة؛ حدود الزمن مزدوجة المصدر (300/600 مقابل 240/300)</td><td><code>shschool/celery.py</code>؛ <code>production.py:228</code></td></tr>
+<tr><td>التخزين المؤقّت</td><td class="num">Redis في الإنتاج؛ <code>cache.get</code> 27 · <code>@cache_page</code> 10 (التحليلات) · <code>{% cache %}</code> 0 · <code>get_or_set</code> 0</td><td>grep</td></tr>
+<tr><td>الأصول</td><td class="num">CSS 480 KB خامّ → 243 KB مصغَّر → 43 KB Brotli؛ JS 574 KB خامّ (44% بائع) → ~192 KB؛ WhiteNoise بتجزئة وimmutable؛ عامل الخدمة v8</td><td>curl؛ <code>production.py:413</code></td></tr>
+<tr><td>اختبار الحمل</td><td class="num">p95 190 مل‌ث على خادم الجلسة؛ لكن القاعدة بلا طلبة و4 مستخدمين وحساب واحد (الجولة الأكبر قاست حدّ 120/دقيقة لا السعة)</td><td><code>tests/loadtest/README.md</code></td></tr>
+<tr><td>SLO</td><td>معرَّف (99.9%، p95 &lt; 500 مل‌ث) ومصادره غير مشغَّلة؛ Sentry tracing مفعَّل (10% ويب، 30% مهامّ) لكن لا قراءة له هنا</td><td><code>docs/monitoring/slo-dashboard.md</code>؛ <code>production.py:84-96</code></td></tr>
+</tbody>
+</table>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul><li>Celery غير متزامن فعلاً وSentry tracing مفعَّل في الإنتاج (مؤكَّدان من المتغيّرات).</li><li>1.3 select/annotate لكلّ عرض و119 حارس استعلامات بنمط «صفّ مقابل ثلاثة» لا يتقادم؛ سجلّ تصدير خلفيّ بdedupe وسقف 3 صفوف وتنظيف.</li><li>104 فهرس مركّب و80 قيد فريد؛ WhiteNoise Brotli بتجزئة؛ حارس يمنع نموّ <code>HEAVY_IN_VIEWS</code>.</li></ul></div>
+<div class="box w"><h3>الضعف</h3><ul><li>لا مصدر لـp95 الإنتاج يُقرأ (SLO على الورق؛ سجلّ daphne بلا مدّة)؛ اختبار الحمل على قاعدة بلا طلبة.</li><li>29 + 35 تصديراً متزامناً داخل خيوط daphne التي تخدم WebSocket أيضاً؛ إعادة الحساب متزامنة.</li><li>اتّصال جديد لكلّ طلب بلا مجمّع ولا مهلة استعلام، وجلسات في DB.</li><li>توليد الحصص داخل أوّل طلب في اليوم (<code>operations/middleware.py:66-111</code>) وقفله يسقط إلى ذاكرة العمليّة إن سقط Redis.</li></ul></div>
+<div class="box o"><h3>الفرص</h3><ul><li><code>"pool": True</code> (psycopg3/Django 5.2) أو PgBouncer؛ <code>USE_REDIS_SESSIONS</code> و<code>DB_STATEMENT_TIMEOUT_MS</code> على الويب وحده: الأعلام موجودة بلا شيفرة.</li><li>طابور <code>EXPORT_JOB_QUEUE</code> وعامل ثانٍ؛ ترحيل <code>recalculate_full_class</code> إلى مهمّة.</li><li>حمل بطلبة مزروعين وحسابات متعدّدة قبل التشغيل؛ أرشفة الحضور سنويّاً (نحو مليون صفّ/سنة).</li></ul></div>
+<div class="box t"><h3>التهديدات</h3><ul><li>ذروة 07:00 (beat الغياب + توليد الحصص + رصد الحصّة الأولى) على نسخة ويب واحدة لم تُجرَّب بحمل حقيقيّ قطّ.</li><li>eager الصامت يحوّل العامل الميّت إلى طلبات معلّقة؛ نبضة GitHub بموثوقيّة 4–7%.</li><li>سقف CSS يُرفع كلّ مرّة بدل الخفض.</li></ul></div>
+</div>
+
+<h3>3.4 الأمن</h3>
+<table>
+<thead><tr><th>البند</th><th>الحالة</th><th>الدليل</th></tr></thead>
+<tbody>
+<tr><td>الرؤوس الحيّة</td><td><span class="ok">HSTS سنة + النطاقات الفرعيّة + preload؛ http→https 301؛ nosniff؛ X-Frame SAMEORIGIN؛ Referrer strict-origin-when-cross-origin؛ COOP same-origin؛ كوكي الجلسة وcsrftoken HttpOnly+Secure+SameSite=Lax</span>؛ <span class="bad">Permissions-Policy غائبة</span>؛ لا CORP</td><td class="ev">curl -D على الإنتاج؛ <code>production.py:170-174</code></td></tr>
+<tr><td>CSP الحيّة</td><td>مفروضة (ليست report-only) بـnonce للسكربت؛ <span class="mid">style-src 'unsafe-inline' (732 سمة style)؛ connect-src wss: ws: بلا نطاق؛ script-src يسمح jsdelivr وunpkg مع صفر مرجع لهما في القوالب؛ لا report-uri</span>؛ cdnjs أُزيلت منذ 10-21</td><td class="ev">curl؛ <code>production.py:366-392</code></td></tr>
+<tr><td>RBAC</td><td>101 قدرة؛ <code>@capability_required</code> 338 و<code>login_required</code> 397؛ حارس يمشي كلّ مسار (14 مفتوحاً بالتصميم مسمّى، 59 محروساً داخليّاً مسمّى)؛ CORS فارغ افتراضيّاً</td><td class="ev"><code>tests/test_every_route_is_guarded.py</code></td></tr>
+<tr><td>عزل المدرسة</td><td>59 سياسة RLS / 58 جدولاً مفعَّلاً / FORCE على جدول واحد؛ دور التطبيق بلا superuser ولا BYPASSRLS؛ <span class="ok">الإقلاع يُرفض في الإنتاج بلا كلمة سرّ الدور ويُشغَّل daphne والعامل والمجدوِل بالدور المقيَّد؛ المتغيّر مضبوط على الخدمات الثلاث</span>؛ <code>request.school</code> 214 مقابل <code>get_school()</code> مباشر 148؛ 422 من 609 ترشيحات بلا قيد مدرسة في السطر نفسه (شبكة الأمان RLS)</td><td class="ev"><code>scripts/railway-release.sh:24-46</code>؛ <code>railway-worker.sh:12-20</code>؛ <code>provision_rls_app_role.sql:31-34</code></td></tr>
+<tr><td>IDOR</td><td>ثغرة 10-21 (بحث المستخدمين بلا مرشّح مدرسة) <span class="ok">غير موجودة اليوم</span>: البحث العامّ مقيَّد (<code>core/views_search.py:80-90</code>)؛ بقايا: <code>parents/views.py:526</code> بحث بالرقم الشخصيّ عبر المدارس (مقصود، خلف قدرة إدارة الأهل)؛ <code>api/views.py:193,258</code> تمييز وجود لا تسريب</td><td class="ev">قراءة العروض</td></tr>
+<tr><td>المصادقة</td><td>12 خانة فأكثر + مدقّق قويّ + تدوير 90 يوماً؛ 10 محاولات/دقيقة لكلّ IP + قفل 5 محاولات؛ TOTP بوسيطَين؛ <span class="bad">لكن <code>TWO_FACTOR_REQUIRED_FOR_STAFF=false</code> مضبوط صراحةً على Railway (افتراض الشيفرة true) فالإلزام مطفأ في الإنتاج</span>؛ PBKDF2 بلا Argon2؛ نطاقات كبح DRF login/burst/sensitive معرَّفة بلا استعمال</td><td class="ev"><code>base.py:216</code>؛ أعلام Railway</td></tr>
+<tr><td>الحقن</td><td><code>.raw</code> 0 · <code>.extra</code> 0 · 7 تنفيذات منسَّقة كلّها معرِّفات مقتبسة؛ <span class="mid">5 مواضع <code>|safe</code> تحقن بيانات مهيكلة داخل <code>&lt;script&gt;</code> بأسماء طلبة بدل <code>json_script</code></span> (<code>student_affairs</code> نظرة الحضور :106-108، السلوك :78-81)</td><td class="ev">grep</td></tr>
+<tr><td>التبعيّات</td><td>147 حزمة مثبَّتة بالإصدار بلا بصمات؛ <span class="mid">12 تنبيه dependabot مفتوحاً كلّها Twisted 26.4.0 (6 عالية، 6 متوسّطة؛ 161 مغلقة)</span>؛ GHSA-q7qq-6mhp-9rc4 (تهريب طلبات في twisted.web) وحدها في مسار يستعمله daphne؛ 6 تجاهلات موثَّقة بمهلة 2026-11-14؛ 101 إجراء GitHub مثبَّت بالبصمة؛ فحص الشيفرة 0 تنبيه</td><td class="ev"><code>gh api dependabot/alerts</code>؛ <code>quality.yml</code></td></tr>
+<tr><td>واجهة الإدارة</td><td><code>/admin/</code> 302 إلى باب المنصّة (TOTP والقفل)؛ 24 صنفاً من 140 مُنطاقاً بالمدرسة؛ مسار افتراضيّ بلا قائمة IP</td><td class="ev">curl؛ <code>core/admin.py</code></td></tr>
+<tr><td>رفع الملفّات</td><td>10 حقول: 3 بمدقّق النوع، 7 بلا مدقّق؛ أسماء أصليّة؛ تخزين كائنات خاصّ بروابط موقَّعة ساعةً (مخفِّف)</td><td class="ev">قراءة النماذج</td></tr>
+<tr><td>السجلّات والتدقيق</td><td>AuditLog محصَّن (لا حذف ولا تعديل، 162 موضع كتابة) بتمويه الأسماء؛ مرشّح يخفي الهويّة والهاتف والبريد لا الأسماء؛ <code>/metrics</code> 403 بقائمة IP</td><td class="ev"><code>core/models/audit.py:184</code></td></tr>
+<tr><td>CI</td><td>pip-audit بمصدرَين + bandit (HIGH) + <code>check --deploy</code> تحجب؛ detect-secrets بخطّ أساس 26 ملفّاً؛ لا CodeQL ولا semgrep في المستودع؛ حارس غيت خطّاف أداة لا خطّاف git</td><td class="ev"><code>security-scan.yml</code>؛ <code>quality-gate.yml</code></td></tr>
+</tbody>
+</table>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul><li>RLS بهويّة من دور القاعدة وإقلاع مغلق عند الفشل على الخدمات الثلاث: مؤكَّد من السكربتات ومن متغيّرات Railway معاً.</li><li>CSP مفروضة بnonce وHSTS preload وCORS فارغ: مؤكَّدة حيّاً؛ schema/redoc صارا 401 (كانا مفتوحَين في 10-21).</li><li>678 اختباراً أمنيّاً؛ حارس كلّ مسار؛ إجراءات GitHub بالبصمة؛ تدقيق محصَّن بتمويه PII.</li></ul></div>
+<div class="box w"><h3>الضعف</h3><ul><li>إلزام المصادقة الثنائيّة للكادر مطفأ في الإنتاج بالإعداد؛ Permissions-Policy غائبة؛ unsafe-inline وws واسعة.</li><li>5 حقن بيانات بـ<code>|safe</code> داخل سكربت؛ 116 صنف admin غير مُنطاق؛ 7 حقول رفع بلا مدقّق ولا سقف حجم عامّ.</li><li>لا بصمات حزم؛ لا Argon2؛ 148 استدعاء <code>get_school()</code> مباشراً؛ FORCE RLS على جدول واحد (المالك يتجاوز).</li><li>حارس git لا يُلزم من يعمل خارج أداة المساعد؛ صفر تنبيه فحص شيفرة قد يعني «غير مفعَّل».</li></ul></div>
+<div class="box o"><h3>الفرص</h3><ul><li>ثلاث ساعات عمل تغلق أربعة بنود: <code>json_script</code> في 5 مواضع، ترويسة Permissions-Policy، تضييق connect-src إلى مضيف المنصّة، حذف سماحات CDN الميّتة.</li><li>تشغيل <code>TWO_FACTOR_REQUIRED_FOR_STAFF</code> بعد تهيئة الكادر (قرار صلاحيّة للمالك).</li><li>CodeQL ملفَّ سير عمل؛ بصمات الحزم؛ حارس نطاق لأصناف admin؛ نقل 732 سمة style إلى أصناف ثمّ إزالة unsafe-inline.</li></ul></div>
+<div class="box t"><h3>التهديدات</h3><ul><li>انقضاء مهلة Twisted (2026-11-14) بلا إصدار نهائيّ، والتخفيف مبنيّ على سلوك وكيل غير مقيس.</li><li>بيئة الاختبار تُطفئ القفل والثنائيّة وCSP فتبقى اختباراتها المخصّصة الحارس الوحيد؛ حسابات موظّفين موروثة في admin (129 تاريخيّاً منها 9 أولياء).</li></ul></div>
+</div>
+
+<h3>3.5 PDPPL (القانون 13/2016)</h3>
+<table>
+<thead><tr><th>المادّة</th><th>المطلوب</th><th>الحالة</th><th>الدليل</th></tr></thead>
+<tbody>
+<tr><td>م.4 الموافقة</td><td>معالجة بموافقة أو غرض مشروع</td><td class="mid">جزئيّ: موافقة الوليّ على 7 أنواع إشعارات + موافقة الدواء؛ لا إشعار معالجة عند الدخول</td><td class="ev"><code>core/models/audit.py::ConsentRecord</code>؛ <code>clinic/models.py:230</code></td></tr>
+<tr><td>م.5 السحب والمحو والتصحيح</td><td>آليّات</td><td class="ok">قائم: withdraw، ErasureRequest (الوليّ لأبنائه)، تصحيح الجوّال</td><td class="ev"><code>api/views_erasure.py</code>؛ <code>governance/erasure_service.py</code></td></tr>
+<tr><td>م.6 الاطّلاع ونسخة البيانات</td><td>«تصدير بياناتي»</td><td class="bad">غائب (0 تنفيذ)</td><td class="ev">grep</td></tr>
+<tr><td>م.9 الإخطار قبل المعالجة</td><td>إشعار خصوصيّة ظاهر</td><td class="bad">مسوّدة v0.1 غير معروضة (0 قالب)</td><td class="ev"><code>docs/privacy/privacy_notice_ar.md:3</code></td></tr>
+<tr><td>م.10 الاحتفاظ</td><td>لا أطول من الغرض</td><td class="ok">14 قاعدة أسبوعيّاً، 730 يوماً (مضبوط في Railway)، 25 اختباراً؛ <span class="mid">AuditLog يحفظ IP والمتصفّح إلى الأبد</span></td><td class="ev"><code>governance/retention.py</code>؛ <code>core/models/audit.py:238</code></td></tr>
+<tr><td>م.11 التدقيق</td><td>سجلّ وحرّاس</td><td class="ok">9 أفعال منها view وexport؛ زناد ثبات في القاعدة؛ 44 <code>log_export</code> في 21 ملفّاً بحارس يفشل لمصدِّر بلا تدقيق</td><td class="ev"><code>core/audit_export.py</code>؛ <code>tests/test_national_id_never_bulk.py:222</code></td></tr>
+<tr><td>م.13 الاحتياطات</td><td>تشفير وعزل</td><td class="mid">31 حقلاً Fernet + 7 أعمدة ثلاثيّة؛ RLS؛ <span class="bad">الرقم الشخصيّ والجوّال والبريد والجنسيّة نصّ صريح في CustomUser</span>؛ ADR-0010 مقترح (357 إشارة للصريح في 90 ملفّاً)؛ HMAC بمفتاح Fernet نفسه بلا مفتاح قديم</td><td class="ev"><code>core/models/user.py:35-70</code>؛ <code>docs/adr/0010-encrypt-national-id-phone.md</code></td></tr>
+<tr><td>م.14 إخطار الخرق</td><td>إعلام الفرد والجهة</td><td class="ok">تطبيق breach بمهلة 72 ساعة ومهلة الأفراد وتنبيهات مسبقة؛ ≥118 اختباراً</td><td class="ev"><code>breach/services.py</code></td></tr>
+<tr><td>م.15 النقل عبر الحدود</td><td>ضمانات موثَّقة</td><td class="bad">غير موثَّق: الويب EU West، حاوية النسخ <code>sjc</code> (الولايات المتّحدة) «قرب القاعدة»، R2، GitHub artifact، Sentry، Twilio، SMTP Gmail افتراضاً؛ DPIA = 0 وثيقة؛ إقليم Postgres غير ظاهر في CLI</td><td class="ev"><code>.railway/railway.ts:162</code>؛ <code>docs/deployment/railway_backup.md:16</code>؛ <code>railway status</code></td></tr>
+<tr><td>م.16 البيانات الخاصّة</td><td>تصريح وتشفير</td><td class="mid">العيادة مشفَّرة 12 حقلاً عدا <code>temperature</code> ورموز الخدمة؛ لا توثيق تصريح</td><td class="ev"><code>clinic/models.py:45-126</code></td></tr>
+<tr><td>م.17 الأطفال</td><td>إشعار وموافقة الوليّ</td><td class="mid">بوّابة الموافقة لمسارات <code>/parents/</code> فقط؛ لا إشعار عند دخول الطالب</td><td class="ev"><code>core/parent_consent.py:30-37</code></td></tr>
+</tbody>
+</table>
+<p class="small">أعداد أخرى: اختبارات الخصوصيّة 53 ملفّاً/603 دوالّ · Sentry <code>send_default_pii=False</code> + <code>before_send</code> بأربعة أنماط · مرشّح السجلّات 3 أنماط إنتاجاً فقط ولا يقنّع الأسماء · 0 سطر logger بقيمة شخصيّة · النسخ gpg AES-256 إلى حاوية Railway + R2 + artifact، دورة R2 400 يوماً، <code>FERNET_OLD_KEYS</code> غير مضبوط (لم يُدوَّر المفتاح بعد) · على جهاز التطوير: <code>backups/</code> 265 MB (منها 17.5 MB SQL صريح) و<code>data/</code> 31 MB فيه CSV كادر و77 شجرة عمل كلٌّ بنسخة قاعدة و<code>.env</code> بمفتاح Fernet بجوارها، كلّها خارج git · ملفّ xlsx وزاريّ متعقَّب خارج نطاق فاحص الأرقام.</p>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul><li>بنية تشفير موحَّدة fail-closed بتدوير مفاتيح مُحرَّس؛ تدقيق بزناد قاعدة يسجّل القراءة والتصدير؛ احتفاظ مرمَّز ومجدوَل؛ محو بقائمة صريحة؛ خرق بمهل.</li><li>603 اختبارات خصوصيّة و<code>check_personal_data</code> في prepush وCI؛ صفر CDN في القوالب؛ نسخ مشفَّرة باختبار استعادة.</li></ul></div>
+<div class="box w"><h3>الضعف</h3><ul><li>الهويّة الأساسيّة نصّ صريح رغم الكتابة المزدوجة؛ لا إشعار خصوصيّة معروض ولا حقّ اطّلاع ولا DPIA ولا سجلّ معالِجين.</li><li>بيانات شبه إنتاجيّة على جهاز التطوير بجوار المفتاح؛ <code>temperature</code> صريحة؛ المرشّح لا يحمي الأسماء.</li><li>اضطراب أرقام المواد في الوثائق (<code>data_retention.md</code>، <code>INCIDENT_RESPONSE.md</code>، <code>.env.example:58</code>).</li></ul></div>
+<div class="box o"><h3>الفرص</h3><ul><li>ADR-0010 المرحلة أ (مفتاح HMAC مستقلّ + تطبيع) ثمّ مرحلة الجوّال 2 المعلَّقة منذ 10-05.</li><li>عرض الإشعار في <code>consent.html</code> والدخول بعد اعتماد المالك/مسؤول الحماية؛ «تصدير بياناتي» على بنية <code>core/exports/</code> القائمة.</li><li>DPIA قصير يسرد المعالِجين الخمسة وأقاليمهم؛ تأكيد إقليم Postgres من لوحة Railway؛ قاعدة احتفاظ لـIP في AuditLog.</li></ul></div>
+<div class="box t"><h3>التهديدات</h3><ul><li>غرامات م.23–25 مع نقل غير موثَّق وبيانات أطفال وصحّة.</li><li>تسريب جهاز تطوير يحمل 77 نسخة قاعدة وSQL صريح ومفتاح Fernet في ملفّ واحد.</li><li>تدوير مفتاح خاطئ يُبطل بصمات HMAC فيمنع الدخول.</li></ul></div>
+</div>
+
+<h3>3.6 التشغيل</h3>
+<table>
+<thead><tr><th>المقياس</th><th>القيمة</th><th>النطاق والمصدر</th></tr></thead>
+<tbody>
+<tr><td>الخدمات</td><td>5: ويب (daphne، عمليّة واحدة، نسخة واحدة، EU West)، celery-worker (2)، celery-beat، Postgres 18، Redis 8.6 بأقراص؛ حاوية AAdocs</td><td><code>railway status --json</code></td></tr>
+<tr><td>نشرات الويب</td><td class="num">90 في 7 أيّام: 82 آليّة من روبوت طابور الدمج و8 بيد المالك؛ فاشلة 2؛ منهارة 0؛ 15 داخل نافذة الدوام؛ وسيط الدمج→النشر 14.4 دقيقة</td><td><code>railway deployment list</code> (7 أيّام)</td></tr>
+<tr><td>العامل والمجدوِل</td><td class="num">2 نشرات لكلٍّ في 7 أيّام، يدويّة؛ اليوم الثلاثة على الإيداع نفسه، وبقيّة الأسبوع ينحرف العامل</td><td>قائمة النشر لكلّ خدمة</td></tr>
+<tr><td>سجلّات الخدمات</td><td class="num">ويب: 5,052 سطر وصول في 4 نشرات، 5xx = 0، ERROR = 0؛ عامل: 92 مهمّة مستلَمة/93 ناجحة، 0 خطأ؛ مجدوِل: 0 خطأ؛ آخر نبضة 114 ث</td><td><code>railway logs</code></td></tr>
+<tr><td>نقاط الصحّة</td><td><code>/health/</code> DB+cache+static+commit (503 عند عطب)؛ <code>/ready/</code> DB؛ <code>/status/</code> و<code>/health/worker/</code> خلف قيد؛ <code>/metrics</code> بقائمة IP</td><td>curl؛ <code>core/health.py</code></td></tr>
+<tr><td>المراقبة</td><td class="num">مراقب Sentry كلّ 60 ث على الجذر (من تعليق السير؛ السجلّ يظهر طلباً كلّ دقيقة على <code>/</code> و<code>/auth/login/</code>)؛ GitHub cron بوتيرة فعليّة 6.5% (44 من 672) و4.5% (45 من 1008)؛ الإنذارات قضايا GitHub فقط</td><td><code>gh run list</code> (7 أيّام)</td></tr>
+<tr><td>الكناري بعد النشر</td><td class="num">86 نجاح، 2 فشل، 5 ملغاة، 107 متخطّاة (بيئات غير الويب)</td><td><code>gh run list</code></td></tr>
+<tr><td>النسخ والاستعادة</td><td class="num">يوميّ: 33 من 34 (فشل واحد بسبب سرّ خارجيّ، أُعيد بعد 3.5 ساعة)؛ آخر نسخة 15.19 MB مشفَّرة؛ تمرين استعادة 8 من 8 أسبوعيّاً <span class="mid">على قاعدة مؤقّتة في CI فقط</span>؛ RPO 24 ساعة؛ RTO غير معرَّف</td><td><code>backup.yml</code>؛ <code>backup-restore-test.yml</code> (30 يوماً/8 أسابيع)</td></tr>
+<tr><td>التراجع</td><td class="bad"><code>rollback.yml</code> 0 تشغيل منذ إنشائه؛ لا رمز Railway في الأسرار؛ CLI بلا أمر تراجع؛ المالك منع التجربة على الإنتاج 10-17</td><td>قائمة التشغيلات؛ <code>docs/deployment/runbook.md §4</code></td></tr>
+<tr><td>الهجرات</td><td class="num">429 ملفّاً (roadmap 85 هجرة بيانات)؛ تُطبَّق مرّة قبل تحويل الحركة والنسخة القديمة تخدم أثناءها (توسيع ثمّ تقليص)؛ حرّاس التصادم والتوقيت (معلوماتيّ) والفحص المسبق</td><td><code>scripts/railway-predeploy.sh</code></td></tr>
+<tr><td>الحوادث</td><td class="num">تحليل واحد (2026-04-06)؛ 09-17 (3.5 ساعة) بلا تحليل؛ <span class="bad">10-22: فشل نشر صباحاً ثمّ سقوط 13:26–18:29 ونبضة متوقّفة، قضيّة توافر بقيت 5س3د، بلا توثيق</span>؛ قضايا فشل نشر آليّة 14 في 30 يوماً</td><td><code>gh issue list</code>؛ <code>docs/postmortems/</code></td></tr>
+<tr><td>الوثائق مقابل الواقع</td><td>runbook يذكر Hobby وgunicorn وwebhook أُزيل؛ بيانات النشر تُعلن Pro؛ رأس <code>deploy-railway.yml</code> «يدويّ منذ 09-18» بينما الويب آليّ؛ <code>railway.ts</code> يعلن خدمة نسخ غير موجودة ولا يذكر حاوية AAdocs؛ <code>APP_VERSION=v5.4</code> في Railway مقابل 5.5 في الشيفرة</td><td>مقارنة</td></tr>
+<tr><td>«نشر-عاجل»</td><td class="num">41 من 110 طلباً (37%) في 7 أيّام؛ 29 دُمجت وقت الدوام كلّها بالوسم؛ لا أثر لدفعتَي 14:30/19:00</td><td><code>gh pr list</code></td></tr>
+<tr><td>ما قبل الإنتاج</td><td>لا بيئة تجريبيّة على Railway؛ <code>settings/staging.py</code> غير مستعمل؛ المعاينة 8500 محلّيّة</td><td><code>railway status</code></td></tr>
+</tbody>
+</table>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul><li>مرحلة ما قبل النشر ترفض الإقلاع عند الخلل (هجرات وRLS)؛ كناري يقارن الإيداع ويرسم صفحة حقيقيّة بعد كلّ نشر.</li><li>نسخ مشفَّر يوميّ بتمرين استعادة أسبوعيّ ناجح 8 مرّات؛ سجلّات خالية من الأخطاء في الخدمات الثلاث؛ الإنتاج مطابق لـmain (كان متأخّراً 14 إيداعاً في 10-21).</li><li>اختبارات تضمن صدق ادّعاءات المراقبة (<code>test_ci_gates_are_honest</code>، <code>test_report_only_jobs_are_bounded</code>).</li></ul></div>
+<div class="box w"><h3>الضعف</h3><ul><li>لا تراجع مجرَّب؛ لا بيئة تجريبيّة؛ نسخة ويب واحدة؛ العامل يُنشر يدويّاً فينحرف.</li><li>مراقبة ثانويّة بوتيرة 4–7% وتنبيه بلا قناة بشريّة؛ SLO والسجلّات المهيكلة وGrafana على الورق.</li><li>37% من الطلبات «نشر-عاجل» و15 إعادة تشغيل وقت الدوام؛ وثائق تناقض الواقع؛ حادثتان كبيرتان بلا تحليل.</li></ul></div>
+<div class="box o"><h3>الفرص</h3><ul><li>تجربة تراجع بالتحقّق فقط ثمّ تراجع فعليّ بعد الدوام بإذن المالك، ورمز Railway في أسرار GitHub.</li><li>قناة بشريّة (بريد/محادثة) من Sentry وقضايا GitHub؛ نشر العامل والمجدوِل مع الويب أو حارس يقارن الإيداعات الثلاثة.</li><li>مطابقة <code>railway.ts</code> بالواقع قبل أيّ <code>config apply</code>؛ تحليل 09-17 و10-22؛ تقرير أسبوعيّ لنسبة «نشر-عاجل».</li></ul></div>
+<div class="box t"><h3>التهديدات</h3><ul><li>انقطاع GitHub يعطّل النشر والتراجع معاً؛ سقوط سرّ القاعدة العامّ يوقف النسخ بصمت.</li><li>حمولة حقيقيّة لم تُجرَّب على نسخة واحدة؛ كلفة خروج البيانات والخطّة غير مرئيّة.</li></ul></div>
+</div>
+
+<h3>3.7 صحّة الشيفرة</h3>
+<table>
+<thead><tr><th>المقياس</th><th>القيمة</th><th>المصدر</th></tr></thead>
+<tbody>
+<tr><td>الحجم</td><td class="num">163,479 سطر بايثون تطبيق في 873 ملفّاً (operations 44k، core 34.5k)؛ 429 هجرة؛ 163 نموذجاً؛ 390 قالباً؛ 532 مساراً</td><td><code>git ls-files</code> + wc</td></tr>
+<tr><td>الاختبارات</td><td class="num">848 ملفّاً، 10,434 دالّة، 187,577 سطراً (1.15 : 1)؛ e2e Playwright 63؛ على PostgreSQL في CI (4 شظايا بأوزان junit)</td><td>grep؛ <code>testing.py</code>؛ <code>quality-gate.yml:68-181</code></td></tr>
+<tr><td>التغطية</td><td class="num">عتبة 70 وحيدة؛ آخر رقم مسجَّل نحو 75% (09)؛ لا قراءة حديثة</td><td><code>pyproject.toml:130</code></td></tr>
+<tr><td>الحرّاس</td><td class="num">166 ملفّ حراسة من 845 (20%)؛ 10 سقّاطات؛ 12 وظيفة حاجبة في بوّابة الجودة بحكم <code>ci_needs_gate.py</code>؛ 101 وثيقة ثوابت</td><td><code>tests/</code>؛ <code>docs/governance/guards/</code></td></tr>
+<tr><td>الطبقات</td><td class="num">189 عرضاً فوق السقف (60 سطراً/5 ORM) من 743 (25.4%): 201 (10-01) → 195 (10-13) → 189؛ ORM فوق السقف 2,742 → 2,560؛ 0 زيادة في 13 إيداعاً</td><td><code>tests/layering_baseline.json</code> + <code>git log -p</code></td></tr>
+<tr><td>أكبر الملفّات</td><td class="num"><code>student_affairs/views.py</code> 2,818 · <code>operations/views_schedule.py</code> 1,430 · <code>reports/services.py</code> 1,439؛ 11 ملفّاً فوق 1000 (مسجَّلة)، 89 فوق 500</td><td>wc</td></tr>
+<tr><td>التعقيد والأنواع</td><td class="num">radon: 58 دالّة D، 0 E/F؛ 4 عند CC=30 على حافّة السقف؛ mypy سقّاطة 1,165 خطأً في 121 ملفّاً؛ noqa 189؛ type: ignore 119؛ TODO 9</td><td>radon 6.0.1؛ <code>mypy_ratchet</code></td></tr>
+<tr><td>الاتّجاه (14 يوماً)</td><td class="num">240 إيداعاً؛ 92 تمسّ شيفرة التطبيق وكلّها مع اختبارات؛ 100 اختبارات وحرّاس فقط؛ 36 هجرات؛ إصلاح بعد الدمج 21 (9%)؛ 0 revert</td><td><code>git log origin/main</code></td></tr>
+<tr><td>JavaScript</td><td class="num">28 ملفّاً، 6,430 سطراً، 574 KB (44% بائع)؛ 0 اختبار وحدة؛ لا مدقّق</td><td><code>static/js/</code>؛ <code>package.json</code></td></tr>
+<tr><td>مخلّفات</td><td>16 مدخلاً غير متعقَّب في الجذر (صور 3.4 MB، tmp 17 MB، dumps 0 بايت)؛ <code>Dockerfile.backup</code> متعقَّب (#1247)؛ وثيقة CI تذكر 1,181 اختباراً و85%</td><td><code>git status</code></td></tr>
+</tbody>
+</table>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul><li>كثافة اختبار عالية على PostgreSQL؛ 166 حارساً يحوّل القرارات اللائحيّة والخصوصيّة والهويّة إلى اختبارات تحجب الدمج؛ بوّابة «صادقة».</li><li>كلّ إيداع شيفرة في الأسبوعين مع اختبار؛ الدَّين الطبقيّ يُسدَّد سقّاطةً بلا زيادة؛ 0 E/F و9 TODO.</li></ul></div>
+<div class="box w"><h3>الضعف</h3><ul><li>التغطية الفعليّة غير موثَّقة حديثاً والعتبة 70 تترك هامشاً يُخفي انحداراً.</li><li>189 عرضاً فوق السقف و11 ملفّاً فوق 1000 سطر و1,165 خطأ mypy؛ JS بلا اختبارات ولا مدقّق.</li><li>وثيقة استراتيجيّة CI متقادمة؛ مخلّفات في الجذر وملفّ Dockerfile.backup متعقَّب.</li></ul></div>
+<div class="box o"><h3>الفرص</h3><ul><li>نشر قراءة التغطية الليليّة في الخارطة أسبوعيّاً ورفع العتبة إلى 72–75 حين تثبت.</li><li>تفكيك <code>student_affairs/views.py</code> (24 بنداً) و<code>quality/views.py</code> (16) إلى selectors وservices؛ vitest/biome لستّة آلاف سطر JS.</li></ul></div>
+<div class="box t"><h3>التهديدات</h3><ul><li>importorskip 47 يُخطّي اختبارات المتصفّح محلّيّاً فيُكتشف فشلها في CI وحده.</li><li>36 إيداع هجرة في أسبوعين (85 لـroadmap) يرفع كلفة بناء قاعدة الاختبار وزمن CI؛ نحو 75 شجرة عمل محلّيّة تلوّث أيّ قياس لا يمرّ بـgit.</li></ul></div>
+</div>
+
+<h3>3.8 الخارطة والتسليم</h3>
+<table>
+<thead><tr><th>المقياس</th><th>القيمة</th><th>المصدر</th></tr></thead>
+<tbody>
+<tr><td>الدفتر</td><td class="num">763 بطاقة: published 587 · closed 75 · captured 51 · routed 24 · pushed 6 · deferred 6 · verified 5 · ready_for_review 3 · in_progress 2 · approved 2</td><td><code>ledger.py list</code></td></tr>
+<tr><td>زمن الدورة</td><td class="num">التقاط→نشر: وسيط 19.7 س، متوسّط 78.0 س (n=586)؛ توجيه→نشر وسيط 22.9 س؛ جاهز→اعتماد وسيط 0.2 س؛ نافذة 3 أيّام: 18 مدموجاً، وسيط 1.5 س، p90 18.5 س</td><td><code>ledger_lead_time.py</code>؛ <code>flow_metrics.py</code></td></tr>
+<tr><td>الراكد</td><td class="num">31 بطاقة بلا نشاط فوق 7 أيّام (captured 51 أقدمها 28.6 يوماً)</td><td><code>ledger_stale.py</code></td></tr>
+<tr><td>ما نُشر في أسبوعين بالنوع</td><td class="num">feature 49 · tooling 45 · tools 38 · ui 13 · defect 12 · security 11 · governance 11 · أداة 10 · tech-debt 10 · bug 10 · tool 9 · bugfix 6 ⇒ <span class="mid">أدوات وحوكمة 113 مقابل منتج 62 (1.8×)</span></td><td><code>ledger.py list</code> منذ 10-13</td></tr>
+<tr><td>العيوب والأمن منذ 10-13</td><td class="num">defect 12 منشورة + 1 موجَّهة؛ security 11 منشورة + 3 موجَّهة + 1 ملتقطة؛ bug 10 منشورة؛ bugfix 6 منشورة</td><td>الدفتر</td></tr>
+<tr><td>git main</td><td class="num">240 إيداعاً في 14 يوماً (17/يوم؛ الذروة 30 يوم 10-20، ثمّ 6 و6 في 10-25 و10-26)؛ 0 revert؛ الإنتاج مطابق للرأس</td><td><code>git log origin/main</code>؛ <code>/health/</code></td></tr>
+<tr><td>ما يتعطّل</td><td>بطاقة 500 واحدة على الإنتاج منذ 10-01 (W-20261010-038 طباعة الجدول، منشورة)؛ باقي «السقوط» عن 8500 وCI؛ الخارطة: المحجوب DBT-34 وN-095 وN-107 وMAE-04/06/12/13؛ مؤجَّل 6 منها 3 ميزات أدوار AC00</td><td>الدفتر؛ <code>roadmap/migrations/0028-0085</code></td></tr>
+</tbody>
+</table>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul><li>وسيط 19.7 ساعة من الالتقاط إلى النشر ونشر آليّ خلال 14 دقيقة من الدمج؛ 0 revert في الأسبوعين.</li><li>كلّ بطاقة بمواصفة ومصدر وملاحظات؛ 587 منشورة بأثر مرجعيّ.</li></ul></div>
+<div class="box w"><h3>الضعف</h3><ul><li>1.8× من العمل المنشور في أسبوعين أدوات وحوكمة لا منتج، بينما جهة المستفيد فارغة والإنتاج بلا مستخدم.</li><li>31 بطاقة راكدة؛ المتوسّط 78 ساعة بذيل طويل؛ 3 ميزات أدوار مؤجَّلة.</li></ul></div>
+<div class="box o"><h3>الفرص</h3><ul><li>تحويل الطاقة إلى الفجوات المقيسة في 3.1 (الأولياء، الطالب، الأدوار التسعة، الترفيع) بعد قرار التشغيل.</li></ul></div>
+<div class="box t"><h3>التهديدات</h3><ul><li>الهبوط من 30 إيداعاً يوميّاً إلى 6 قد يكون استقراراً أو إنهاكاً؛ لا يُحسم بلا مؤشّر استعمال.</li></ul></div>
+</div>
+
+<h3>3.9 مطابقة مصدر الحقيقة الوزاريّ</h3>
+<table>
+<thead><tr><th>المجال</th><th>مطابق</th><th>مخالف</th><th>غير مرمَّز</th><th>قرار مدرسة / غير مرجعيّ</th><th>md متقادم</th><th>أمثلة الدليل</th></tr></thead>
+<tbody>
+<tr><td>الحضور</td><td class="num">10</td><td class="num">1 + 1 جزئيّ</td><td class="num">3</td><td class="num">3</td><td class="num">3 ملفّات</td><td class="ev">عتبات 5·8·11·15 بـ<code>&gt;</code> في <code>operations/absence_policy.py</code>؛ 4 حصص؛ التأخّر 15 دقيقة وسلّم 7؛ المخالف: أيّام استدعاء ذوي الإعاقة تنقص «4»؛ غير المرمَّز: إحالات 3/4/14 يوماً، حصّتان عن بُعد، 3 حمراء؛ المتقادم: 7·10·13·15 و6·9·12·16 في <code>04_academic.md:67</code> و<code>05_admin…:210</code> و<code>compliance_audit_report.md:125</code> الذي يوصي بترميز رقم لا أصل له</td></tr>
+<tr><td>التقييم</td><td class="num">8</td><td class="num">0</td><td class="num">1</td><td class="num">2</td><td class="num">1</td><td class="ev">40/60 على 14/2018 في <code>core/domain/grades.py:115</code>؛ 50/100؛ الجبر <code>:236</code>؛ الدور الثاني ≤3 موادّ؛ الثاني عشر نهائيّ فقط؛ غير المرجعيّ: <code>GRADE_BANDS</code> و<code>LETTER_GRADES</code> (ملحق 4 غير مستخرَج)؛ المتقادم: <code>index.md:43</code> «لا كود لأيّهما»</td></tr>
+<tr><td>السلوك</td><td class="num">6</td><td class="num">1</td><td class="num">2</td><td class="num">4</td><td class="num">1</td><td class="ev">41 مخالفة (9·7·10·15) و17 حمراء و23 سلّماً في <code>behavior/conduct_2026.py</code> «سطراً بسطر»؛ المخالف: اسم 4-07 مكرَّر؛ غير المرمَّز: سقف الفصل المؤقّت، التظلّم (الدليل صامت فلا يُخترع)؛ غير المرجعيّ: قائمة <code>VIOLATIONS_2025</code> حيّة في <code>seed_default</code> وأعمدة نقاط خاملة</td></tr>
+<tr><td><span class="v">المجموع</span></td><td class="num v">24</td><td class="num v">3</td><td class="num v">6</td><td class="num v">9</td><td class="num v">5</td><td class="ev">PDF هو الحَكَم ولم يُقرأ؛ المطابقة لنسخة md</td></tr>
+</tbody>
+</table>
+<div class="grid">
+<div class="box s"><h3>القوّة</h3><ul><li>الأرقام الحاكمة مطابقة ومسنَدة بمادّة وصفحة في docstrings و37 اختباراً موسوماً [LEGAL]؛ قرارات المدرسة مفصولة عن النصّ بوسم وتاريخ؛ الحرمان «يُحسب ولا يُنفَّذ».</li></ul></div>
+<div class="box w"><h3>الضعف</h3><ul><li><code>sot_registry</code> (8 جداول) هيكل فارغ بلا بيانات ولا CodeLink ولا واجهة؛ <code>conduct_guide_verified_2026.md</code> أقوى تحقّق بصريّ متجاهَل في git وغير مدرج في index.</li><li>md متقادم في 5 مواضع يناقض الشيفرة الصحيحة؛ index يدّعي «15 ملفّاً حرفيّاً» والواقع 46 ونحو 55% ملخَّص؛ ملفّا <code>ext_*</code> فقط ولا أحد للطلبة.</li></ul></div>
+<div class="box o"><h3>الفرص</h3><ul><li>لقطة واحدة (الدليل 2026 §3.4 + قرار 14/2018) في السجلّ + CodeLink إلى <code>absence_policy</code> و<code>grades</code> و<code>conduct_2026</code> + اختبار يقارن <code>Threshold.value</code> بالثابت.</li><li>تنظيف 6·9·12·16 من 3 ملفّات؛ إغلاق بند 40/60 في سجلّ التعارضات بقرار المالك؛ ترميز 3 قواعد صغيرة أو توثيق إرجائها.</li></ul></div>
+<div class="box t"><h3>التهديدات</h3><ul><li>وكيل يقرأ <code>compliance_audit_report.md</code> بلا السجلّ يُفسد العتبات؛ تناقضات الدليل الداخليّة محسومة بترجيح الشيفرة لا بقرار مدوَّن؛ تعميم جديد لا يُكتشف أثره إلا يدويّاً.</li></ul></div>
+</div>
+
+<h2>4. مصفوفة المخاطر (الاحتمال × الأثر)</h2>
+<table>
+<thead><tr><th>#</th><th>الخطر</th><th>المحور</th><th>الاحتمال</th><th>الأثر</th><th>الدرجة</th><th>الدليل المقيس</th></tr></thead>
+<tbody>
+<tr class="lo"><td class="num">R1</td><td>المنصّة تُنشر ولا تُستعمل — <b>منتفٍ (تصويب 021)</b>: النافذة المقيسة عطلةٌ وإجازة؛ ما يبقى: 90 نشرة في الأسبوع فوق استعمالٍ يوميّ حقيقيّ (يُغطّيه R2)</td><td>1، 8</td><td>منتفٍ</td><td>—</td><td>مُلغى</td><td class="ev">أيّام الدوام 4–22 أكتوبر: 482 دخولاً / 16،611 طلباً مصادَقاً؛ 24–27 أكتوبر = عطلة وإجازة منتصف الفصل (021)</td></tr>
+<tr class="hi"><td class="num">R2</td><td>بيانات الهويّة والجوّال والبريد نصّ صريح + نسخ قاعدة ومفتاح على جهاز التطوير</td><td>5</td><td>متوسّط</td><td>حرج</td><td>حرج</td><td class="ev"><code>core/models/user.py:35-70</code>؛ ADR-0010 مقترح؛ <code>backups/</code> 265 MB</td></tr>
+<tr class="hi"><td class="num">R3</td><td>النقل عبر الحدود بلا DPIA ولا سجلّ معالِجين، وإقليم القاعدة غير مؤكَّد (حاوية النسخ في الولايات المتّحدة)</td><td>5</td><td>عالٍ (واقع قائم)</td><td>عالٍ (قانونيّ)</td><td>حرج</td><td class="ev"><code>railway.ts:162</code>؛ 0 وثيقة DPIA</td></tr>
+<tr class="hi"><td class="num">R4</td><td>التراجع غير مجرَّب + نسخة ويب واحدة + تنبيه بلا قناة بشريّة</td><td>6</td><td>متوسّط</td><td>عالٍ</td><td>عالٍ</td><td class="ev">rollback 0 تشغيل؛ سقوط 10-22 بقي 5 ساعات</td></tr>
+<tr class="hi"><td class="num">R5</td><td>المصادقة الثنائيّة للكادر مطفأة في الإنتاج بالإعداد</td><td>4</td><td>متوسّط</td><td>عالٍ</td><td>عالٍ</td><td class="ev"><code>TWO_FACTOR_REQUIRED_FOR_STAFF=false</code> على Railway</td></tr>
+<tr class="md"><td class="num">R6</td><td>Twisted 26.4.0: تهريب طلبات في مكوّن يستعمله daphne، التخفيف بالوكيل غير مقيس، مهلة 2026-11-14</td><td>4</td><td>منخفض–متوسّط</td><td>عالٍ</td><td>عالٍ</td><td class="ev">12 تنبيه dependabot؛ <code>quality.yml</code></td></tr>
+<tr class="md"><td class="num">R7</td><td>الإشعارات القانونيّة للأولياء (غياب، سلوك، عيادة) لا تصل: التجميد + لا مزوّد بريد أو رسائل</td><td>1، 9</td><td>مؤكَّد</td><td>عالٍ عند التشغيل</td><td>عالٍ</td><td class="ev"><code>PARENTS_FROZEN</code>؛ <code>EMAIL_BACKEND</code> غير مضبوط؛ Twilio غير مضبوط</td></tr>
+<tr class="md"><td class="num">R8</td><td>CSP تسمح بالأنماط الداخليّة وبالمقابس إلى أيّ مضيف + 5 حقن بيانات بـ<code>|safe</code> داخل سكربت + Permissions-Policy غائبة</td><td>4</td><td>منخفض</td><td>متوسّط–عالٍ</td><td>متوسّط</td><td class="ev">رؤوس الإنتاج؛ grep</td></tr>
+<tr class="md"><td class="num">R9</td><td>حمل حقيقيّ على نسخة واحدة: تصدير متزامن داخل daphne + اتّصال لكلّ طلب بلا مجمّع ولا مهلة + ذروة 07:00</td><td>3</td><td>متوسّط عند التشغيل</td><td>متوسّط</td><td>متوسّط</td><td class="ev"><code>HEAVY_IN_VIEWS</code> 29؛ <code>CONN_MAX_AGE=0</code></td></tr>
+<tr class="md"><td class="num">R10</td><td>«نشر-عاجل» على 37% وإعادة تشغيل وقت الدوام 15 مرّة في أسبوع: سبب حادثة 09-17 قائم عمليّاً</td><td>6</td><td>عالٍ</td><td>متوسّط (منخفض ما دام بلا مستخدمين)</td><td>متوسّط</td><td class="ev"><code>gh pr list</code>؛ قائمة النشر</td></tr>
+<tr class="md"><td class="num">R11</td><td>انحراف إصدار العامل عن الويب (نشر يدويّ مرّتين في الأسبوع)</td><td>6</td><td>عالٍ</td><td>متوسّط</td><td>متوسّط</td><td class="ev">قائمة النشر لكلّ خدمة</td></tr>
+<tr class="md"><td class="num">R12</td><td>md وزاريّ متقادم يوصي بترميز رقم لا أصل له، والسجلّ فارغ</td><td>9</td><td>متوسّط</td><td>متوسّط</td><td>متوسّط</td><td class="ev"><code>compliance_audit_report.md:125</code></td></tr>
+<tr class="lo"><td class="num">R13</td><td>CSS على سقفه وLCP الجوال 5.4–6.6 ث</td><td>2</td><td>عالٍ</td><td>منخفض–متوسّط</td><td>متوسّط</td><td class="ev"><code>test_css_budget.py</code>؛ <code>lighthouse_baseline.json</code></td></tr>
+<tr class="lo"><td class="num">R14</td><td>الاختبارات تعكس أعلام الإنتاج (التجميد والحصر) فسلوك الإنتاج لهما غير مختبَر</td><td>1، 7</td><td>متوسّط</td><td>منخفض–متوسّط</td><td>منخفض</td><td class="ev"><code>testing.py:113,141</code></td></tr>
+<tr class="lo"><td class="num">R15</td><td>بلاطة درجات الطالب 403؛ 9 أدوار فارغة؛ 7 صفحات نائبة</td><td>1</td><td>مؤكَّد</td><td>منخفض الآن</td><td>منخفض</td><td class="ev"><code>reports/views.py:251</code></td></tr>
+</tbody>
+</table>
+<table class="matrix">
+<thead><tr><th></th><th>أثر منخفض</th><th>أثر متوسّط</th><th>أثر عالٍ / حرج</th></tr></thead>
+<tbody>
+<tr><th>احتمال عالٍ / مؤكَّد</th><td class="lo">R15</td><td class="md">R10 · R11 · R13</td><td class="hi">R3 · R7 (R1 منتفٍ بتصويب 021)</td></tr>
+<tr><th>احتمال متوسّط</th><td class="lo">R14</td><td class="md">R9 · R12</td><td class="hi">R2 · R4 · R5</td></tr>
+<tr><th>احتمال منخفض</th><td></td><td class="md">R8</td><td class="md">R6</td></tr>
+</tbody>
+</table>
+
+<h2>5. التوصيات (مرتّبة بالأثر إلى الكلفة)</h2>
+<p class="small">الكلفة تقدير جهد تنفيذ؛ «قرار» يعني أنّ العائق قرار للمالك لا شيفرة (D-130م: صلاحيّة أو سياسة أو إنتاج خارج المعتمَد). لا بطاقات تُفتح من هذا التقرير إلا بأمر المالك عبر 0101.</p>
+<table>
+<thead><tr><th>#</th><th>التوصية</th><th>الموضع</th><th>الكلفة</th><th>الأثر</th></tr></thead>
+<tbody>
+<tr><td class="num">1</td><td>تشغيل إلزام المصادقة الثنائيّة للكادر في الإنتاج بعد تهيئة الرموز للمستخدمين (الشيفرة جاهزة؛ العلم وحده مطفأ)</td><td>متغيّر <code>TWO_FACTOR_REQUIRED_FOR_STAFF</code> على خدمة الويب</td><td>ساعة + تهيئة الكادر؛ قرار صلاحيّة</td><td>عالٍ (R5)</td></tr>
+<tr><td class="num">2</td><td>(صُوِّب بـ021) لا قرارَ تشغيلٍ مطلوب — المنصّة مستعمَلة؛ يُعتمَد مؤشّرُ حركةٍ أسبوعيّ من سجلّ Railway لأيّام الدوام وحدَها مع تقويم الإجازات، ويُحكَم به من أسبوع العودة 1–5 نوفمبر</td><td>0101 والمالك</td><td>صغيرة (سكربت قراءة)</td><td>متوسّط (R1 منتفٍ)</td></tr>
+<tr><td class="num">3</td><td>استبدال <code>|safe</code> بـ<code>json_script</code> في المواضع الخمسة؛ إضافة ترويسة Permissions-Policy؛ تضييق <code>connect-src</code> إلى <code>wss://</code> مضيف المنصّة؛ حذف سماحات jsdelivr وunpkg وfonts الميّتة من CSP</td><td><code>student_affairs</code> و<code>behavior</code> قوالب النظرة؛ <code>production.py:170,366</code></td><td>3 ساعات</td><td>متوسّط–عالٍ (R8)</td></tr>
+<tr><td class="num">4</td><td>منح الطالب قدرة الكشوف مقيَّدةً بذاته وإضافة اختبار يفتح كلّ بلاطة من كلّ لوحة دور</td><td><code>core/capabilities/assessment.py:55</code>؛ <code>tests/test_default_landing.py</code></td><td>ساعتان</td><td>متوسّط (R15)</td></tr>
+<tr><td class="num">5</td><td>قناة تنبيه بشريّة: إنذارات Sentry وقضايا فشل النشر والتوافر إلى بريد المالك أو محادثة، وتقليل ضجيج قضايا النشر المتتابع</td><td><code>docs/monitoring/alerting-setup.md</code>؛ أسرار GitHub</td><td>نصف يوم</td><td>عالٍ (R4)</td></tr>
+<tr><td class="num">6</td><td>تجربة تراجع: أوّلاً بالتحقّق فقط، ثمّ تراجع فعليّ على نشرة بعد 19:00 بإذن المالك، ووضع رمز Railway في أسرار GitHub، وتوثيق RTO المقيس</td><td><code>rollback.yml</code>؛ <code>runbook.md §4</code>؛ 0601</td><td>نصف يوم؛ قرار إنتاج</td><td>عالٍ (R4)</td></tr>
+<tr><td class="num">7</td><td>تنظيف جهاز التطوير من نسخ القاعدة الصريحة (SQL 17.5 MB، dumps، 77 نسخة) وتوثيق أصلها، وسياسة احتفاظ محلّيّة، وفصل <code>.env</code> عن البيانات</td><td>خارج git: <code>backups/</code>، <code>data/</code>، <code>.claude/worktrees</code></td><td>نصف يوم؛ قرار المالك (حذف دائم)</td><td>عالٍ (R2)</td></tr>
+<tr><td class="num">8</td><td>DPIA قصير: سجلّ المعالِجين الستّة وأقاليمهم، تأكيد إقليم Postgres من لوحة Railway، قرار الاستضافة، وتثبيت أرقام مواد PDPPL في الوثائق الثلاث</td><td><code>docs/privacy/</code></td><td>يوم؛ قرار المالك</td><td>عالٍ قانونيّاً (R3)</td></tr>
+<tr><td class="num">9</td><td>سياسة «نشر-عاجل»: تقرير أسبوعيّ بنسبته وهدف ≤10%، والعودة لدفعتَي 14:30 و19:00 قبل الإطلاق للمستخدمين</td><td>الحوكمة 0301؛ <code>deploy_window.py</code></td><td>ساعات</td><td>متوسّط (R10)</td></tr>
+<tr><td class="num">10</td><td>نشر العامل والمجدوِل آليّاً مع الويب، أو حارس في الكناري يقارن إيداع الخدمات الثلاث ويفتح قضيّة عند الانحراف</td><td><code>railway.ts</code>؛ <code>post-deploy-canary.yml</code></td><td>يوم</td><td>متوسّط–عالٍ (R11)</td></tr>
+<tr><td class="num">11</td><td>مطابقة <code>railway.ts</code> بالواقع (حاوية AAdocs، خدمة النسخ المعلَنة)، وتحديث runbook (Pro، daphne، النشر الآليّ) وتحليل حادثتَي 09-17 و10-22</td><td><code>.railway/</code>؛ <code>docs/deployment/</code>؛ <code>docs/postmortems/</code></td><td>يوم</td><td>متوسّط</td></tr>
+<tr><td class="num">12</td><td>نشر قراءة التغطية الليليّة في الخارطة أسبوعيّاً، ورفع <code>fail_under</code> تدريجيّاً إلى 75؛ تحديث خريطة المنصّة (37 دوراً، 28 تطبيقاً، 270/480 KB) ووثيقة CI</td><td><code>pyproject.toml</code>؛ <code>.claude/skills/schoolos-platform</code></td><td>ساعات</td><td>متوسّط</td></tr>
+<tr><td class="num">13</td><td><code>"pool": True</code> أو PgBouncer، و<code>DB_STATEMENT_TIMEOUT_MS</code> على خدمة الويب وحدها، و<code>USE_REDIS_SESSIONS</code>؛ ثمّ قياس بحمل بطلبة مزروعين وحسابات متعدّدة</td><td><code>production.py:23-41,198</code>؛ <code>tests/loadtest/</code></td><td>يوم</td><td>متوسّط (R9)</td></tr>
+<tr><td class="num">14</td><td>مزوّد بريد للإنتاج ثمّ قرار فكّ تجميد الأولياء (D-268م) مع عرض إشعار الخصوصيّة بعد اعتماده</td><td><code>EMAIL_BACKEND</code>؛ <code>PARENTS_FROZEN</code>؛ <code>templates/parents/consent.html</code></td><td>يوم؛ قرار المالك</td><td>عالٍ عند التشغيل (R7)</td></tr>
+<tr><td class="num">15</td><td>Twisted: ترقية عند صدور 26.10 النهائيّ قبل 2026-11-14، أو قياس سلوك وكيل Railway تجاه تهريب الطلبات وتوثيقه</td><td><code>requirements.txt</code>؛ <code>quality.yml</code></td><td>ساعات</td><td>متوسّط (R6)</td></tr>
+<tr><td class="num">16</td><td><code>&lt;caption class="sr-only"&gt;</code> مركزيّاً في وسم <code>table-wrap</code>، وتوسيع axe إلى رحلات الأدوار الخمس القائمة، وإلغاء معالج خطأ HTMX المكرَّر</td><td><code>core/templatetags/ui.py</code>؛ <code>tests/test_a11y_live_pages.py</code>؛ <code>app.js:162</code></td><td>يوم</td><td>متوسّط</td></tr>
+<tr><td class="num">17</td><td>تحميل لقطة مصدر الحقيقة (الدليل 2026 §3.4 + 14/2018) في <code>sot_registry</code> مع CodeLink واختبار يقارن العتبات بالثوابت؛ تنظيف 6·9·12·16 من 3 ملفّات؛ إغلاق بند 40/60 بقرار المالك؛ إدراج conduct_guide_verified في index</td><td><code>AAdocs/ministry_data/</code>؛ <code>sot_registry/</code></td><td>يومان</td><td>متوسّط (R12)</td></tr>
+<tr><td class="num">18</td><td>ADR-0010: المرحلة أ (مفتاح HMAC مستقلّ + تطبيع) ثمّ مرحلة الجوّال 2 ثمّ تقليص الرقم الشخصيّ بتوسيع ثمّ تقليص</td><td><code>core/models/user.py</code>؛ <code>core/models/crypto.py</code>؛ هجرات</td><td>3–5 أيّام؛ اعتماد المالك (هجرات)</td><td>عالٍ (R2)</td></tr>
+<tr><td class="num">19</td><td>ترحيل إعادة حساب الشعبة والتصدير الأعلى استعمالاً إلى سجلّ التصدير/Celery مع طابور <code>EXPORT_JOB_QUEUE</code> وعامل ثانٍ</td><td><code>assessments/services.py:562</code>؛ <code>core/exports/</code></td><td>3–5 أيّام</td><td>متوسّط (R9)</td></tr>
+<tr><td class="num">20</td><td>LCP الجوال: تأجيل Chart.js أو رسم خادميّ، تقليص الخطوط، وخفض سقف CSS بدل رفعه</td><td><code>templates/base/base.html</code>؛ <code>tests/web_vitals.py</code></td><td>2–3 أيّام</td><td>متوسّط (R13)</td></tr>
+<tr><td class="num">21</td><td>سدّ فجوات المستفيد تدريجيّاً: الأدوار التسعة الفارغة، الصفحات النائبة السبع، نموذج الحالة الإرشاديّة، تشغيل محرّك الحكم بمصدر إدخال، الترفيع ونهاية العام</td><td><code>core/capabilities/</code>؛ <code>academic_management/</code>؛ <code>assessments/verdict_engine.py</code></td><td>أسابيع؛ أولويّة بعد قرار التشغيل</td><td>عالٍ على المدى المتوسّط</td></tr>
+</tbody>
+</table>
+
+<h2>6. التقدير على سلّم 10-21 (للمقارنة لا للحكم)</h2>
+<table>
+<thead><tr><th>المحور</th><th>الوزن</th><th>10-21</th><th>10-23</th><th>10-27</th><th>سبب الحركة أو الثبات</th></tr></thead>
+<tbody>
+<tr><td>الأمن والامتثال</td><td class="num">20</td><td class="num">11</td><td class="num">11</td><td class="num">11</td><td>مكاسب مقيسة (RLS بدور التطبيق مؤكَّد على الخدمات الثلاث، IDOR مغلق، schema/redoc 401، CSP مفروضة حيّاً) تقابلها اكتشافات جديدة (2FA مطفأة في الإنتاج، Permissions-Policy غائبة) وثبات PII وDPIA</td></tr>
+<tr><td>جودة الشيفرة والاختبار</td><td class="num">15</td><td class="num">12</td><td class="num">12</td><td class="num">12</td><td>الحرّاس 166 وكلّ إيداع مع اختبار؛ التغطية الفعليّة ما زالت غير مقروءة</td></tr>
+<tr><td>المعمارية</td><td class="num">10</td><td class="num">6</td><td class="num">6</td><td class="num">6</td><td>الدَّين الطبقيّ ينقص (201 → 189، ORM −182) لكنّ أكبر ملفّ 2,818 سطراً كما هو</td></tr>
+<tr><td>الأداء والبيانات</td><td class="num">15</td><td class="num">8</td><td class="num">8</td><td class="num">9</td><td>حُسم أنّ Celery غير متزامن وSentry tracing مفعَّل في الإنتاج؛ التصدير المتزامن و<code>CONN_MAX_AGE=0</code> كما هما</td></tr>
+<tr><td>التجربة والوصول</td><td class="num">15</td><td class="num">10</td><td class="num">10</td><td class="num">10</td><td>axe 6% → 7.5%؛ LCP وcaption وأنماط التخطيط كما هي</td></tr>
+<tr><td>تغطية المجال</td><td class="num">15</td><td class="num">8</td><td class="num">8</td><td class="num">8</td><td>العيادة اكتملت (إحالات، أدوية، موافقة)؛ الأولياء ومحرّك الحكم والترفيع كما هي؛ وصفر استعمال يُبقي القيمة الفعليّة غير مُثبَتة</td></tr>
+<tr><td>التسليم والتشغيل</td><td class="num">10</td><td class="num">6</td><td class="num">7</td><td class="num">7</td><td>الإنتاج مطابق للرأس والنشر آليّ (82/90)؛ التراجع غير مجرَّب والعامل ينحرف ولا قناة تنبيه</td></tr>
+<tr><td><span class="v">المجموع</span></td><td class="num v">100</td><td class="num v">61</td><td class="num v">62</td><td class="num v">63</td><td>«جيّد لمرحلة نموّ»؛ ما يرفعه إلى 75 ثلاثة قرارات لا شيفرة: التشغيل الفعليّ، المصادقة الثنائيّة، الاستضافة والـDPIA؛ ثمّ ADR-0010 والتراجع المجرَّب</td></tr>
+</tbody>
+</table>
+
+<h2>7. ما تغيّر منذ SWOT 2026-10-21</h2>
+<table>
+<thead><tr><th>البند في 10-21</th><th>الحالة في 10-27</th><th>الدليل</th></tr></thead>
+<tbody>
+<tr><td>#22 <code>CELERY_TASK_ALWAYS_EAGER</code> وقيمة الإنتاج غير معلومة</td><td class="ok">حُسم: <code>CELERY_ASYNC_ENABLED=true</code> على الخدمات الثلاث؛ الافتراض في الشيفرة يبقى خطراً كامناً</td><td class="ev"><code>railway variables</code></td></tr>
+<tr><td>#37 الإنتاج متأخّر 14 إيداعاً والنشر يدويّ منذ 09-18</td><td class="ok">الإنتاج يطابق <code>main</code>؛ الويب ينشر آليّاً عند كلّ دمج (82 من 90)</td><td class="ev"><code>/health/</code>؛ قائمة النشر</td></tr>
+<tr><td>#7 بحث المستخدمين بلا مرشّح مدرسة (IDOR)</td><td class="ok">مسارات البحث مقيَّدة بالمدرسة؛ بقيّتان مقصودتان ومبرَّرتان</td><td class="ev"><code>core/views_search.py:80-90</code></td></tr>
+<tr><td>#13 schema وredoc مفتوحان</td><td class="ok">كلاهما 401 بلا دخول</td><td class="ev">curl</td></tr>
+<tr><td>#8 ثلاث شبكات CDN في CSP</td><td class="mid">أُزيلت cdnjs؛ بقيت jsdelivr وunpkg بلا استعمال؛ unsafe-inline وws كما هما</td><td class="ev">رأس CSP الحيّ</td></tr>
+<tr><td>#38 متغيّرات S3</td><td class="ok">مغلق منذ 10-23 (#1223، #1243)؛ المتغيّرات مضبوطة على الخدمات الثلاث</td><td class="ev">Railway</td></tr>
+<tr><td>#35 العيادة بلا إحالات/دواء</td><td class="ok">الإحالات (#1234) وكتالوج الأدوية وموافقة الوليّ (W-20261020-036) مدموجة</td><td class="ev">الدفتر</td></tr>
+<tr><td>#17 الطبقات 189 من 549</td><td class="ok">189 من 743 بتعريف أوسع؛ على البسط 195 → 189 وORM −182 في أسبوعين</td><td class="ev"><code>layering_baseline.json</code></td></tr>
+<tr><td>#1 #2 #4 PII صريحة، النقل عبر الحدود، إشعار الخصوصيّة</td><td class="bad">بلا تغيير؛ ADR-0010 كُتب (10-22) ولم يُنفَّذ</td><td class="ev">المحور 5</td></tr>
+<tr><td>#32 #33 الأولياء مجمَّدون ومحرّك الحكم مطفأ</td><td class="bad">بلا تغيير، ومؤكَّد الآن من أعلام الإنتاج (البريد بلا مزوّد، Twilio غير مضبوط)</td><td class="ev">Railway</td></tr>
+<tr><td>#23 #24 التصدير المتزامن و<code>CONN_MAX_AGE=0</code></td><td class="bad">بلا تغيير</td><td class="ev">المحور 3</td></tr>
+<tr><td>#28 #29 CSS 469.7/470 KB وaxe 6%</td><td class="mid">السقف صار على المصغَّر 243/270 KB (رُفع 4 مرّات)؛ axe 7.5%</td><td class="ev">المحور 2</td></tr>
+<tr><td>#37 التراجع لم يُجرَّب</td><td class="bad">بلا تغيير؛ 0 تشغيل لسير التراجع</td><td class="ev"><code>gh run list</code></td></tr>
+<tr><td colspan="3"><span class="v">جديد في 10-27 (لم يذكره 10-21):</span> صفر حركة في 24–27 أكتوبر (عطلةٌ وإجازةُ منتصف الفصل — صُوِّب في 021) · إلزام 2FA مطفأ صراحةً في الإنتاج · Permissions-Policy غائبة · انحراف إصدار العامل · حادثة 10-22 (5 ساعات) بلا تحليل · «نشر-عاجل» 37% · نسخ قاعدة صريحة على جهاز التطوير · 12 تنبيه Twisted بمهلة 11-14 · بلاطة درجات الطالب 403 · <code>sot_registry</code> فارغ وmd يوصي برقم بلا أصل · <code>APP_VERSION=v5.4</code> مقابل 5.5 · <code>railway.ts</code> منحرف عن الواقع · الكناري والنسخ والليليّ كلّها خضراء 7 أيّام.</td></tr>
+</tbody>
+</table>
+
+<p class="small">ما لم يُقَس في هذا التقرير ويحتاج جلسةً أخرى أو أداةً: لوحات الأدوار الثمانية بالدخول على الإنتاج (إضافة Chrome غير متّصلة)، قارئ الشاشة وجهاز جوال حقيقيّ، p95 الخادم الحقيقيّ وأحجام الجداول وعدد الحسابات الفعّالة، نسبة التغطية الحاليّة، إقليم Postgres والحاوية، قضايا Sentry، PDF الوزاريّ كحَكَم. الملفّات الخامّ للقياس في مجلّد السكراتش الخاصّ بالجلسة 0111 ولا تحوي بيانات شخصيّة.</p>
+
+</body>
+</html>
