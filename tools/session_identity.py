@@ -188,7 +188,7 @@ def directory_lines(num: str | None = None) -> list[str]:
         import session_directory
 
         d = {k: v for k, v in session_directory.entries().items() if k in (num, "0101")}  # معرّفُ الجلسة نفسها و0101 فقط؛ لغيرهما session_directory.py (W-20261026-002)
-        out.append("[المراسلة بين الجلسات] قاعدةُ المالك ومتابعةُ الإحالة وعناوينُ الجلسات: `C:/Users/mesue/delivery_manager_work/role_cards/COMMON.md` قسم «المراسلة بين الجلسات» (اقرأه قبل أول إرسال). "
+        out.append("[المراسلة بين الجلسات] ما تريده من المالك يُرفع إلى 0101 وهي وحدَها تطرحه بأداة ask (D-495م)؛ قاعدةُ المالك ومتابعةُ الإحالة وعناوينُ الجلسات: `C:/Users/mesue/delivery_manager_work/role_cards/COMMON.md` قسم «المراسلة بين الجلسات» (اقرأه قبل أول إرسال). "
                    "المعرّفاتُ الحيّة (تتبدّل عند إعادة التشغيل؛ للتحقّق `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`): "
                    + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
     except Exception:  # noqa: BLE001

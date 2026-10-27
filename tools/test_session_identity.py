@@ -225,3 +225,13 @@ def test_longest_tree_wins_when_nested_entries_match(tmp_path):
     _session(tmp_path, "2", "local_2", "0420 · فرعيّة", r"C:\Users\mesue\delivery_manager_work\sub\deep")
     title, _ = si.app_title(r"C:\Users\mesue\delivery_manager_work\sub\deep\x", "", tmp_path)
     assert title == "0420 · فرعيّة"
+
+
+def test_owner_requests_go_through_0101_in_injection_and_common():
+    """W-20261027-010 (D-495م): ما يُراد من المالك يُرفع إلى 0101 وهي وحدها تطرحه بأداة ask؛ في الحقن وفي COMMON المولَّد."""
+    import render_role_cards
+
+    line = next(x for x in si.directory_lines("0301") if x.startswith("[المراسلة بين الجلسات]"))
+    assert "D-495م" in line and "0101" in line and "ask" in line
+    assert "[ما يُراد من المالك — D-495م]" in render_role_cards.COMMON_EXTRA
+    assert "بأداة ask" in render_role_cards.COMMON_EXTRA and "إذنُ المالك المباشر" in render_role_cards.COMMON_EXTRA
