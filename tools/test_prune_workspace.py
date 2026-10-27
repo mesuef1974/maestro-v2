@@ -6,11 +6,19 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 T = Path(__file__).resolve().parent
 sys.path.insert(0, str(T))
 import prune_workspace as pw  # noqa: E402
 
 OLD = time.time() - 10 * 86400
+
+
+@pytest.fixture(autouse=True)
+def _isolated_log(tmp_path, monkeypatch):
+    """يمنع الاختبارات من الكتابة في prune_log.jsonl الحيّ فتتّسخ الشجرة (W-20261027-035)."""
+    monkeypatch.setattr(pw, "LOG", tmp_path / "prune_log.jsonl")
 
 
 def mk(root: Path, card: str, head: str, files: dict, mtime: float):
