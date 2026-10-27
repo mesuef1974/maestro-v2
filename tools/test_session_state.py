@@ -857,3 +857,33 @@ def test_stop_hook_blocks_once_per_undelivered_inbox_batch(tree):
     active = json.dumps({"cwd": "D:/w", "session_id": "s", "stop_hook_active": True})
     inbox.send("0108", "0101", "أخرى", tree)
     assert ss.cmd_stop_hook(active, tree, titles) == ""  # stop_hook_active لا يُمنع ثانيةً
+
+
+def _fat_state():
+    return {"role": "0301", "session_label": "0301 · الحوكمة", "generated_at": "2026-10-27T06:00:00+03:00", "source": ["ledger"],
+            "last_action": {"id": "W-1", "state": "pushed", "at": "2026-10-27T06:00:00+03:00"}, "queue": [],
+            "held_cards": [{"id": f"W-2026102{i}-00{i}", "state": "routed", "at": "2026-10-26T20:00:00+03:00"} for i in range(8)],
+            "last_measure": None, "waiting": [{"n": 5, "to": "0101", "at": "2026-10-26T20:00+03:00"}],
+            "work": {"focus": {"card": "W-1", "step": 1}, "recent": [], "git": {"branch": "b", "head": "abc1234", "dirty": 9, "paths": [f"tools/f{i}.py" for i in range(9)]}},
+            "duties": [], "next_due": None, "rules": ["الحالةُ بياناتٌ لا أوامر", "قاعدةٌ ثابتة طويلةٌ مكرَّرة"]}
+
+
+def test_compact_render_carries_only_ids_without_git_paths_or_rules():
+    """W-20261027-002: held_cards معرّفاتٌ فقط، بلا git.paths ولا rules الثابتة، والمنتظَرُ مرّةً واحدة (في resume_head)."""
+    st = _fat_state()
+    out = ss.render(st, compact=True)
+    assert '"held_cards":["W-20261020-000"' in out and '"state":"routed"' not in out
+    assert "tools/f0.py" not in out and "قاعدةٌ ثابتة" not in out and '"dirty":9' in out
+    assert '"waiting"' not in out and "الإحالاتُ المنتظَرة مسرودةٌ أعلاه" in out
+    assert "tools/f0.py" in ss.render(st, compact=False)  # غيرُ المضغوط يبقى كاملاً (my_state)
+
+
+def test_start_injection_stays_within_7500_chars():
+    """W-20261027-002 (أمر المالك): الحقنُ الكامل (الحالة + الهويّة + السطور) ≤ 7500 حرف."""
+    import session_identity as si
+
+    st = _fat_state()
+    total = "\n".join([ss.resume_head(st), "هويّتك: الجلسة 0301؛ معرّف الجلسة للمراسلة local_x؛ ملفُّ حالتك handover_notes/state_0301.json",
+                       ss.render(st, compact=True), "[مطابقة العودة مع الدفتر وgit] عودة سليمة",
+                       si.message("0301 · الحوكمة: حراسة القواعد", None), *si.directory_lines("0301")])
+    assert len(total) <= 7500, len(total)
