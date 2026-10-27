@@ -742,11 +742,12 @@ class TestUnifiedGuardAndFocusRenewal:
         out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, ss.CLEAR_AT_TOKENS + 5000), tree, NOW)
         assert "كُتب طلبُ المسح" in out and ss.auto_clear_nums(tree, NOW) == {"0108"}
 
-    def test_no_declared_focus_still_blocks_auto_clear(self, tree, tmp_path):
+    def test_no_declared_focus_derives_from_held_card_and_requests_clear(self, tree, tmp_path):
+        """W-20261027-018: كان غيابُ focus يحجب المسحَ إلى الأبد (0426 و0601 عند 207 ألفاً)؛ يُشتقّ الآن من أحدث بطاقةٍ محجوزة."""
         ss.set_duties("0108", none=True, root=tree, now=NOW)
         ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
-        assert "سقط الحارسُ" in ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, ss.CLEAR_AT_TOKENS + 5000), tree, NOW)
-        assert ss.auto_clear_nums(tree, NOW) == set()
+        assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, ss.CLEAR_AT_TOKENS + 5000), tree, NOW)
+        assert ss.auto_clear_nums(tree, NOW) == {"0108"} and ss._load_focus("0108", tree) is not None
 
 
 def test_hook_does_not_repeat_identity_directory_lines(tree):
@@ -799,6 +800,77 @@ class TestSelfClearBlock:
     def test_below_threshold_stays_silent(self, tree):
         hook = self._setup(tree, 100_000)
         assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
+
+
+class TestDeriveFocus:
+    """W-20261027-018: جلسةٌ فوق العتبة تحجز بطاقاتٍ بلا focus معلَن: يُشتقّ التركيز من أحدث بطاقةٍ محجوزة فلا يُحجب المسحُ دائماً."""
+
+    def test_derives_from_latest_held_card(self, tree):
+        _append_event(tree, _ev("2026-10-23T19:30:00+03:00", "W-9", "created", {"source": "owner", "problem": "جديدة", "held_by": "0108"}))
+        assert ss.derive_focus("0108", tree) is True
+        assert ss._load_focus("0108", tree)["card"] == "W-9" and ss._load_focus("0108", tree)["step"] == 1
+
+    def test_never_overrides_declared_focus(self, tree):
+        ss.set_focus("0108", "W-1", 3, root=tree)
+        assert ss.derive_focus("0108", tree) is False
+        assert ss._load_focus("0108", tree)["step"] == 3
+
+    def test_no_held_card_derives_nothing(self, tree):
+        assert ss.derive_focus("0777", tree) is False and ss._load_focus("0777", tree) is None
+
+    def test_auto_clear_no_longer_blocked_forever_without_focus(self, tree, tmp_path):
+        ss.set_duties("0108", none=True, root=tree, now=NOW)
+        ss.write_state("0108", ss.derive("0108", "0108 · التقييم والعصف", NOW, tree, cwd="D:/w"), tree)
+        tx = tmp_path / "t.jsonl"
+        tx.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": 207_000, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
+        assert ss._load_focus("0108", tree) is None
+        assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", tx, tree, NOW)
+
+
+class TestPostToolHook:
+    """W-20261027-018: PostToolUse يقيس السياق داخل الدور كلَّ N أداة ويحقن أمر المسح عند العتبة مرّةً واحدة."""
+
+    TITLES = staticmethod(lambda c, i: ("0108 · التقييم", []))
+
+    def _hook(self, tree, tokens):
+        return TestSelfClearBlock._setup(tree, tokens)
+
+    def _run(self, hook, tree, times):
+        return [ss.cmd_post_tool_hook(hook, tree, self.TITLES) for _ in range(times)]
+
+    def test_measures_only_every_n_tools(self, tree):
+        outs = self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY)
+        assert all(o == "" for o in outs[:-1]) and outs[-1]
+        assert ss.auto_clear_nums(tree) == {"0108"}
+
+    def test_injects_clear_instructions_as_additional_context(self, tree):
+        d = json.loads(self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY)[-1])["hookSpecificOutput"]
+        assert d["hookEventName"] == "PostToolUse" and "clear_session" in d["additionalContext"] and "guard 0108" in d["additionalContext"]
+
+    def test_no_repeat_within_same_turn(self, tree):
+        outs = self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY * 3)
+        assert sum(1 for o in outs if o) == 1  # الطلبُ قائم: لا حقنَ ثانياً
+
+    def test_stop_does_not_block_again_after_injection(self, tree):
+        hook = self._hook(tree, 180_000)
+        self._run(hook, tree, ss.POST_TOOL_EVERY)
+        assert ss.cmd_stop_hook(hook, tree, self.TITLES) == ""
+
+    def test_below_threshold_silent(self, tree):
+        assert all(o == "" for o in self._run(self._hook(tree, 100_000), tree, ss.POST_TOOL_EVERY * 2))
+        assert ss.auto_clear_nums(tree) == set()
+
+    def test_guard_failure_silent(self, tree):
+        tp = tree / "t.jsonl"  # بلا focus ولا واجبات: الحارس يسقط
+        tp.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": 200_000, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
+        hook = json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(tp)})
+        assert all(o == "" for o in self._run(hook, tree, ss.POST_TOOL_EVERY))
+        assert ss.auto_clear_nums(tree) == set()
+
+    def test_never_raises_on_garbage(self, tree):
+        assert ss.cmd_post_tool_hook("not json", tree) == ""
+        assert ss.cmd_post_tool_hook(json.dumps({"cwd": "D:/w"}), tree, self.TITLES) == ""
+        assert ss.cmd_post_tool_hook(json.dumps({"cwd": "D:/w", "transcript_path": "x"}), tree, lambda c, i: (None, ["0108 · أ", "0102 · ب"])) == ""
 
 
 def test_clear_markers_removes_both_markers_of_that_number_only(tree):

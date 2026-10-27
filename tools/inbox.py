@@ -72,7 +72,7 @@ def watcher_alive(num: str, root: Path | None = None, now: float | None = None) 
 def wait(num: str, root: Path | None = None, interval: float = WAIT_INTERVAL_S, timeout: float | None = None,
          sleep=time.sleep, clock=time.time, once: bool = True, emit=None) -> list[dict]:
     """يراقب صندوقَ `num` كلَّ `interval` ثانيةً ويكتب نبضاً.
-    once=True (الافتراضيّ للمكتبة وسلوكُ `--once`): يعيد الواردَ (مسلَّماً) فور وصوله، أو [] عند انتهاء `timeout`.
+    once=True (الافتراضيّ للمكتبة وسلوكُ `--once`): يعيد الواردَ (غيرَ مقرٍّ به: الإقرارُ لـread وحده، W-20261027-001) فور وصوله، أو [] عند انتهاء `timeout`.
     once=False (W-20261027-006): يواصل الحلقةَ، ويمرّر كلَّ دفعةِ واردٍ إلى `emit(msgs)` فور وصولها، ويعيد كلَّ ما وصل عند انتهاء `timeout`.
     وعند الخروج يحذف نبضَه فيعرف المرسِلُ أنّ لا مراقب."""
     start = clock()
@@ -80,7 +80,7 @@ def wait(num: str, root: Path | None = None, interval: float = WAIT_INTERVAL_S, 
     try:
         while True:
             beat(num, root)
-            msgs = read(num, True, root)
+            msgs = read(num, not once, root)  # W-20261027-001: --once لا يقرّ فتجد read الواردَ بعد الإيقاظ؛ والمواصلةُ تقرّ ما طُبع لئلا يتكرّر
             if msgs:
                 if once:
                     return msgs
