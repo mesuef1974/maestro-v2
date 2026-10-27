@@ -5,6 +5,7 @@
     python inbox.py send --to 0301 --from 0101 --text "…"        # أو --file مسار
     python inbox.py read 0301 [--peek]                            # الواردُ غيرُ المسلَّم (ويُسلَّم ما لم يكن --peek)
     python inbox.py pending                                       # الأرقامُ التي لها وارد غيرُ مسلَّم وعددُه
+    python inbox.py wait 0301 [--once] [--timeout ث]              # مراقبٌ: يطبع كلَّ وارد ويواصل؛ --once يخرج بأوّله
     python inbox.py hook                                          # خطّاف PostToolUse (JSON على stdin): يحقن الواردَ في سياق الجلسة العاملة
 
 الملف: ledger/inbox/<رقم>.jsonl يُلحَق فقط: {"k":"msg"} للرسالة و{"k":"ack"} للتسليم و{"k":"block"} لمنع الإنهاء مرّةً لكلّ دفعة.
@@ -69,18 +70,25 @@ def watcher_alive(num: str, root: Path | None = None, now: float | None = None) 
 
 
 def wait(num: str, root: Path | None = None, interval: float = WAIT_INTERVAL_S, timeout: float | None = None,
-         sleep=time.sleep, clock=time.time) -> list[dict]:
-    """يراقب صندوقَ `num` كلَّ `interval` ثانيةً ويكتب نبضاً؛ يعيد الواردَ (مسلَّماً) فور وصوله، أو [] عند انتهاء `timeout`.
-    يخرج فتوقظ الجلسةَ التطبيقُ (تشغّله Bash في الخلفيّة)؛ وعند الخروج يحذف نبضَه فيعرف المرسِلُ أنّ لا مراقبَ."""
+         sleep=time.sleep, clock=time.time, once: bool = True, emit=None) -> list[dict]:
+    """يراقب صندوقَ `num` كلَّ `interval` ثانيةً ويكتب نبضاً.
+    once=True (الافتراضيّ للمكتبة وسلوكُ `--once`): يعيد الواردَ (مسلَّماً) فور وصوله، أو [] عند انتهاء `timeout`.
+    once=False (W-20261027-006): يواصل الحلقةَ، ويمرّر كلَّ دفعةِ واردٍ إلى `emit(msgs)` فور وصولها، ويعيد كلَّ ما وصل عند انتهاء `timeout`.
+    وعند الخروج يحذف نبضَه فيعرف المرسِلُ أنّ لا مراقب."""
     start = clock()
+    got: list[dict] = []
     try:
         while True:
             beat(num, root)
             msgs = read(num, True, root)
             if msgs:
-                return msgs
+                if once:
+                    return msgs
+                got.extend(msgs)
+                if emit:
+                    emit(msgs)
             if timeout is not None and clock() - start >= timeout:
-                return []
+                return got
             sleep(interval)
     finally:
         try:
@@ -115,7 +123,7 @@ def _append(num: str, row: dict, root: Path | None = None) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def send(to: str, frm: str, text: str, root: Path | None = None) -> int:
+def send(to: str, frm: str, text: str, root: Path | None = None, ts: str | None = None) -> int:
     """يلحق رسالةً بصندوق `to` ويعيد رقمَها. يرفض الفارغ والأطول من MAX_TEXT ومرسِلاً غيرَ صالح."""
     text = (text or "").strip()
     if not text:
@@ -125,7 +133,7 @@ def send(to: str, frm: str, text: str, root: Path | None = None) -> int:
     if not NUM.match(frm):
         raise ValueError(f"مرسِلٌ غيرُ صالح: {frm}")
     n = max([r["id"] for r in _rows(to, root) if r["k"] == "msg"] or [0]) + 1
-    _append(to, {"k": "msg", "id": n, "ts": _now(), "from": frm, "text": text}, root)
+    _append(to, {"k": "msg", "id": n, "ts": ts or _now(), "from": frm, "text": text}, root)
     return n
 
 
@@ -211,8 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("read")
     r.add_argument("num")
     r.add_argument("--peek", action="store_true")
-    w = sub.add_parser("wait", help="مراقبٌ لحظيّ: يخرج بطباعة الوارد فور وصوله")
+    w = sub.add_parser("wait", help="مراقبٌ لحظيّ: يطبع كلَّ وارد فور وصوله ويواصل (--once: يخرج بأوّل وارد)")
     w.add_argument("num")
+    w.add_argument("--once", action="store_true", help="السلوكُ القديم: يخرج بأوّل وارد")
     w.add_argument("--timeout", type=float, default=None, help="ثوانٍ؛ بلا قيمة = بلا نهاية")
     sub.add_parser("pending")
     sub.add_parser("hook")
@@ -232,8 +241,13 @@ def main(argv: list[str] | None = None) -> int:
         print(render(msgs) if msgs else "لا وارد")
         return 0
     if a.cmd == "wait":
-        msgs = wait(a.num, timeout=a.timeout)
-        print(render(msgs) if msgs else "انتهت المهلة بلا وارد")
+        if a.once:
+            msgs = wait(a.num, timeout=a.timeout)
+            print(render(msgs) if msgs else "انتهت المهلة بلا وارد")
+            return 0
+        msgs = wait(a.num, timeout=a.timeout, once=False, emit=lambda m: print(render(m), flush=True))
+        if not msgs:
+            print("انتهت المهلة بلا وارد")
         return 0
     if a.cmd == "pending":
         nums = pending_nums()

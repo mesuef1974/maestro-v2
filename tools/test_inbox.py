@@ -131,3 +131,26 @@ def test_send_cli_warns_when_receiver_has_no_watcher(tmp_path, monkeypatch, caps
     inbox.beat("0501")
     assert inbox.main(["send", "--to", "0501", "--from", "0301", "--text", "ص"]) == 0
     assert "send_message" not in capsys.readouterr().out
+
+
+def test_wait_follow_mode_emits_every_batch_and_keeps_looping(tmp_path):
+    """W-20261027-006: بلا --once يطبع كلَّ دفعةٍ ويواصل حتى المهلة؛ ويُسلَّم كلُّ ما وصل."""
+    inbox.send("0301", "0101", "أ", tmp_path)
+    seen, arrived = [], []
+
+    def sleep(s):
+        if not arrived:
+            inbox.send("0301", "0101", "ب", tmp_path)
+            arrived.append(1)
+
+    t = iter(range(0, 100, 2))
+    got = inbox.wait("0301", tmp_path, timeout=6, sleep=sleep, clock=lambda: next(t), once=False, emit=seen.append)
+    assert [m["text"] for m in got] == ["أ", "ب"] and [[m["text"] for m in b] for b in seen] == [["أ"], ["ب"]]
+    assert inbox.pending("0301", tmp_path) == [] and not inbox.watcher_alive("0301", tmp_path)
+
+
+def test_cli_wait_once_exits_at_first_message(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(inbox, "ROOT", tmp_path)
+    inbox.send("0301", "0101", "س", tmp_path)
+    assert inbox.main(["wait", "0301", "--once"]) == 0
+    assert "س" in capsys.readouterr().out and inbox.pending("0301", tmp_path) == []

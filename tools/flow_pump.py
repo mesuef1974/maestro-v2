@@ -19,7 +19,7 @@
      ويُبلَّغ: المسودّة، والأساسُ غيرُ main، والهجراتُ (لـ0601، D-428م)، والطلبُ الواسع، والموسومُ أمنيّاً أو اللامسُ مساراتِ
      الأمن والصلاحيّات (محظوراتُ auto_merge_gate) بلا «أقرّ أمنياً» من المالك على الرأس أو سلفه المحمول بتنازلاتٍ مُعاد تحقّقُها.
   6. نشر — approved/pushed/merged ← published: ledger_sync (طلبٌ مدموج بالرأس نفسه).
-لا ترسل رسائل: تُبلَّغ البطاقاتُ العالقة نصّاً مجمَّعاً بدل رسائلَ بين جلسات.
+لا ترسل رسائلَ بين جلسات التطبيق: تُبلَّغ البطاقاتُ العالقة نصّاً مجمَّعاً، وتُنسب إلى مالكها بملفّ صندوقه (inbox.send، W-20261027-006) فيلتقطها مراقبُه.
 
     python flow_pump.py               # عرض
     python flow_pump.py --apply       # ينفّذ ويطبع الإبلاغ
@@ -100,7 +100,7 @@ OWNER_BY_COND = {
     "pushed_no_pr": "holder",    # pushed بلا طلبٍ يُفتح: صاحبُ البطاقة
     "prepush": "0501",           # إيصالُ prepush لا يُنتَج
 }
-PENDING = HERE.parent / "ledger" / "pending_wakes.jsonl"
+PUMP_FROM = "0000"  # مرسِلُ المضخّة في الصندوق (W-20261027-006)؛ رقمٌ صالحٌ لـinbox.NUM لا يخصّ جلسة
 PENDING_DEDUPE_H = 6
 
 
@@ -109,9 +109,18 @@ def owner_of(cond: str, item: dict) -> str:
     return str(item.get("held_by") or "") if who == "holder" else who
 
 
-def hand_off(cid: str, cond: str, item: dict, apply: bool, path: Path | None = None, now=None) -> str:
-    """يُنسب الشرطُ العالقُ إلى مالكه: يُكتب صفٌّ في pending_wakes.jsonl باسمه فيلتقطه wake_monitor، ويعيد وسمَ «[مالك=XXXX]» للسطر.
-    في العرض (apply=False) لا كتابة. لا يتكرّر صفُّ (بطاقة، شرط، حالة) خلال PENDING_DEDUPE_H ساعات. بلا مالكٍ معروفٍ يُوسَم «[مالك=؟]»."""
+COND_TEXT = {
+    "visual_evidence": "ينقصها دليلٌ بصريّ للرأس",
+    "head_unapproved": "رأسها بلا اعتمادٍ ثابت",
+    "migrations": "تمسّ هجراتٍ/أمناً فيمنع الآليُّ: الدمجُ والنشر لك",
+    "pushed_no_pr": "مدفوعةٌ بلا طلب",
+    "prepush": "إيصالُ prepush لا يُنتَج",
+}
+
+
+def hand_off(cid: str, cond: str, item: dict, apply: bool, root: Path | None = None, now=None) -> str:
+    """يُنسب الشرطُ العالقُ إلى مالكه: يُلحَق بصندوقه رسالةٌ بـinbox.send (لا pending_wakes) فيلتقطها مراقبُه فوراً، ويعيد وسمَ «[مالك=XXXX]» للسطر.
+    في العرض (apply=False) لا كتابة. لا تتكرّر رسالةُ (بطاقة، شرط، حالة) خلال PENDING_DEDUPE_H ساعات. بلا مالكٍ معروفٍ يُوسَم «[مالك=؟]»."""
     owner = owner_of(cond, item)
     if not re.match(r"^\d{4}", owner):
         return "[مالك=؟]"
@@ -119,27 +128,19 @@ def hand_off(cid: str, cond: str, item: dict, apply: bool, path: Path | None = N
         return f"[مالك={owner}]"
     from datetime import datetime, timedelta  # noqa: PLC0415
 
-    path = path or PENDING
+    import inbox  # noqa: PLC0415
+
     now = now or datetime.now().astimezone()
     state = str(item.get("state") or "")
+    tag = f"[مضخّة:{cid}:{cond}:{state}]"
     try:
-        rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()] if path.is_file() else []
-    except (OSError, ValueError):
-        rows = []
-    for r in rows:
-        try:
-            fresh = now - datetime.fromisoformat(r["ts"]) < timedelta(hours=PENDING_DEDUPE_H)
-        except (KeyError, ValueError, TypeError):
-            continue
-        if fresh and (r.get("card"), r.get("cond"), r.get("state")) == (cid, cond, state):
-            return f"[مالك={owner}]"
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8", newline="\n") as f:
-            f.write(json.dumps({"ts": now.isoformat(timespec="seconds"), "owner": owner, "card": cid, "cond": cond, "state": state},
-                               ensure_ascii=False) + "\n")
-    except OSError:
-        return f"[مالك={owner}]"
+        for r in inbox._rows(owner, root):
+            if r["k"] == "msg" and r["text"].startswith(tag) and now - datetime.fromisoformat(r["ts"]) < timedelta(hours=PENDING_DEDUPE_H):
+                return f"[مالك={owner}]"
+        text = f"{tag} {cid}: {COND_TEXT.get(cond, cond)} — أنت مالكُ حلّه (من المضخّة)."
+        inbox.send(owner, PUMP_FROM, text, root, ts=now.isoformat(timespec="seconds"))
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
     return f"[مالك={owner}]"
 
 
