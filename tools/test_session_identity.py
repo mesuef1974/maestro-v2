@@ -47,13 +47,13 @@ def test_handoff_rule_text_covers_three_states(monkeypatch, capsys):
     assert "(بلغت / في الطابور / لم تبلغ)" in msg and "ولا تسأل المالكَ عن إعادة الإرسال" in msg
 
 
-def _session(base, name, sid, title, tree, archived=False, cli=None):
+def _session(base, name, sid, title, tree, archived=False, cli=None, focused=None):
     d = base / "a" / "b"
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"local_{name}.json").write_text(
-        json.dumps({"sessionId": sid, "cliSessionId": cli or sid, "title": title, "worktreePath": tree, "isArchived": archived}),
-        encoding="utf-8",
-    )
+    rec = {"sessionId": sid, "cliSessionId": cli or sid, "title": title, "worktreePath": tree, "isArchived": archived}
+    if focused is not None:
+        rec["lastFocusedAt"] = focused
+    (d / f"local_{name}.json").write_text(json.dumps(rec), encoding="utf-8")
 
 
 TREE = r"D:\shschool_mvp\.claude\worktrees\peaceful-1"
@@ -170,6 +170,20 @@ def test_ambiguity_picks_the_session_with_live_auto_clear_marker(tmp_path):
     assert si.app_title(TREE, "", tmp_path, pending={"0101"}) == ("0101 · خفيفة", [])
     assert si.app_title(TREE, "", tmp_path, pending={"0101", "0104"}) == (None, ["0101 · خفيفة", "0104 · عاملة"])
     assert si.app_title(TREE, "", tmp_path, pending=set()) == (None, ["0101 · خفيفة", "0104 · عاملة"])
+
+
+def test_ambiguity_picks_the_most_recently_focused_session(tmp_path):
+    """واقعة 2026-10-27: 0101 و0104 في delivery_manager_work بلا معرّفٍ ولا علامة مسح؛ البدءُ يقع في الجلسة المركَّزة أخيراً."""
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE, focused=1793128425711)
+    _session(tmp_path, "2", "local_2", "0104 · عاملة", TREE, focused=1793128370824)
+    assert si.app_title(TREE, "", tmp_path, pending=set()) == ("0101 · خفيفة", [])
+    assert si.app_title(TREE, "never", tmp_path, wait_s=0, pending=set()) == ("0101 · خفيفة", [])
+    _session(tmp_path, "2", "local_2", "0104 · عاملة", TREE, focused=1793128425711)  # تساوٍ: لا تخمين
+    assert si.app_title(TREE, "", tmp_path, pending=set()) == (None, ["0101 · خفيفة", "0104 · عاملة"])
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE)
+    _session(tmp_path, "2", "local_2", "0104 · عاملة", TREE)  # الحقلُ غائب: الالتباسُ يبقى
+    assert si.app_title(TREE, "", tmp_path, pending=set()) == (None, ["0101 · خفيفة", "0104 · عاملة"])
+    assert si.app_title(TREE, "", tmp_path, pending={"0104"}) == ("0104 · عاملة", [])  # علامةُ المسح تغلب التركيز
 
 
 def test_auto_clear_nums_ignores_expired_and_corrupt_markers(tmp_path):

@@ -86,7 +86,7 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: 
     قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook). وعند الالتباس تُختار صاحبةُ علامة المسح السارية إن كانت وحيدة."""
     waited = 0.0
     while True:
-        title, candidates, by_id = _resolve(cwd, session_id, base)
+        title, candidates, by_id, focused = _resolve(cwd, session_id, base)
         if by_id or not session_id or waited >= wait_s:
             break
         sleep(ID_POLL_S)
@@ -96,15 +96,30 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: 
         owners = [c for c in candidates if _num_of(c) in marked]
         if len(owners) == 1:
             return owners[0], []
+        chosen = _last_focused(candidates, focused)
+        if chosen is not None:
+            return chosen, []
     return title, candidates
 
 
-def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, list[str], bool]:
-    """(العنوانُ الحيّ، المرشَّحون عند الالتباس): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)، ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
+def _last_focused(candidates: list[str], focused: dict[str, int]) -> str | None:
+    """آخرُ تفكيكٍ للالتباس: البدءُ والمسحُ يقعان في الجلسة التي يركّز عليها المالك، فصاحبةُ أحدث lastFocusedAt هي الباديةُ
+    (واقعةُ 2026-10-27: 0101 بدأت برسالةٍ من 0501 فلم يُكتب معرّفُها في المهلة وطُبع «لا أعرف أيَّها أنت» رغم أنّ 0104 خاملةٌ
+    ولم تُركَّز منذ أقدم). يُعاد None حين تتساوى الأحدثُ أو يغيب الحقل، فلا تخمين."""
+    stamps = sorted(((focused.get(c, 0), c) for c in candidates), reverse=True)
+    if len(stamps) < 2 or stamps[0][0] <= 0 or stamps[0][0] == stamps[1][0]:
+        return None
+    return stamps[0][1]
 
-    شجرةٌ تشترك فيها جلستان حيّتان بلا معرّفٍ يميّز: (None، العناوين) فيسأل الهوك 0101 بدل أن يخمّن ويضلّل."""
+
+def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, list[str], bool, dict[str, int]]:
+    """(العنوانُ الحيّ، المرشَّحون عند الالتباس، أبالمعرّف؟، lastFocusedAt لكلّ مرشَّح): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)،
+    ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
+
+    شجرةٌ تشترك فيها جلستان حيّتان بلا معرّفٍ يميّز: (None، العناوين) فيفكّ app_title الالتباسَ بعلامة المسح أو بآخر تركيز."""
     base = SESSIONS if base is None else base
     by_tree: dict[str, str] = {}
+    focused: dict[str, int] = {}
     files = _newest_first(base)
     if session_id:  # مسارٌ سريع: الجلسةُ الحيّةُ أحدثُ الملفّات؛ لا نحلّل إلا ما يحوي معرّفها نصّاً
         prior_hit = None  # تدرّج الأولويّة: sessionId/cliSessionId يغلبان priorCliSessionIds، والأحدثُ تعديلاً داخل كلٍّ
@@ -123,11 +138,11 @@ def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, 
             if not NUM.match(title) or d.get("isArchived"):
                 continue
             if session_id in (d.get("sessionId"), d.get("cliSessionId")):
-                return title, [], True
+                return title, [], True, {}
             if prior_hit is None and session_id in (d.get("priorCliSessionIds") or []):
                 prior_hit = title
         if prior_hit is not None:
-            return prior_hit, [], True
+            return prior_hit, [], True, {}
     for f in files:
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
@@ -138,16 +153,20 @@ def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, 
             continue
         ids = {d.get("sessionId"), d.get("cliSessionId"), *(d.get("priorCliSessionIds") or [])}
         if session_id and session_id in ids:
-            return title, [], True
+            return title, [], True, {}
         tree = _norm(str(d.get("worktreePath") or d.get("cwd") or ""))
         if tree and _norm(cwd).startswith(tree):
             by_tree[title] = tree
+            try:
+                focused[title] = int(d.get("lastFocusedAt") or 0)
+            except (TypeError, ValueError):
+                focused[title] = 0
     if len(by_tree) > 1:  # الأخصّ يغلب: شجرةٌ داخل مجلّد جلسةٍ أخرى لا تلتبس بها
         longest = max(len(t) for t in by_tree.values())
         by_tree = {k: v for k, v in by_tree.items() if len(v) == longest}
     if len(by_tree) == 1:
-        return next(iter(by_tree)), [], False
-    return None, sorted(by_tree), False
+        return next(iter(by_tree)), [], False, {}
+    return None, sorted(by_tree), False, {k: focused.get(k, 0) for k in by_tree}
 
 
 def _num_of(title: str | None) -> str | None:
