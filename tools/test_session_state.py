@@ -8,6 +8,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import session_state as ss  # noqa: E402
+import inbox  # noqa: E402
+
+REAL_WATCHER_ALIVE = inbox.watcher_alive
+
+
+@pytest.fixture(autouse=True)
+def _watcher_alive(monkeypatch):
+    """(W-20261027-001) الأصلُ: للجلسة مراقبٌ حيّ فلا يتدخّل منعُ «بلا مراقب» في اختبارات الخطّاف الأخرى."""
+    monkeypatch.setattr(inbox, "watcher_alive", lambda *a, **k: True)
 
 DOHA = timezone(timedelta(hours=3))
 NOW = datetime(2026, 10, 23, 20, 0, tzinfo=DOHA)
@@ -857,3 +866,16 @@ def test_stop_hook_blocks_once_per_undelivered_inbox_batch(tree):
     active = json.dumps({"cwd": "D:/w", "session_id": "s", "stop_hook_active": True})
     inbox.send("0108", "0101", "أخرى", tree)
     assert ss.cmd_stop_hook(active, tree, titles) == ""  # stop_hook_active لا يُمنع ثانيةً
+
+
+def test_stop_hook_blocks_once_when_no_live_watcher_and_not_when_alive(tree, monkeypatch):
+    """W-20261027-001: بلا مراقبٍ حيّ يُمنع الإنهاءُ مرّةً برسالة تشغيل wait؛ ومع نبضٍ حيّ أو stop_hook_active لا منع."""
+    monkeypatch.setattr(inbox, "watcher_alive", REAL_WATCHER_ALIVE)
+    hook = json.dumps({"cwd": "D:/w", "session_id": "s"})
+    titles = lambda c, i: ("0108 · التقييم", [])  # noqa: E731
+    out = json.loads(ss.cmd_stop_hook(hook, tree, titles))
+    assert out["decision"] == "block" and "inbox.py wait 0108" in out["reason"]
+    active = json.dumps({"cwd": "D:/w", "session_id": "s", "stop_hook_active": True})
+    assert ss.cmd_stop_hook(active, tree, titles) == ""  # لا حلقةَ منع
+    inbox.beat("0108", tree)
+    assert ss.cmd_stop_hook(hook, tree, titles) == ""  # مراقبٌ حيّ
