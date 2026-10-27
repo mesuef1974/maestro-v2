@@ -476,7 +476,7 @@ def test_clear_wakes_are_outside_the_live_cap_while_ordinary_wakes_stay_capped()
 
 
 # ===== إيقاظ ما بعد المسح (W-20261025-001) =====
-from datetime import datetime, timedelta, timezone  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
 
 _NOW = datetime(2026, 10, 25, 12, 0, tzinfo=timezone(timedelta(hours=3)))
 

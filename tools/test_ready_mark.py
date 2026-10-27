@@ -1,6 +1,5 @@
 """اختباراتُ ready_mark — unittest بلا اعتمادٍ خارجيّ:  python -m unittest test_ready_mark"""
 
-import json
 import os
 import subprocess
 import tempfile

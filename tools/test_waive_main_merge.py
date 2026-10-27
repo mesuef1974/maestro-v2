@@ -22,7 +22,7 @@ def setup(tmp_path):
     repo = tmp_path / "r"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
-    base = commit(repo, "a.txt", "1", "base")
+    commit(repo, "a.txt", "1", "base")
     git(repo, "checkout", "-q", "-b", "feature")
     approved = commit(repo, "work.py", "x=1", "session work")
     git(repo, "checkout", "-q", "main")

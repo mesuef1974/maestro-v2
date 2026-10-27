@@ -1,7 +1,6 @@
 """اختباراتُ حزمة المايسترو — unittest بلا اعتمادٍ خارجيّ:  python -m unittest test_package -v"""
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
