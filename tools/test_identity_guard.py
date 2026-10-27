@@ -121,6 +121,23 @@ def test_git_commit_with_staged_ui_in_stale_tree(repo):
     assert g.decide(other) is None
 
 
+def test_merge_in_progress_that_brings_the_upgrade_is_not_stale(repo):
+    """0501، 2026-10-27: دمجُ main في شجرةٍ قديمة يُحجَب إيداعُه رغم أنّ الدمجَ نفسَه يجلب الترقية — MERGE_HEAD يُفحص أيضاً."""
+    top, old = repo
+    run(top, "checkout", "-q", "-b", "old-branch", old)
+    (top / "templates").mkdir(exist_ok=True)
+    (top / "templates" / "y.html").write_text("y", encoding="utf-8")
+    run(top, "add", "templates/y.html")
+    run(top, "commit", "-qm", "ui on old branch")
+    assert g.stale(top) is True
+    run(top, "merge", "--no-commit", "--no-ff", "main")  # دمجٌ معلّقٌ: MERGE_HEAD = الترقية
+    assert (top / ".git" / "MERGE_HEAD").exists()
+    assert g.stale(top) is False
+    payload = {"tool_name": "Bash", "tool_input": {"command": 'git commit -m "merge main"'}, "cwd": str(top)}
+    decision = g.decide(payload)
+    assert decision is None or decision[0] != "deny"
+
+
 def test_warn_mode_never_denies(repo, monkeypatch, capsys):
     top, old = repo
     run(top, "checkout", "-q", old)
