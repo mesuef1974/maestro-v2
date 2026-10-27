@@ -73,20 +73,24 @@ def wait(num: str, root: Path | None = None, interval: float = WAIT_INTERVAL_S, 
          sleep=time.sleep, clock=time.time, once: bool = True, emit=None) -> list[dict]:
     """يراقب صندوقَ `num` كلَّ `interval` ثانيةً ويكتب نبضاً.
     once=True (الافتراضيّ للمكتبة وسلوكُ `--once`): يعيد الواردَ (غيرَ مقرٍّ به: الإقرارُ لـread وحده، W-20261027-001) فور وصوله، أو [] عند انتهاء `timeout`.
-    once=False (W-20261027-006): يواصل الحلقةَ، ويمرّر كلَّ دفعةِ واردٍ إلى `emit(msgs)` فور وصولها، ويعيد كلَّ ما وصل عند انتهاء `timeout`.
+    once=False (W-20261027-006): يواصل الحلقةَ، ويمرّر كلَّ دفعةِ واردٍ إلى `emit(msgs)` فور وصولها (مرّةً لكلّ رسالة)، ويعيد كلَّ ما وصل عند انتهاء `timeout`.
+    المراقبُ لا يقرّ أبداً (W-20261027-020): طباعتُه في ملفّ مخرجات مهمّةٍ خلفيّةٍ ليست وصولاً إلى سياق الجلسة؛ والإقرارُ لـread والخطّاف وحدَهما.
     وعند الخروج يحذف نبضَه فيعرف المرسِلُ أنّ لا مراقب."""
     start = clock()
     got: list[dict] = []
+    announced: set[int] = set()  # ما طُبع في هذه الحلقة: يمنع التكرارَ دون إقرار
     try:
         while True:
             beat(num, root)
-            msgs = read(num, not once, root)  # W-20261027-001: --once لا يقرّ فتجد read الواردَ بعد الإيقاظ؛ والمواصلةُ تقرّ ما طُبع لئلا يتكرّر
-            if msgs:
-                if once:
-                    return msgs
-                got.extend(msgs)
+            msgs = read(num, False, root)  # W-20261027-020: لا إقرارَ في المراقب مطلقاً؛ فيجد read/الخطّافُ الواردَ ولو طُبع في ملفّ المهمّة
+            if msgs and once:
+                return msgs
+            fresh = [m for m in msgs if m["id"] not in announced]
+            if fresh:
+                announced.update(m["id"] for m in fresh)
+                got.extend(fresh)
                 if emit:
-                    emit(msgs)
+                    emit(fresh)
             if timeout is not None and clock() - start >= timeout:
                 return got
             sleep(interval)

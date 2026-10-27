@@ -135,7 +135,7 @@ def test_send_cli_warns_when_receiver_has_no_watcher(tmp_path, monkeypatch, caps
 
 
 def test_wait_follow_mode_emits_every_batch_and_keeps_looping(tmp_path):
-    """W-20261027-006: بلا --once يطبع كلَّ دفعةٍ ويواصل حتى المهلة؛ ويُسلَّم كلُّ ما وصل."""
+    """W-20261027-006: بلا --once يطبع كلَّ دفعةٍ مرّةً ويواصل حتى المهلة؛ W-20261027-020: ولا يقرّ شيئاً (الإقرارُ لـread)."""
     inbox.send("0301", "0101", "أ", tmp_path)
     seen, arrived = [], []
 
@@ -147,7 +147,8 @@ def test_wait_follow_mode_emits_every_batch_and_keeps_looping(tmp_path):
     t = iter(range(0, 100, 2))
     got = inbox.wait("0301", tmp_path, timeout=6, sleep=sleep, clock=lambda: next(t), once=False, emit=seen.append)
     assert [m["text"] for m in got] == ["أ", "ب"] and [[m["text"] for m in b] for b in seen] == [["أ"], ["ب"]]
-    assert inbox.pending("0301", tmp_path) == [] and not inbox.watcher_alive("0301", tmp_path)
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["أ", "ب"] and not inbox.watcher_alive("0301", tmp_path)
+    assert [m["text"] for m in inbox.read("0301", True, tmp_path)] == ["أ", "ب"] and inbox.pending("0301", tmp_path) == []
 
 
 def test_cli_wait_once_exits_at_first_message(tmp_path, monkeypatch, capsys):
