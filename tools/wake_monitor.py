@@ -495,8 +495,10 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
         import inbox
 
         waiting_inbox = inbox.pending_nums(ROOT)
-        return stale_plan(events, directory, live_minus_cleared(live_for(a), cleared, running_from_arg(getattr(a, "running", None))), now,
-                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto, pending=pending_wakes(now), inbox=waiting_inbox)
+        if getattr(a, "bells_only", False):  # جرسُ الوارد وحدَه: لا علاماتِ مسحٍ ولا بطاقات
+            cleared, auto = {}, frozenset()
+        return stale_plan([] if getattr(a, "bells_only", False) else events, directory, live_minus_cleared(live_for(a), cleared, running_from_arg(getattr(a, "running", None))), now,
+                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto, pending=() if getattr(a, "bells_only", False) else pending_wakes(now), inbox=waiting_inbox)
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
@@ -510,6 +512,7 @@ def main(argv=None) -> int:
     ap.add_argument("--running", default="", help="أرقام الجلسات العاملة فعلاً (isRunning من list_sessions) مفصولةً بفواصل؛ تحلّ محلّ نافذة النشاط")
     ap.add_argument("--all", action="store_true", help="للتوافق مع الاستدعاءات القديمة: الإيقاظ لكلّ الحاملين دائماً ولا قناة تجربة")
     ap.add_argument("--stale", action="store_true", help="يتتبّع الحالةَ القائمة لا الحدث: يعيد إيقاظَ مسؤولِ كلّ بطاقةٍ عالقةٍ كلَّ ساعة (بلا تقديمِ مؤشّر)")
+    ap.add_argument("--bells-only", action="store_true", help="يُخرج جرسَ الوارد وحدَه (inbox.py pending) معفىً من سقف الجلسات، بلا تذكيرات البطاقات؛ يعمل بوضع --stale")
     ap.add_argument("--json", action="store_true", help="خطّةٌ آليّة: قائمة {to,session_id,message}")
     ap.add_argument("--watch", action="store_true", help="مراقبةٌ (Monitor): سطرٌ لكلّ جلسةٍ عند التغيّر فقط، بلا كتابة ولا تقديمِ مؤشّر؛ الإرسالُ بيد المنفِّذ")
     ap.add_argument("--interval", type=int, default=300, help="مع --watch: ثوانٍ بين الدورات")
@@ -517,6 +520,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pr-state", default="", help="ملفٌّ فيه لقطةُ الطلبات (حالاتٌ ورؤوسٌ وفحوص) تدخل البصمةَ؛ غيابُه يُهمَل")
     ap.add_argument("--once", action="store_true", help="مع --watch: دورةٌ واحدة")
     a = ap.parse_args(argv)
+    if a.bells_only:
+        a.stale = True  # الجرسُ يعمل بمنطق الحالة القائمة (بلا مؤشّر)
     import session_directory as sd
 
     if a.watch:

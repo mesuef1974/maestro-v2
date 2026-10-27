@@ -557,3 +557,27 @@ def test_inbox_bell_skips_live_unknown_and_recently_woken():
 def test_inbox_bell_payload_needs_valid_number():
     with pytest.raises(ValueError):
         wm.payload(wm.INBOX_ID, "inbox", "")
+
+
+def test_bells_are_exempt_from_session_cap_but_cards_are_capped():
+    """W-20261026-015: الجرسُ لا يُؤجَّله سقفُ الجلسات في الدورة."""
+    many = {f"0{200 + i}": 1 for i in range(1, wm.MAX_SESSIONS_PER_RUN + 4)}
+    directory = {n: f"s-{n}" for n in many}
+    p = wm.stale_plan([], directory, set(), _NOW, verify=ok, inbox=many)
+    assert len(p.wakes) == len(many) and all(r == [(wm.INBOX_ID, "inbox")] for r in p.wakes.values())
+
+
+def test_bells_only_flag_drops_card_wakes(monkeypatch):
+    ev = [{"ts": "2026-10-20T01:00:00+03:00", "id": "W-1", "kind": "created", "data": {"problem": "x", "priority": "P1"}},
+          {"ts": "2026-10-20T01:01:00+03:00", "id": "W-1", "kind": "state", "data": {"state": "routed", "held_by": "0201", "by": "0101"}}]
+    full = wm.stale_plan(ev, DIR, set(), _NOW, verify=ok, inbox={"0201": 1})
+    only = wm.stale_plan([], DIR, set(), _NOW, verify=ok, inbox={"0201": 1})
+    assert any(i != wm.INBOX_ID for i, _ in full.wakes.get("0201", [])) and only.wakes == {"0201": [(wm.INBOX_ID, "inbox")]}
+    import inbox as ib
+
+    monkeypatch.setattr(ib, "pending_nums", lambda root=None: {"0201": 2})
+    monkeypatch.setattr(wm, "live_for", lambda a: set())
+    monkeypatch.setattr(wm, "sender_count", lambda sender: 0)  # اختبارٌ معزول: لا يقرأ msg_counter.json ولا wake_log الحيّين
+    monkeypatch.setattr(wm, "read_log", lambda: [])
+    a = wm.argparse.Namespace(all=True, stale=True, bells_only=True, running=None, sender="0701")
+    assert wm.make_plan(a, ev, "", DIR).wakes == {"0201": [(wm.INBOX_ID, "inbox")]}
