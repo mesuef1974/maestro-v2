@@ -80,6 +80,18 @@ def precheck(card: str, head: str, by: str, reviewed: str, tree: str | None, bas
     return full, diff
 
 
+def remove_row(path: Path, row: str) -> bool:
+    """يحذف السطرَ المضاف وحدَه (آخرَ ظهورٍ له) ويُبقي ما ألحقته جلساتٌ أخرى بعده. يعيد هل وُجد."""
+    with path.open(encoding="utf-8", newline="") as f:  # newline="" يحفظ نهاياتِ الأسطر كما هي
+        text = f.read()
+    i = text.rfind(row)
+    if i < 0:
+        return False
+    with path.open("w", encoding="utf-8", newline="") as f:
+        f.write(text[:i] + text[i + len(row):])
+    return True
+
+
 def approve(card: str, head: str, by: str, reviewed: str, tree: str | None = None, base: str = "origin/main",
             confirmations: Path | None = None, check=check_approval, git=_git, ledger_path=None) -> str:
     """ينفّذ الخطوات الأربع. يعيد سطرَ النجاح أو يرفع RefusedError (قبل الكتابة) أو RuntimeError (فشلٌ بعد الكتابة، مع التراجع الممكن)."""
@@ -91,11 +103,13 @@ def approve(card: str, head: str, by: str, reviewed: str, tree: str | None = Non
     except ValueError as exc:
         raise RefusedError(str(exc)) from exc
     question = f"اعتماد رأس {head} بتفويض D-443م بعد مراجعة الفرق: {reviewed.strip()} (ملفّات الفرق: {len(diff)})"
-    path.write_text(before + oc.row(by, card, quote, question, head=head, source="مباشر"), encoding="utf-8")
+    new_row = oc.row(by, card, quote, question, head=head, source="مباشر")
+    with path.open("a", encoding="utf-8", newline="") as f:  # إلحاقٌ لا إعادةُ كتابة: سطرُ جلسةٍ أخرى بين الخطوتين لا يُمحى
+        f.write(new_row)
     try:
         ledger.record_delegation(card, head, by, path=ledger_path, repo=tree or str(ROOT), changed=diff)
     except ledger.LedgerError as exc:
-        path.write_text(before, encoding="utf-8")  # لا يبقى سطرُ تفويضٍ بلا حدثٍ في الدفتر
+        remove_row(path, new_row)  # لا يبقى سطرُ تفويضٍ بلا حدثٍ في الدفتر
         raise RefusedError(f"رفضه الدفتر فتُراجع السطر: {exc}") from exc
     ok, line = check(card, head)
     if not ok:
