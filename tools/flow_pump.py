@@ -166,7 +166,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
 def root_follow_pass(apply: bool, run=None, root: str | None = None) -> list[str]:
-    """(W-20261027-003) الجذرُ الحيّ يتبع main: بعد كلّ دمجٍ يتقدّم ff-only إن كان نظيفاً وغيرَ متباعد، وإلا إنذارٌ بسببه؛ ولا شيءَ إن كان على main.
+    """(W-20261027-003) الجذرُ الحيّ يتبع main: بعد كلّ دمجٍ يتقدّم ff-only إن لم يتباعد ولم يتقاطع معدَّلُه غيرُ المودَع مع ملفّات الفرق، وإلا إنذارٌ بسببه؛ ولا شيءَ إن كان على main.
+    السجلّاتُ (ledger/*.jsonl وowner_confirmations.md...) تُكتب حيّةً فالجذرُ متّسخٌ دائماً: المعيارُ تقاطعُ المعدَّل مع ما يغيّره HEAD..origin/main لا مجرّدُ وجود تعديل.
     تعذّرُ fetch = غيرُ مقيس ولا تقدّم. لا يلمس ملفّاً غيرَ متتبَّعٍ."""
     sh = run or _sh
     cwd = root or str(ROOT_DIR)
@@ -183,9 +184,13 @@ def root_follow_pass(apply: bool, run=None, root: str | None = None) -> list[str
     if a:
         return [f"الجذر متباعد عن main: خلفه {b} وأمامه {a} — لا fast-forward؛ مزامنةٌ يدويّةٌ بشجرةٍ مستقلّة (root-sync) ثم ff-only"]
     _, dirty = sh(["git", "status", "--porcelain", "--untracked-files=no"], cwd)
-    changed = [ln for ln in dirty.splitlines() if ln.strip()]
-    if changed:
-        return [f"الجذر خلف main بـ{b} وفيه {len(changed)} ملفٍّ متتبَّعٍ معدَّلٍ غيرِ مودَع — لا تقدّم آليّ؛ أودِعه أو أزِله"]
+    modified = {ln[3:].strip().strip('"').replace("\\", "/") for ln in dirty.splitlines() if len(ln) > 3}
+    rc3, incoming = sh(["git", "diff", "--name-only", "HEAD", "origin/main"], cwd)
+    if rc3:
+        return ["الجذر: تعذّر حسابُ ملفّات الفرق (غير مقيس)"]
+    clash = sorted(modified & {ln.strip().replace("\\", "/") for ln in incoming.splitlines() if ln.strip()})
+    if clash:
+        return [f"الجذر خلف main بـ{b} ويتقاطع معدَّلُه غيرُ المودَع مع الفرق في {len(clash)} ملفٍّ ({'، '.join(clash[:4])}) — لا تقدّم آليّ؛ أودِعها أو أزِلها"]
     if not apply:
         return [f"الجذر خلف main بـ{b} ويُقدَّم ff-only (عرض)"]
     rc, out = sh(["git", "merge", "--ff-only", "origin/main"], cwd)
