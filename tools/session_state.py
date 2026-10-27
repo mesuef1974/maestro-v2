@@ -656,6 +656,61 @@ def auto_clear_nums(root: Path | None = None, now: datetime | None = None) -> se
     return out
 
 
+NUM_CACHE_MAX = 300  # أكثرُ ما تحفظه ذاكرةُ session_id→رقم؛ الأقدمُ يسقط
+
+
+def num_cache_path(root: Path | None = None) -> Path:
+    return state_path("0000", root).with_name("session_num_cache.json")
+
+
+def cache_num(sid: str, num: str, root: Path | None = None, now: datetime | None = None) -> None:
+    """يحفظ session_id→رقم عند أوّل تحديدٍ ناجح (W-20261027-007) ليُستعمل حين يفشل عنوانُ التطبيق؛ لا يرفع استثناءً."""
+    if not sid or not re.fullmatch(r"\d{4}(?:-[ء-ي])?", num or ""):
+        return
+    try:
+        p = num_cache_path(root)
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        if not isinstance(data, dict):
+            data = {}
+        if (data.get(sid) or {}).get("num") == num:
+            return
+        data.pop(sid, None)
+        data[sid] = {"num": num, "at": _fmt(now or _now())}
+        for old in list(data)[:-NUM_CACHE_MAX]:
+            data.pop(old, None)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1) + chr(10), encoding="utf-8")
+        os.replace(tmp, p)
+    except (OSError, ValueError):
+        pass
+
+
+def cached_num(sid: str, root: Path | None = None) -> str | None:
+    try:
+        return (json.loads(num_cache_path(root).read_text(encoding="utf-8")).get(sid) or {}).get("num") or None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def alert_guard_failure(num: str, tokens: int, reasons: list[str], root: Path | None = None, now: datetime | None = None) -> bool:
+    """فشلُ حارس المسح فوق العتبة لا يسقط بصمتاً (W-20261027-007): صفٌّ واحدٌ في صندوق 0101 لكلّ جلسةٍ في اليوم. يعيد هل أُرسل."""
+    now = now or _now()
+    try:
+        marker = state_path(num, root).with_name(f"clear_guard_alert_{num}.json")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        today = _fmt(now)[:10]
+        if marker.exists() and json.loads(marker.read_text(encoding="utf-8")).get("day") == today:
+            return False
+        import inbox
+
+        inbox.send("0101", "0000", f"[حارس المسح] الجلسة {num} بلغت {tokens} رمزاً ولم تُمسح لأن الحارس رفض: {'؛ '.join(reasons)[:300]}. تحتاج إصلاحَ ما ذُكر (focus/واجبات/verify) أو مسحاً يدويّاً.", main_root(root))
+        marker.write_text(json.dumps({"day": today, "tokens": tokens}, ensure_ascii=False) + chr(10), encoding="utf-8")
+        return True
+    except Exception:  # noqa: BLE001 — التصعيدُ لا يُسقط الخطّاف
+        return False
+
+
 def maybe_auto_clear(num: str, cwd: str, transcript: str | Path, root: Path | None = None, now: datetime | None = None) -> str:
     """عند بلوغ العتبة يكتب علامةَ «مسح معلّق» وطلبَ المسح الذاتيّ بصمت؛ ويسقط بصمت إن فشل الحارس (focus/duties/verify).
     idempotent: لا يكتب ثانيةً ما دام الطلب قائماً. يعيد وصفاً قصيراً للسجلّ ولا يرفع استثناءً."""
@@ -673,7 +728,8 @@ def maybe_auto_clear(num: str, cwd: str, transcript: str | Path, root: Path | No
         write_state(num, derive(num, (load_state(num, root) or {}).get("session_label", ""), now, root, cwd=cwd), root)
     reasons = clear_guard(num, root, now)
     if reasons:
-        return f"سياق: {tokens}، سقط الحارسُ: {'؛ '.join(reasons)[:120]}"
+        alerted = alert_guard_failure(num, tokens, reasons, root, now)
+        return f"سياق: {tokens}، سقط الحارسُ: {'؛ '.join(reasons)[:120]}" + ("؛ صُعِّد إلى 0101" if alerted else "")
     write_pending(num, cwd, root, now)
     auto_clear_path(num, root).write_text(
         json.dumps({"num": num, "tokens": tokens, "created_at": _fmt(now)}, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -1014,9 +1070,17 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
         outcome = "تخطّي: فشل قبل تحديد الرقم"
         title, cands = (titles or session_identity.app_title)(cwd, sid)
         nums = {m.group(1) for m in (re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", c) for c in ([title] if title else cands)) if m}
+        from_cache = False
         if len(nums) != 1:
-            outcome = f"تخطّي: الرقمُ غيرُ محدَّد ({len(nums)} مرشّحاً: {','.join(sorted(nums)) or '-'})"
-            return ""
+            remembered = cached_num(sid, root) if len(nums) != 1 and sid else None
+            if remembered:  # W-20261027-007: العنوانُ فشل فيُستعمل الرقمُ المحفوظ لهذا session_id عند أوّل نجاح
+                nums, from_cache = {remembered}, True
+                outcome = f"{remembered}: (من ذاكرة session_id)"
+            else:
+                outcome = f"تخطّي: الرقمُ غيرُ محدَّد ({len(nums)} مرشّحاً: {','.join(sorted(nums)) or '-'})"
+                return ""
+        elif sid:
+            cache_num(sid, next(iter(nums)), root)
         num = nums.pop()
         outcome = f"{num}: فشل أثناء التجديد"
         label = (load_state(num, root) or {}).get("session_label", "")
@@ -1024,7 +1088,7 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
         if tpath:
             scan_transcript(num, tpath, root)
         write_state(num, derive(num, label, cwd=cwd or None, root=root), root, heartbeat=HEARTBEAT_AFTER)
-        outcome = f"{num}: جُدِّد"
+        outcome = f"{num}: جُدِّد" + (" (من ذاكرة session_id)" if from_cache else "")
         if tpath:
             try:
                 cleared = maybe_auto_clear(num, cwd, tpath, root)
