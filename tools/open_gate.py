@@ -76,7 +76,6 @@ def decide(pre: dict, assignable: list[dict], band: str | None, priority: str | 
 
 def busy_titles(max_open: int = 1) -> set[str]:
     """عناوينُ الجلسات التي عندها أكثرُ من max_open بطاقةٍ غيرِ منتهية في السجلّ — لا تُقترَح للإسناد (الوسمُ وحدَه لا يكفي)."""
-    import re
     import ledger
     final = {"closed", "merged", "published", "deferred"}
     counts: dict[str, int] = {}

@@ -1,6 +1,5 @@
 """اختباراتُ بوّابة المواصفة الكاملة:  python -m pytest test_ledger_spec.py"""
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
