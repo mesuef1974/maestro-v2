@@ -113,7 +113,7 @@ class ApprovePass(unittest.TestCase):
         with (
             mock.patch.object(fp, "approval_ok", return_value=False),
             mock.patch.object(fp, "approval_why", return_value="لا اعتماد"),
-            mock.patch.object(fp, "PENDING", Path(tempfile.mkdtemp()) / "p.jsonl"),
+            mock.patch.object(fp.hand_off, "__defaults__", (Path(tempfile.mkdtemp()), None)),
             mock.patch.object(fp.subprocess, "run") as run,
         ):
             lines = fp.approve_pass({"W-1": self.STATES["W-1"]}, apply=True)
@@ -1480,14 +1480,16 @@ def test_pr_body_names_only_its_own_card():
 
 
 class HandOff(unittest.TestCase):
-    """جدولُ شرط←مالك: يسمّي المالك، ويكتب صفَّ إيقاظٍ عند التطبيق فقط، ولا يكرّره خلال ست ساعات."""
+    """جدولُ شرط←مالك: يسمّي المالك، ويُلحق رسالةً بصندوقه عند التطبيق فقط، ولا يكرّرها خلال ست ساعات (W-20261027-006)."""
 
     def setUp(self):
-        self.path = Path(tempfile.mkdtemp()) / "pending_wakes.jsonl"
+        self.path = Path(tempfile.mkdtemp())
         self.item = {"state": "approved", "held_by": "0408"}
 
-    def _rows(self):
-        return [json.loads(x) for x in self.path.read_text(encoding="utf-8").splitlines()] if self.path.is_file() else []
+    def _rows(self, owner="0501"):
+        import inbox
+
+        return [r for r in inbox._rows(owner, self.path) if r["k"] == "msg"]
 
     def test_owner_table(self):
         for cond, owner in (("visual_evidence", "0502"), ("head_unapproved", "0101"), ("migrations", "0601"), ("prepush", "0501")):
@@ -1500,12 +1502,15 @@ class HandOff(unittest.TestCase):
     def test_dry_run_writes_nothing(self):
         fp.hand_off("W-1", "prepush", self.item, False, self.path)
         self.assertEqual(self._rows(), [])
+        self.assertFalse((self.path / "ledger").exists())
 
     def test_apply_writes_row_once_within_six_hours(self):
         t0 = datetime(2026, 10, 24, 10, 0).astimezone()
         fp.hand_off("W-1", "prepush", self.item, True, self.path, t0)
         fp.hand_off("W-1", "prepush", self.item, True, self.path, t0 + timedelta(hours=5))
         self.assertEqual(len(self._rows()), 1)
-        self.assertEqual(self._rows()[0]["owner"], "0501")
+        row = self._rows()[0]
+        self.assertEqual((row["from"], row["text"].startswith("[مضخّة:W-1:prepush:approved]")), (fp.PUMP_FROM, True))
+        self.assertFalse((self.path / "ledger" / "pending_wakes.jsonl").exists())
         fp.hand_off("W-1", "prepush", self.item, True, self.path, t0 + timedelta(hours=7))
         self.assertEqual(len(self._rows()), 2)

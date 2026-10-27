@@ -44,7 +44,8 @@ def test_five_changes_one_message_per_session():
     assert len(wm.message_for("0201", p.wakes["0201"]).splitlines()) == 5
 
 
-def test_batch_limit_and_live_cap_halt():
+def test_batch_limit_and_live_cap_halt(monkeypatch):
+    monkeypatch.setattr(wm, "MAX_LIVE", 6)  # آليّةُ السقف بقيمةٍ مثبَّتة؛ والقيمةُ الفعليّة 15 (W-20261027-006)
     ev = []
     for n in range(21):
         i = f"W-20261016-{n:03d}"
@@ -386,9 +387,14 @@ def test_watch_changed_only_prints_one_report_then_stays_silent(tmp_path, monkey
     assert capsys.readouterr().out == ""
 
 
-def test_live_cap_is_six_and_excess_sessions_are_queued_not_dropped():
-    """W-20261023-004 (0.13): لا جلسةَ سابعةً تُوقَظ؛ الزائدُ يُؤجَّل ويبقى المؤشّرُ فيُعاد."""
-    assert wm.MAX_LIVE == 6
+def test_live_cap_is_fifteen_by_owner_decision():
+    """قرارُ المالك 2026-10-27 (W-20261027-006): سقفُ الجلسات العاملة معاً 15 بعد أن كان 6."""
+    assert wm.MAX_LIVE == 15
+
+
+def test_live_cap_excess_sessions_are_queued_not_dropped(monkeypatch):
+    """W-20261023-004 (0.13): الزائدُ على السقف يُؤجَّل ويبقى المؤشّرُ فيُعاد (آليّتُه بسقفٍ 6 مثبَّتٍ للاختبار)."""
+    monkeypatch.setattr(wm, "MAX_LIVE", 6)
     ev = []
     for n, holder in enumerate(("0201", "0301", "0501", "0601", "0701", "0801", "0901")):
         i = f"W-20261016-{n:03d}"
@@ -462,7 +468,8 @@ def test_pending_wakes_reader_filters_old_bad_and_unnamed(tmp_path):
     assert wm.pending_wakes(now, tmp_path / "none.jsonl") == []
 
 
-def test_clear_wakes_are_outside_the_live_cap_while_ordinary_wakes_stay_capped():
+def test_clear_wakes_are_outside_the_live_cap_while_ordinary_wakes_stay_capped(monkeypatch):
+    monkeypatch.setattr(wm, "MAX_LIVE", 6)  # آليّةُ السقف بقيمةٍ مثبَّتة؛ والقيمةُ الفعليّة 15 (W-20261027-006)
     """W-20261025-025: رسالةُ المسح/ما بعده لا تُؤجَّل بسقف التزامن؛ والإيقاظُ العاديّ الزائدُ يُؤجَّل كما كان."""
     live = {f"{n:04d}" for n in (201, 301, 501, 601, 701, 801)}
     p = wm.WakePlan()
