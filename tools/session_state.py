@@ -749,7 +749,10 @@ def maybe_auto_clear(num: str, cwd: str, transcript: str | Path, root: Path | No
     if num in auto_clear_nums(root, now):
         return f"سياق: {tokens}، الطلبُ قائم"
     if renew_focus(num, root) or derive_focus(num, root):  # W-20261027-018: بلا focus معلَن يُشتقّ من أحدث بطاقة محجوزة؛ W-20261025-024: تقدّمُ الدفتر لا يُسقط جلسةً أعلنت تركيزَها؛ ثمّ تُولَّد الحالةُ ليطابقها verify
-        write_state(num, derive(num, (load_state(num, root) or {}).get("session_label", ""), now, root, cwd=cwd), root)
+        try:
+            write_state(num, derive(num, (load_state(num, root) or {}).get("session_label", ""), now, root, cwd=cwd), root)
+        except Exception:  # noqa: BLE001, S110  # W-20261027-037: فشلُ توليد الحالة لا يمنع قياسَ السياق؛ الحارسُ يحكم بعدها
+            pass
     reasons = clear_guard(num, root, now)
     if reasons:
         alerted = alert_guard_failure(num, tokens, reasons, root, now)
@@ -839,9 +842,27 @@ def _stable(state: dict, with_git: bool = True) -> dict:
     return s
 
 
+def fit_state(state: dict) -> dict:
+    """يقصّ الحقولَ المتغيّرة (queue ثمّ waiting ثمّ held_cards، من الذيل) حتى لا يتجاوز الحجمُ MAX_BYTES (W-20261027-037):
+    كان write_state يرفع ValueError فيسقط Stop كلُّه لأكثر الجلسات انشغالاً (0101 بـ10 بطاقات محجوزة) فلا يُقاس سياقُها. لا يغيّر الأصل."""
+    def size(d: dict) -> int:
+        return len(json.dumps(d, ensure_ascii=False, indent=1).encode("utf-8"))
+
+    if size(state) <= MAX_BYTES:
+        return state
+    out = dict(state)
+    for key in ("queue", "waiting", "held_cards"):
+        if isinstance(out.get(key), list):
+            out[key] = list(out[key])
+            while out[key] and size(out) > MAX_BYTES:
+                out[key].pop()
+    return out
+
+
 def write_state(num: str, state: dict, root: Path | None = None, heartbeat: timedelta | None = None) -> tuple[Path, bool]:
     """يكتب UTF-8 ذرّياً؛ idempotent: إن تطابق المحتوى (عدا الأختام الزمنيّة) لا يُعاد الكتابة، إلا إن أعطي `heartbeat`
     وتجاوز عمرُ generated_at المخزَّن فيُجدَّد الختمُ وحدَه. يعيد (المسار، هل كُتب)."""
+    state = fit_state(state)
     errs = validate(state)
     if errs:
         raise ValueError("؛ ".join(errs))
@@ -876,7 +897,7 @@ def verify(num: str, root: Path | None = None, now: datetime | None = None, ledg
     errs = validate(cur)
     if errs:
         return errs
-    fresh = derive(num, cur["session_label"], now, root, ledger_path)
+    fresh = fit_state(derive(num, cur["session_label"], now, root, ledger_path))  # W-20261027-037: الملفُّ المكتوبُ مقصوصٌ بـfit_state فيُقارَن به
     if _stable(fresh, False) != _stable(cur, False):
         return ["الملفُّ لا يطابق الدفترَ الآن؛ أعد generate"]
     return []
@@ -1150,8 +1171,11 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
         tpath = hook.get("transcript_path")
         if tpath:
             scan_transcript(num, tpath, root)
-        write_state(num, derive(num, label, cwd=cwd or None, root=root), root, heartbeat=HEARTBEAT_AFTER)
-        outcome = f"{num}: جُدِّد" + (" (من ذاكرة session_id)" if from_cache else "")
+        try:
+            write_state(num, derive(num, label, cwd=cwd or None, root=root), root, heartbeat=HEARTBEAT_AFTER)
+            outcome = f"{num}: جُدِّد" + (" (من ذاكرة session_id)" if from_cache else "")
+        except Exception as exc:  # noqa: BLE001  # W-20261027-037: فشلُ التجديد لا يُسقط قياسَ السياق وطلبَ المسح
+            outcome = f"{num}: تعذّر التجديد ({str(exc)[:60]})" + (" (من ذاكرة session_id)" if from_cache else "")
         if tpath:
             try:
                 cleared = maybe_auto_clear(num, cwd, tpath, root)

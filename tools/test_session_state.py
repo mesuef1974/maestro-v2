@@ -827,6 +827,51 @@ class TestDeriveFocus:
         assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", tx, tree, NOW)
 
 
+class TestFitState:
+    """W-20261027-037: حالةٌ فوق 4096 بايت تُقصّ ولا تُسقط Stop (0101: 10 بطاقات محجوزة وطابورٌ طويل فبلغت 249 ألفاً بلا مسح)."""
+
+    @staticmethod
+    def _big(tree):
+        st = ss.derive("0108", "0108 · التقييم والعصف", NOW, tree)
+        st["queue"] = [{"n": i, "at": "2026-10-27T11:28+03:00"} for i in range(ss.QUEUE_MAX)]
+        st["held_cards"] = [{"id": f"W-20261027-{i:03d}", "state": "in_progress", "at": "2026-10-27T11:28:00+03:00"} for i in range(ss.HELD_MAX)]
+        st["waiting"] = [{"n": i, "to": "0101", "at": "2026-10-27T11:28+03:00"} for i in range(ss.WAITING_MAX)]
+        return st
+
+    def test_fit_trims_variable_fields_to_limit_without_mutating_input(self, tree, monkeypatch):
+        monkeypatch.setattr(ss, "MAX_BYTES", 3000)  # الحالةُ الكاملةُ بالسقوف الحاليّة 4058 بايتاً؛ يُخفَّض السقف لإثبات القصّ
+        st = self._big(tree)
+        before = json.dumps(st, ensure_ascii=False)
+        size = lambda d: len(json.dumps(d, ensure_ascii=False, indent=1).encode("utf-8"))  # noqa: E731
+        assert size(st) > ss.MAX_BYTES
+        out = ss.fit_state(st)
+        assert size(out) <= ss.MAX_BYTES and json.dumps(st, ensure_ascii=False) == before
+        assert out["queue"] != st["queue"] or out["waiting"] != st["waiting"] or out["held_cards"] != st["held_cards"]
+
+    def test_small_state_untouched(self, tree):
+        st = ss.derive("0108", "0108 · التقييم والعصف", NOW, tree)
+        assert ss.fit_state(st) is st
+
+    def test_write_state_no_longer_raises_on_big_state(self, tree, monkeypatch):
+        monkeypatch.setattr(ss, "MAX_BYTES", 3000)
+        p, wrote = ss.write_state("0108", self._big(tree), tree)
+        back = json.loads(p.read_text(encoding="utf-8"))  # حجمُ الملف على ويندوز يزيد بـCRLF؛ المعيارُ حجمُ JSON نفسه
+        assert wrote and ss.validate(back) == [] and len(json.dumps(back, ensure_ascii=False, indent=1).encode("utf-8")) <= ss.MAX_BYTES
+
+    def test_stop_hook_measures_and_requests_clear_even_when_state_is_oversized(self, tree, monkeypatch):
+        hook = TestSelfClearBlock._setup(tree, 180_000)
+        full = len(json.dumps(ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), ensure_ascii=False, indent=1).encode("utf-8"))
+        monkeypatch.setattr(ss, "MAX_BYTES", full - 30)  # الحالةُ الكاملةُ تتجاوز السقفَ بقليل: كان write_state يرفع ValueError فيسقط Stop
+        out = ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
+        assert json.loads(out)["decision"] == "block" and ss.auto_clear_nums(tree) == {"0108"}
+
+    def test_stop_hook_survives_refresh_exception(self, tree, monkeypatch):
+        hook = TestSelfClearBlock._setup(tree, 100_000)
+        monkeypatch.setattr(ss, "write_state", lambda *a, **k: (_ for _ in ()).throw(ValueError("x")))
+        assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
+        assert "تعذّر التجديد" in ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8")
+
+
 class TestPostToolHook:
     """W-20261027-018: PostToolUse يقيس السياق داخل الدور كلَّ N أداة ويحقن أمر المسح عند العتبة مرّةً واحدة."""
 
