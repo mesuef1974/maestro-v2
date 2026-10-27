@@ -88,6 +88,31 @@ def test_ledger_failure_rolls_back_the_confirmation_row(env, monkeypatch):
     assert conf.read_text(encoding="utf-8") == STANDING  # ذرّيّ: لا سطرَ بلا حدث
 
 
+def test_rollback_keeps_a_row_another_session_appended_in_between(env, monkeypatch):
+    """ملاحظة 0101: التراجع يحذف السطرَ المضاف وحده فلا يمحو ما ألحقته جلسةٌ أخرى بين الكتابتين."""
+    cid, p, conf = env
+    other = "| 2026-10-27 09:00 | 0501 (إفادةُ جلسة) مصدره: مباشر | q | «اعتماد» | W-OTHER @11112222 |\n"
+
+    def boom(*a, **k):
+        with conf.open("a", encoding="utf-8") as f:
+            f.write(other)  # جلسةٌ أخرى تُلحق سطراً قبل فشل الدفتر
+        raise ledger.LedgerError("رُفض في الدفتر")
+
+    monkeypatch.setattr(ledger, "record_delegation", boom)
+    with pytest.raises(approve.RefusedError):
+        _run(env)
+    text = conf.read_text(encoding="utf-8")
+    assert text == STANDING + other and f"@{HEAD}" not in text
+
+
+def test_remove_row_preserves_line_endings_and_reports_missing(tmp_path):
+    p = tmp_path / "c.md"
+    p.write_bytes("أ\r\nسطري\nب\r\n".encode())
+    assert approve.remove_row(p, "سطري\n") is True
+    assert p.read_bytes() == "أ\r\nب\r\n".encode()
+    assert approve.remove_row(p, "غائب\n") is False
+
+
 def test_unconfirmed_by_approval_check_is_reported_as_failure(env):
     with pytest.raises(RuntimeError, match="لم يؤكّده"):
         _run(env, check=lambda c, h: (False, "✘ سبب"))
