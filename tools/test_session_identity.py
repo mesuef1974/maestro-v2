@@ -35,7 +35,12 @@ def test_unknown_tree_asks_maestro():
 def test_handoff_rule_text_covers_three_states(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["session_identity.py", "--cwd", r"D:\shschool_mvp\.claude\worktrees\amazing-x-1"])
     si.main()
-    msg = capsys.readouterr().out
+    injected = capsys.readouterr().out
+    assert "COMMON.md" in injected and "delivered" not in injected  # W-20261027-002: النصُّ الكامل صار في COMMON.md والحقنُ سطرُ إحالة
+    import render_role_cards
+
+    msg = render_role_cards.COMMON_EXTRA
+    assert "## المراسلة بين الجلسات" in msg and "[قاعدة المالك] المالكُ في الاعتماد والمعاينة فقط" in msg
     assert "delivered` = مبلّغة" in msg and "queued` = في الطابور فلا تُعاد" in msg
     assert "بعد دقيقتين من list_events" in msg and "مرةً واحدةً" in msg
     assert "undelivered` = لم تبلغ فأعِد الإرسال بعد دقيقة" in msg
@@ -132,7 +137,7 @@ def test_directory_line_limited_to_own_id_and_0101(monkeypatch, capsys):
     monkeypatch.setattr(si, "app_title", lambda c, sid="", base=None: ("0601 · الإصدار", []))
     monkeypatch.setattr("sys.argv", ["session_identity.py", "--cwd", r"D:\shschool_mvp\.claude\worktrees\amazing-x-1"])
     si.main()
-    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("[عناوين الجلسات]"))
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("[المراسلة بين الجلسات]"))
     assert "0601=local_0601" in line and "0101=local_0101" in line
     assert "0108=" not in line and "0301=" not in line and "session_directory.py" in line
 
