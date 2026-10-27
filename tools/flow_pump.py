@@ -162,6 +162,38 @@ def _sh(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
     return p.returncode, (p.stdout or "") + (p.stderr if p.returncode else "")
 
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+
+
+def root_follow_pass(apply: bool, run=None, root: str | None = None) -> list[str]:
+    """(W-20261027-003) الجذرُ الحيّ يتبع main: بعد كلّ دمجٍ يتقدّم ff-only إن كان نظيفاً وغيرَ متباعد، وإلا إنذارٌ بسببه؛ ولا شيءَ إن كان على main.
+    تعذّرُ fetch = غيرُ مقيس ولا تقدّم. لا يلمس ملفّاً غيرَ متتبَّعٍ."""
+    sh = run or _sh
+    cwd = root or str(ROOT_DIR)
+    rc, out = sh(["git", "fetch", "-q", "origin", "main"], cwd)
+    if rc:
+        return [f"الجذر: تعذّر fetch (غير مقيس، لا تقدّم): {_tail(out)}"]
+    rc1, behind = sh(["git", "rev-list", "--count", "HEAD..origin/main"], cwd)
+    rc2, ahead = sh(["git", "rev-list", "--count", "origin/main..HEAD"], cwd)
+    if rc1 or rc2 or not behind.strip().isdigit() or not ahead.strip().isdigit():
+        return ["الجذر: تعذّر حسابُ التباعد (غير مقيس)"]
+    b, a = int(behind), int(ahead)
+    if b == 0:
+        return []
+    if a:
+        return [f"الجذر متباعد عن main: خلفه {b} وأمامه {a} — لا fast-forward؛ مزامنةٌ يدويّةٌ بشجرةٍ مستقلّة (root-sync) ثم ff-only"]
+    _, dirty = sh(["git", "status", "--porcelain", "--untracked-files=no"], cwd)
+    changed = [ln for ln in dirty.splitlines() if ln.strip()]
+    if changed:
+        return [f"الجذر خلف main بـ{b} وفيه {len(changed)} ملفٍّ متتبَّعٍ معدَّلٍ غيرِ مودَع — لا تقدّم آليّ؛ أودِعه أو أزِله"]
+    if not apply:
+        return [f"الجذر خلف main بـ{b} ويُقدَّم ff-only (عرض)"]
+    rc, out = sh(["git", "merge", "--ff-only", "origin/main"], cwd)
+    if rc:
+        return [f"الجذر: رُفض fast-forward ({b} خلف): {_tail(out)}"]
+    return [f"الجذر تقدّم ff-only بـ{b} إيداعاً إلى origin/main"]
+
+
 def _tail(text: str, n: int = 160) -> str:
     return ((text or "").strip().splitlines()[-1:] or [""])[0][:n]
 
@@ -1138,6 +1170,7 @@ def _run(argv=None) -> int:
     ap.add_argument("--no-line", action="store_true", help="بلا كتابة سطر الاعتماد في الطلب")
     ap.add_argument("--no-merge", action="store_true", help="بلا الدمج الآليّ")
     ap.add_argument("--no-ci", action="store_true", help="بلا إعادة الفحوص العالقة")
+    ap.add_argument("--no-root-follow", action="store_true", help="بلا تقديم الجذر إلى main بعد الدمج")
     a = ap.parse_args(argv)
 
     def load() -> dict[str, dict]:
@@ -1196,6 +1229,9 @@ def _run(argv=None) -> int:
     if not a.no_ci:
         for line in ci_pass(states, prs, a.apply):
             print("ci: " + line)
+    if not a.no_root_follow:
+        for line in root_follow_pass(a.apply):
+            print("جذر: " + line)
     print("— مرحلة النشر (ledger_sync) —")
     if a.skip:
         orig = ledger_sync.plan
