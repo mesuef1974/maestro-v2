@@ -25,7 +25,7 @@ SKIP_PARTS = ("http://", "https://", "<", ">", "*", "{", "}", "~")
 PREFIXES = ("", "tools/", "docs/", "handover_notes/", "ledger/", "projects/schoolos/", "role_cards/", "role_cards/details/")
 #: مجلّداتٌ خارج الجذر تُجرَّب أيضاً (ذاكرة المشروع)
 EXTRA_ROOTS = (Path.home() / ".claude" / "projects" / "D--shschool-mvp" / "memory", Path.home() / ".claude" / "projects" / "D--shschool-mvp",
-               Path("D:/shschool_mvp"))
+               Path("D:/shschool_mvp"), Path("D:/Azkia"))
 _SKIP_DIRS = {".git", "node_modules", ".venv", "worktrees", "__pycache__", "staticfiles"}
 _names_cache: dict[Path, set[str]] = {}
 
@@ -68,13 +68,15 @@ def check(cards: Path = CARDS, root: Path = ROOT) -> list[dict]:
     """[{file, path}] لكلّ مسارٍ مذكورٍ لا يوجد في أيّ من المواضع المرشَّحة."""
     broken = []
     for f in sorted(cards.rglob("*.md")):
+        if "_retired" in f.relative_to(cards).parts:  # أرشيفٌ تاريخيّ: لا يُفحص
+            continue
         seen: set[str] = set()
         for raw in paths_in(f.read_text(encoding="utf-8")):
             if raw in seen:
                 continue
             seen.add(raw)
             bare = "/" not in raw.replace(chr(92), "/")
-            if not any(c.exists() for c in _candidates(raw, root)) and not (bare and root == ROOT and raw in _platform_names(EXTRA_ROOTS[-1])):
+            if not any(c.exists() for c in _candidates(raw, root)) and not (bare and root == ROOT and raw in _platform_names(EXTRA_ROOTS[-2])):
                 broken.append({"file": str(f.relative_to(cards)).replace(chr(92), "/"), "path": raw})
     return broken
 

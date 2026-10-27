@@ -29,3 +29,10 @@ def test_check_dedups_and_returns_empty_when_all_exist(tmp_path):
 
 def test_bare_paths_without_backticks_are_checked():
     assert c.paths_in("انظر inputs/governance_gaps.md و tools/a.py، وhttp://a/b.md وملف.md") == ["inputs/governance_gaps.md", "tools/a.py"]
+
+
+def test_retired_archive_is_not_checked(tmp_path):
+    cards = tmp_path / "role_cards"
+    (cards / "_retired").mkdir(parents=True)
+    (cards / "_retired" / "old.md").write_text("`gone/old.md` و tools/zzz.py", encoding="utf-8")
+    assert c.check(cards, tmp_path) == []
