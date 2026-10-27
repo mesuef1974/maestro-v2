@@ -64,6 +64,28 @@ def test_cli_send_and_read(tmp_path, monkeypatch, capsys):
     assert inbox.main(["send", "--to", "0301", "--from", "bad", "--text", "x"]) == 3
 
 
+def test_subtree_of_governance_uses_main_root_box(tmp_path):
+    """W-20261027-001: شجرةُ حوكمةٍ فرعيّة (.claude/worktrees/x) تقرأ وتكتب صندوقَ الجذر ونبضَه."""
+    sub = tmp_path / ".claude" / "worktrees" / "x"
+    sub.mkdir(parents=True)
+    assert inbox.main_root(sub) == tmp_path and inbox.main_root(tmp_path) == tmp_path
+    inbox.send("0301", "0101", "للجذر", sub)
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["للجذر"]
+    inbox.beat("0301", sub)
+    assert inbox.watcher_alive("0301", tmp_path)
+    assert not (sub / "ledger").exists()
+
+
+def test_cli_wait_read_send_use_main_root_from_subtree(tmp_path, monkeypatch, capsys):
+    sub = tmp_path / ".claude" / "worktrees" / "x"
+    sub.mkdir(parents=True)
+    monkeypatch.setattr(inbox, "ROOT", sub)
+    assert inbox.main(["send", "--to", "0301", "--from", "0101", "--text", "س"]) == 0
+    assert inbox.main(["wait", "0301", "--timeout", "1"]) == 0
+    assert "س" in capsys.readouterr().out
+    assert (tmp_path / "ledger" / "inbox" / "0301.jsonl").exists() and not (sub / "ledger").exists()
+
+
 def test_wait_returns_incoming_at_once_acks_and_removes_beat(tmp_path):
     inbox.send("0301", "0101", "جاهز", tmp_path)
     msgs = inbox.wait("0301", tmp_path, sleep=lambda s: pytest.fail("لا نوم والواردُ حاضر"))

@@ -30,8 +30,16 @@ BEAT_MAX_AGE_S = 15  # نبضٌ أقدمُ من هذا يعني أنّ المر�
 SHOW_MAX = 8  # أكثرُ ما يُحقن في دفعةٍ واحدة؛ الباقي يبقى معلَّقاً للدفعة التالية
 
 
+def main_root(root: Path | None = None) -> Path:
+    """المجلّدُ الرئيس: في شجرة حوكمةٍ فرعيّة (.claude/worktrees/<اسم>) الصندوقُ في الجذر لا في الشجرة (W-20261027-001)."""
+    r = root or ROOT
+    if r.parent.name == "worktrees" and r.parent.parent.name == ".claude":
+        return r.parent.parent.parent
+    return r
+
+
 def _dir(root: Path | None) -> Path:
-    return (root or ROOT) / "ledger" / "inbox"
+    return main_root(root) / "ledger" / "inbox"
 
 
 def _path(num: str, root: Path | None = None) -> Path:
