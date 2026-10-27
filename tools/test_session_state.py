@@ -874,7 +874,7 @@ def test_stop_hook_blocks_once_when_no_live_watcher_and_not_when_alive(tree, mon
     hook = json.dumps({"cwd": "D:/w", "session_id": "s"})
     titles = lambda c, i: ("0108 · التقييم", [])  # noqa: E731
     out = json.loads(ss.cmd_stop_hook(hook, tree, titles))
-    assert out["decision"] == "block" and "inbox.py wait 0108" in out["reason"]
+    assert out["decision"] == "block" and f"python {tree.as_posix()}/tools/inbox.py wait 0108" in out["reason"]  # مسارٌ مطلق
     active = json.dumps({"cwd": "D:/w", "session_id": "s", "stop_hook_active": True})
     assert ss.cmd_stop_hook(active, tree, titles) == ""  # لا حلقةَ منع
     inbox.beat("0108", tree)
