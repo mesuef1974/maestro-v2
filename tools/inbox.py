@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,6 +25,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DOHA = timezone(timedelta(hours=3))
 NUM = re.compile(r"^\d{4}(?:-[ء-ي])?$")
 MAX_TEXT = 6000  # أكبرُ نصٍّ للرسالة الواحدة؛ الأطولُ ملفٌّ في handover_notes ويُرسَل مساره
+WAIT_INTERVAL_S = 2  # فاصلُ فحصِ المراقب للصندوق؛ بلا نموذجٍ ولا كلفة (W-20261027-001)
+BEAT_MAX_AGE_S = 15  # نبضٌ أقدمُ من هذا يعني أنّ المراقب مات
 SHOW_MAX = 8  # أكثرُ ما يُحقن في دفعةٍ واحدة؛ الباقي يبقى معلَّقاً للدفعة التالية
 
 
@@ -34,6 +38,47 @@ def _path(num: str, root: Path | None = None) -> Path:
     if not NUM.match(num):
         raise ValueError(f"رقمُ جلسةٍ غيرُ صالح: {num}")
     return _dir(root) / f"{num}.jsonl"
+
+
+def _beat_path(num: str, root: Path | None = None) -> Path:
+    return _path(num, root).with_suffix(".beat")
+
+
+def beat(num: str, root: Path | None = None) -> None:
+    """يكتب نبضَ المراقب: pid ووقتٌ يثبتان أنّه حيّ."""
+    p = _beat_path(num, root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"pid": os.getpid(), "t": time.time()}), encoding="utf-8")
+
+
+def watcher_alive(num: str, root: Path | None = None, now: float | None = None) -> bool:
+    """هل للجلسة مراقبٌ حيّ؟ نبضٌ طازج (أحدث من BEAT_MAX_AGE_S) وملفٌّ سليم."""
+    try:
+        d = json.loads(_beat_path(num, root).read_text(encoding="utf-8"))
+        return (now if now is not None else time.time()) - float(d["t"]) <= BEAT_MAX_AGE_S
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def wait(num: str, root: Path | None = None, interval: float = WAIT_INTERVAL_S, timeout: float | None = None,
+         sleep=time.sleep, clock=time.time) -> list[dict]:
+    """يراقب صندوقَ `num` كلَّ `interval` ثانيةً ويكتب نبضاً؛ يعيد الواردَ (مسلَّماً) فور وصوله، أو [] عند انتهاء `timeout`.
+    يخرج فتوقظ الجلسةَ التطبيقُ (تشغّله Bash في الخلفيّة)؛ وعند الخروج يحذف نبضَه فيعرف المرسِلُ أنّ لا مراقبَ."""
+    start = clock()
+    try:
+        while True:
+            beat(num, root)
+            msgs = read(num, True, root)
+            if msgs:
+                return msgs
+            if timeout is not None and clock() - start >= timeout:
+                return []
+            sleep(interval)
+    finally:
+        try:
+            _beat_path(num, root).unlink()
+        except OSError:
+            pass
 
 
 def _now() -> str:
@@ -158,6 +203,9 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("read")
     r.add_argument("num")
     r.add_argument("--peek", action="store_true")
+    w = sub.add_parser("wait", help="مراقبٌ لحظيّ: يخرج بطباعة الوارد فور وصوله")
+    w.add_argument("num")
+    w.add_argument("--timeout", type=float, default=None, help="ثوانٍ؛ بلا قيمة = بلا نهاية")
     sub.add_parser("pending")
     sub.add_parser("hook")
     a = ap.parse_args(argv)
@@ -165,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
         text = a.text if a.text is not None else Path(a.file).read_text(encoding="utf-8")
         try:
             print(f"أُلحقت #{send(a.to, a.frm, text)} بصندوق {a.to}")
+            if not watcher_alive(a.to):
+                print(f"⚠ لا مراقبَ حيّاً لـ{a.to} (أُعيد تشغيل التطبيق مثلاً): أرسل جرساً واحداً بـsend_message ليقرأ صندوقه.")
         except ValueError as e:
             print(f"رُفض: {e}", file=sys.stderr)
             return 3
@@ -172,6 +222,10 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "read":
         msgs = read(a.num, not a.peek)
         print(render(msgs) if msgs else "لا وارد")
+        return 0
+    if a.cmd == "wait":
+        msgs = wait(a.num, timeout=a.timeout)
+        print(render(msgs) if msgs else "انتهت المهلة بلا وارد")
         return 0
     if a.cmd == "pending":
         nums = pending_nums()

@@ -1042,6 +1042,10 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
                     outcome += f" | وارد: {len(batch)}"
                     reason = "[صندوق الوارد] وصلك قبل الإنهاء:\n" + inbox.render(batch) + "\nنفّذ ما فيه أو ردّ عليه بـpython tools/inbox.py send ثمّ أنهِ."
                     block = json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
+                elif not inbox.watcher_alive(num, main_root(root)):  # W-20261027-001: بلا مراقبٍ حيّ لا جرسَ لحظيّ
+                    outcome += " | بلا مراقب"
+                    reason = f"[الجرس] لا مراقبَ حيّاً لصندوقك. شغّل في الخلفيّة (Bash run_in_background): python tools/inbox.py wait {num}"
+                    block = json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
             except Exception as exc:  # noqa: BLE001  # الصندوقُ لا يُسقط التجديد
                 outcome += f" | صندوق: {type(exc).__name__}"
     except Exception as exc:  # noqa: BLE001
