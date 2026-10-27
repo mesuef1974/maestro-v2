@@ -1,0 +1,13 @@
+{
+  "_doc": "جدولٌ واحد للمهامّ الدوريّة (W-20261026-011): يقرؤه tools/periodic_tasks.py فيرسل الكنّاسُ لصاحب كلّ مهمّةٍ في موعدها رسالةً واحدةً إلى صندوقه (والجرسُ يوقظه). التوقيتُ بتوقيت الدوحة؛ الأيامُ mon..sun؛ مهمّةٌ تُرسَل مرّةً واحدةً في اليوم المستحقّ.",
+  "tasks": [
+    {"id": "lang_audit", "owner": "0301", "days": ["sun"], "time": "07:30", "what": "قياس اللغة مع جدول اتّجاهٍ لكلّ جلسة، ونافذة 3 ساعات بجانبه (D-114م)", "cmd": "python C:/Users/mesue/delivery_manager_work/tools/lang_audit.py"},
+    {"id": "owner_asks_audit", "owner": "0301", "days": ["sun"], "time": "07:30", "what": "أسئلة المالك المباشرة يوميّاً (الهدف ≤ 10 ولا سؤال تحقّق) وتقرير BLUF بالاتّجاه (D-130م)", "cmd": "python C:/Users/mesue/delivery_manager_work/tools/owner_asks_audit.py --hours 168"},
+    {"id": "decisions_lint", "owner": "0301", "days": ["sun"], "time": "07:30", "what": "سلامة سجلّ القرارات: نصٌّ مكرَّر، طابعٌ راجع، فجوة ترقيم (يكشف ولا يعدّل)", "cmd": "python C:/Users/mesue/delivery_manager_work/tools/decisions_lint.py --since <آخر رقمٍ فُحص>"},
+    {"id": "web_citations_audit", "owner": "0301", "days": ["sun"], "time": "07:30", "what": "كلّ رابطٍ خارجيٍّ مستشهَدٍ به مسجَّلٌ في ext_*.md بحقوله الإلزاميّة؛ الهدف 100%", "cmd": "python C:/Users/mesue/delivery_manager_work/tools/web_citations_audit.py"},
+    {"id": "weekly_deep", "owner": "0301", "days": ["thu"], "time": "07:30", "what": "التقييم الأسبوعيّ المعمّق: flow_metrics وsession_load_v2 واختبارات تفعيل المهارات ومراجعة القرارات مقابل التطبيق، وتقرير BLUF للمالك", "cmd": "python C:/Users/mesue/delivery_manager_work/tools/flow_metrics.py ؛ python C:/Users/mesue/delivery_manager_work/tools/session_load_v2.py"},
+    {"id": "claims_sample", "owner": "0701", "days": ["sun", "mon", "tue", "wed", "thu"], "time": "09:00", "what": "عيّنة من خمسة ادّعاءات لـ0101 تُتحقَّق من مصدرها وتُسجَّل (صحيح/ناقص/خاطئ) في docs/maestro_claims_audit.md (D-107م)", "cmd": "python C:/Users/mesue/delivery_manager_work/tools/ground_truth.py"},
+    {"id": "auto_sections", "owner": "0101", "days": ["sun", "mon", "tue", "wed", "thu"], "time": "07:30", "what": "تجديد قسمَي التدفّق والحِمل في board_state.md ومراجعة الأقسام اليدويّة", "cmd": "python C:/Users/mesue/delivery_manager_work/tools/render_auto_sections.py --write"},
+    {"id": "security_scan", "owner": "0104", "days": ["sun"], "time": "07:30", "what": "الفحص الأمنيّ الأسبوعيّ الشامل (CodeQL وBandit وpip-audit وdetect-secrets وdependabot) وقراءة سطح الأمن غير المغطّى", "cmd": ""}
+  ]
+}

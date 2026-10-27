@@ -483,6 +483,17 @@ def watch_lines(p: WakePlan, directory: dict[str, str], seen: set) -> list[str]:
     return out
 
 
+def run_periodic(now: datetime) -> dict[str, list[str]]:
+    """المهامُّ الدوريّة المستحقّة (W-20261026-011): رسالةٌ واحدةٌ لكلّ صاحبٍ إلى صندوقه فيجرسه الكنّاسُ في الدورة نفسها. لا تُسقط الدورةَ."""
+    try:
+        import periodic_tasks
+
+        return periodic_tasks.run_due(now, ROOT)
+    except Exception as exc:  # noqa: BLE001 — عطلٌ في الجدول لا يوقف الجرس
+        print(f"# المهامّ الدوريّة: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        return {}
+
+
 def make_plan(a, events, cursor, directory) -> WakePlan:
     channel = None  # كلُّ الجلسات (W-20261024-007): لا قناةَ تجربة؛ --all مقبولٌ للتوافق ولا أثر له
     aliases = sa.number_map()
@@ -494,6 +505,8 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
         auto = session_state.auto_clear_nums(ROOT, now)
         import inbox
 
+        if getattr(a, "commit", False) or getattr(a, "watch", False):  # العرضُ الجافّ لا يرسل شيئاً
+            run_periodic(now)
         waiting_inbox = inbox.pending_nums(ROOT)
         if getattr(a, "bells_only", False):  # جرسُ الوارد وحدَه: لا علاماتِ مسحٍ ولا بطاقات
             cleared, auto = {}, frozenset()
