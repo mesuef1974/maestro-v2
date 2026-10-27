@@ -569,8 +569,9 @@ def test_stop_hook_logs_every_call_with_reason(tree):
     log = ss.state_path("0000", tree).with_name("stop_hook_calls.log")
     hook = json.dumps({"cwd": "D:/w", "session_id": "s1"})
     ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
-    ss.cmd_stop_hook(hook, tree, lambda c, i: (None, ["0108 · أ", "0102 · ب"]))
-    ss.cmd_stop_hook(hook, tree, lambda c, i: (None, []))
+    other = lambda s: json.dumps({"cwd": "D:/w", "session_id": s})  # noqa: E731 — جلساتٌ بلا ذاكرةٍ سابقة (W-20261027-007)
+    ss.cmd_stop_hook(other("s2"), tree, lambda c, i: (None, ["0108 · أ", "0102 · ب"]))
+    ss.cmd_stop_hook(other("s3"), tree, lambda c, i: (None, []))
     ss.cmd_stop_hook("not json", tree)
     rows = log.read_text(encoding="utf-8").splitlines()
     assert len(rows) == 4
@@ -909,3 +910,41 @@ def test_stop_hook_blocks_once_when_no_live_watcher_and_not_when_alive(tree, mon
     assert ss.cmd_stop_hook(active, tree, titles) == ""  # لا حلقةَ منع
     inbox.beat("0108", tree)
     assert ss.cmd_stop_hook(hook, tree, titles) == ""  # مراقبٌ حيّ
+
+
+def test_stop_hook_uses_remembered_number_when_app_title_fails(tree):
+    """W-20261027-007: session_id→رقم يُحفظ عند أوّل نجاح ويُستعمل حين يفشل العنوان فلا يُتخطّى الاستدعاء."""
+    hook = json.dumps({"cwd": "D:/w", "session_id": "sid-1"})
+    ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
+    assert ss.cached_num("sid-1", tree) == "0108"
+    ss.cmd_stop_hook(hook, tree, lambda c, i: (None, []))  # العنوان فشل: لا مرشّحون
+    log = ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8").splitlines()
+    assert "0108: جُدِّد (من ذاكرة session_id)" in log[-1] and "تخطّي" not in log[-1]
+    ss.cmd_stop_hook(json.dumps({"cwd": "D:/w", "session_id": "other"}), tree, lambda c, i: (None, []))
+    assert "تخطّي: الرقمُ غيرُ محدَّد" in ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8").splitlines()[-1]
+
+
+def test_num_cache_ignores_bad_input_and_is_capped(tree):
+    ss.cache_num("", "0108", tree)
+    ss.cache_num("s", "abc", tree)
+    assert not ss.num_cache_path(tree).exists()
+    for i in range(ss.NUM_CACHE_MAX + 5):
+        ss.cache_num(f"s{i}", "0108", tree)
+    data = json.loads(ss.num_cache_path(tree).read_text(encoding="utf-8"))
+    assert len(data) == ss.NUM_CACHE_MAX and "s0" not in data and f"s{ss.NUM_CACHE_MAX + 4}" in data
+
+
+def test_guard_failure_above_threshold_escalates_once_a_day_to_0101_inbox(tree, tmp_path, monkeypatch):
+    import inbox
+
+    monkeypatch.setattr(ss, "clear_guard", lambda num, root, now: ["لا تركيز مُعلَن"])
+    monkeypatch.setattr(ss, "context_tokens", lambda t: 180_000)
+    out = ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW)
+    assert "سقط الحارسُ" in out and "صُعِّد إلى 0101" in out
+    msgs = inbox.pending("0101", tree)
+    assert len(msgs) == 1 and "0108" in msgs[0]["text"] and "180000" in msgs[0]["text"] and "لا تركيز مُعلَن" in msgs[0]["text"]
+    assert "صُعِّد" not in ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW + timedelta(hours=1))  # مرّةً في اليوم
+    assert len(inbox.pending("0101", tree)) == 1
+    assert "صُعِّد" in ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW + timedelta(days=1))  # يومٌ جديد
+    monkeypatch.setattr(ss, "context_tokens", lambda t: 100_000)
+    assert "صُعِّد" not in ss.maybe_auto_clear("0109", "D:/w", "t.jsonl", tree, NOW)  # تحت العتبة لا تصعيد
