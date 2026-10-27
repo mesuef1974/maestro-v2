@@ -36,7 +36,7 @@ def test_handoff_rule_text_covers_three_states(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["session_identity.py", "--cwd", r"D:\shschool_mvp\.claude\worktrees\amazing-x-1"])
     si.main()
     injected = capsys.readouterr().out
-    assert "COMMON.md" in injected and "delivered" not in injected  # W-20261027-002: النصُّ الكامل صار في COMMON.md والحقنُ سطرُ إحالة
+    assert "PROCEDURES.md" in injected and "delivered" not in injected  # W-20261027-002: النصُّ الكامل صار في COMMON.md والحقنُ سطرُ إحالة
     import render_role_cards
 
     msg = render_role_cards.COMMON_EXTRA
