@@ -1125,6 +1125,37 @@ def serial_block(num, prs: list[dict], armed_now: list, sh) -> str | None:
     return None
 
 
+def disarm_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -> list[str]:
+    """(W-20261028-032، واقعة #1285) `--match-head-commit` يتحقّق من الرأس عند التفعيل فقط؛ فكلُّ دورةٍ: طلبٌ مفعَّلٌ عليه الدمجُ الآليّ
+    ورأسُه الحاليّ بلا اعتمادٍ ثابتٍ يُعطَّل تفعيلُه (`--disable-auto`) ويُسجَّل في ملاحظة البطاقة وصندوق 0601. بعد التعطيل لا يتكرّر لأنّ autoMergeRequest يفرغ."""
+    sh = sh or _sh
+    out: list[str] = []
+    pairs, _ = card_prs(states, prs)
+    for cid, pr in sorted(pairs.items()):
+        if not pr.get("autoMergeRequest"):
+            continue
+        num, head = pr.get("number"), pr["headRefOid"][:8]
+        if approval_ok(cid, head):
+            continue
+        if not apply:
+            out.append(f"{cid}: #{num} دمجٌ آليٌّ مفعَّلٌ على رأس {head} بلا اعتمادٍ ثابت — يُعطَّل (عرض)")
+            continue
+        rc, msg = sh(["gh", "pr", "merge", str(num), "--disable-auto"], ac.REPO_DIR)
+        if rc != 0:
+            out.append(f"{cid}: #{num} تعطيلُ الدمج الآليّ على رأس {head} بلا اعتماد: ✘ {_tail(msg)}")
+            continue
+        text = f"عُطِّل الدمجُ الآليّ على #{num}: رأسُه {head} بلا اعتمادٍ ثابتٍ (تغيّر بعد التفعيل) — مضخّة التدفّق"
+        try:
+            ledger.add_note(cid, text, SENDER)
+            import inbox  # noqa: PLC0415
+
+            inbox.send("0601", PUMP_FROM, text)
+        except Exception:  # noqa: BLE001 — التعطيلُ نجح؛ التبليغُ لا يُسقط الدورة
+            pass
+        out.append(f"{cid}: #{num} عُطِّل الدمجُ الآليّ — رأس {head} بلا اعتمادٍ ثابت ✔")
+    return out
+
+
 def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -> list[str]:
     """(D-450م) دمجٌ آليّ عند خضرة CI لطلبٍ سطرُ اعتماده سليم: `--auto` مقيَّدٌ بالرأس (`--match-head-commit`) فلا يُدمج غيرُه.
     (W-20261022-020) وطلبٌ واحدٌ فقط لكلّ نشر: لا تفعيلَ والطابورُ أو main مشغولان (serial_block)."""
@@ -1338,6 +1369,8 @@ def _run(argv=None) -> int:
     if NO_MERGE.exists():
         print(f"دمج: معطَّل بمفتاح ({NO_MERGE.name})")
     elif not a.no_merge:
+        for line in disarm_pass(states, prs, a.apply):
+            print("تعطيل: " + line)
         for line in merge_pass(states, prs, a.apply):
             print("دمج: " + line)
     if not a.no_ci:
