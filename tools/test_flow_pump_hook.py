@@ -120,6 +120,14 @@ class Main(unittest.TestCase):
         self.assertIn("W-20261001-006", args)
         self.assertEqual(popen.call_args.kwargs["stdin"], hook.subprocess.DEVNULL)
 
+    def test_spawn_gives_a_hidden_console_not_a_detached_process(self):
+        """(10-28) DETACHED_PROCESS يورث أحفادَ المضخّة مقبضَ دخلٍ باطلاً (WinError 6) فيحمرّ pytest tools/ كلُّه؛ الطرفيّةُ المخفيّة تصلحه."""
+        with mock.patch("subprocess.Popen") as popen, mock.patch.object(hook.os, "name", "nt"):
+            hook.spawn()
+        flags = popen.call_args.kwargs["creationflags"]
+        self.assertTrue(flags & hook.CREATE_NO_WINDOW)
+        self.assertFalse(flags & 0x00000008)
+
 
 if __name__ == "__main__":
     unittest.main()
