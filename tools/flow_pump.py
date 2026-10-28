@@ -46,6 +46,7 @@ import ledger  # noqa: E402
 import ledger_sync  # noqa: E402
 import pump_health  # noqa: E402
 import push_approved  # noqa: E402
+from flow_pump_hook import console_python  # noqa: E402
 
 HEAD_RE = re.compile(r"(?:(?:بالرأس|للرأس|الرأس)\s+|[@＠]\s*)([0-9a-f]{8,40})")
 SENDER = "0101"
@@ -121,7 +122,7 @@ COND_TEXT = {
 }
 
 #: علاماتُ الفشل البيئيّ في مخرَج prepush: لا عيبَ في شيفرة البطاقة، فمالكُه الأتمتة لا الحامل
-ENV_FAIL_MARKS = ("WinError", "The handle is invalid", "غير مقيس", "غير متاح")
+ENV_FAIL_MARKS = ("WinError", "The handle is invalid", "غير مقيس", "غير متاح", "Executable doesn't exist", "BrowserType.launch")
 
 
 def failure_cond(code: int, log: str) -> str:
@@ -130,6 +131,11 @@ def failure_cond(code: int, log: str) -> str:
     if code in (3, 124, 127):
         return "prepush_env"
     text = log or ""
+    # ملخّصُ pytest يقصّ أسطرَ FAILED/ERROR بعرض الطرفيّة فتضيع العلامة؛ فنعدّ أسطرَ «E » (سببَ كلّ فشل) الحاملةَ لها مقابل العدد الكلّيّ
+    total = sum(int(n) for n in re.findall(r"(\d+) (?:failed|errors?)", text))
+    hits = sum(1 for x in text.splitlines() if x.startswith("E ") and any(m in x for m in ENV_FAIL_MARKS))
+    if total and hits >= total:
+        return "prepush_env"
     bad = [x for x in text.splitlines() if x.lstrip().startswith(("✘", "FAILED", "ERROR"))]
     if bad:
         return "prepush_env" if all(any(m in x for m in ENV_FAIL_MARKS) for x in bad) else "prepush"
@@ -628,7 +634,7 @@ def _pytest_run(path: str, timeout: int) -> tuple[int, str]:
     """(رمز الخروج، المخرَج) لـ pytest tools/ في شجرة الحوكمة؛ المهلةُ 124 وتعذّرُ التشغيل 127.
     stdin=DEVNULL صراحةً: دخلٌ موروثٌ باطل يُسقط كلَّ subprocess في الاختبارات بـWinError 6 فيحمرّ الفحصُ بلا عيبٍ في الشيفرة (10-28)."""
     try:
-        p = subprocess.run([sys.executable, "-m", "pytest", "tools", "-q", "-p", "no:cacheprovider"], cwd=path,  # noqa: S603
+        p = subprocess.run([console_python(), "-m", "pytest", "tools", "-q", "-p", "no:cacheprovider"], cwd=path,  # noqa: S603
                            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return 124, "تجاوز المهلة"
