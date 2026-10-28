@@ -1554,6 +1554,15 @@ class FailureCond(unittest.TestCase):
         log = "FAILED a::t - OSError: [WinError 6] The handle is invalid\nERROR b::u - OSError: [WinError 6]\n2 failed"
         self.assertEqual(fp.failure_cond(1, log), "prepush_env")
 
+    def test_truncated_summary_lines_are_judged_by_their_reason_lines(self):
+        """ملخّصُ pytest يقصّ FAILED/ERROR فتضيع العلامة؛ يُحكم بأسطر «E »: كلُّ فشلٍ سببُه علّةُ بيئة."""
+        env = "ERROR tools/test_a.py::t - OSE...\nE   OSError: [WinError 6] The handle is invalid\n1 error"
+        self.assertEqual(fp.failure_cond(1, env), "prepush_env")
+        browser = "ERROR t::a - pla...\nE   playwright._impl._errors.Error: BrowserType.launch: Executable doesn't exist\n1 error"
+        self.assertEqual(fp.failure_cond(1, browser), "prepush_env")
+        mixed = "FAILED t::a - Ass...\nE   AssertionError\nERROR t::b - OSE...\nE   OSError: [WinError 6]\n1 failed, 1 error"
+        self.assertEqual(fp.failure_cond(1, mixed), "prepush")
+
     def test_one_unmarked_failure_line_makes_it_the_code(self):
         self.assertEqual(fp.failure_cond(1, "FAILED a::t - OSError: [WinError 6]\nFAILED b::u - AssertionError"), "prepush")
         self.assertEqual(fp.failure_cond(1, "✘ ruff check: فشل"), "prepush")
