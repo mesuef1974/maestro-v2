@@ -99,6 +99,11 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: 
     return title, candidates
 
 
+def _in_root(cwd: str) -> bool:
+    """جذرُ المجلّد المشترك (أو شجرةٌ داخله غير المنصّة): جلساتُه تُعرَف بالمعرّف لا بالشجرة."""
+    return bool(cwd) and ROOT_NAME in cwd.replace("\\", "/").lower() and PLATFORM not in cwd.replace("\\", "/")
+
+
 def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, list[str], bool]:
     """(العنوانُ الحيّ، المرشَّحون عند الالتباس): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)، ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
 
@@ -145,7 +150,7 @@ def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, 
     if len(by_tree) > 1:  # الأخصّ يغلب: شجرةٌ داخل مجلّد جلسةٍ أخرى لا تلتبس بها
         longest = max(len(t) for t in by_tree.values())
         by_tree = {k: v for k, v in by_tree.items() if len(v) == longest}
-    if len(by_tree) == 1:
+    if len(by_tree) == 1 and not (session_id and _in_root(cwd)):  # W-20261028-024: معرّفٌ غير مطابق في الجذر لا يُحسب رقماً بالشجرة
         return next(iter(by_tree)), [], False
     return None, sorted(by_tree), False
 
