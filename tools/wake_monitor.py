@@ -56,6 +56,9 @@ STALE_RULES = {
     "pushed": ("0601", 2),
     "merged": ("0601", 3),
 }
+# مالكُ المرحلة الذي تُعاد إليه بطاقةٌ حاملُها ميّت: مرحلةُ الدفع والدمج لـ0601، والمراجعةُ لـ0501، وما سواها لـ0101 لإعادة التوجيه
+DEAD_HOLDER_OWNER = {"pushed": "0601", "merged": "0601", "ready_for_review": "0501"}
+DEAD_HOLDER_DEFAULT = "0101"
 REWAKE_MIN = 10  # جلسةٌ أُوقظت للتوّ لا تُوقَظ ثانيةً قبل 10 دقائق (قرار المالك 2026-10-21؛ كان 60)
 DAILY_CAP = msg_counter.LIMIT // 3  # أقصى رسائل إيقاظٍ (رسالةٌ لكلّ جلسةٍ) في 24 ساعة: ثلثُ حصّة المرسِل (600، D-468م) فلا يبتلعها الإيقاظ
 REPEAT_HOURS = 24  # بطاقةٌ لم تتغيّر بصمتُها (id، الحالة، المُوقَظ) لا تُعاد لها الإيقاظةُ قبل مرور هذه المدّة
@@ -67,6 +70,7 @@ CLEAR_MSG = "بعد المسح — اقرأ بطاقتك role_cards/{num}.md ث�
 AUTO_CLEAR_STATE = "auto_clear"  # الطلبُ صادرٌ عن خطّاف Stop عند 175 ألفاً لا عن مسحٍ جرى (W-20261025-015)
 AUTO_CLEAR_MSG = "سياقك بلغ 175 ألفاً — نفّذ المسح الذاتيّ كما في role_cards/COMMON.md ثمّ اقرأ بطاقتك role_cards/{num}.md وشغّل: python tools/my_state.py {num}"
 INBOX_ID = "inbox_bell"  # جرسُ الوارد للخاملة: رسالةٌ واحدةٌ لكلّ جلسة، والمحتوى في ledger/inbox لا في الرسالة (W-20261026-015)
+INBOX_MERGED_MSG = "وصل واردٌ في صندوق {src} المدمَج في رقمك {num} — شغّل (اكتب وصفَ أداة Bash بالعربيّة): python tools/inbox.py read {src}"
 INBOX_MSG = "وصلك واردٌ في صندوقك — شغّل (اكتب وصفَ أداة Bash بالعربيّة): python tools/inbox.py read {num}"
 PAYLOAD_OK = re.compile(r"^W-\d{8}-\d{3} [a-z_]+ — اقرأ: python tools/ledger\.py show W-\d{8}-\d{3}$")
 
@@ -77,6 +81,7 @@ class WakePlan:
         self.skipped: list[tuple[str, str]] = []
         self.halted: str = ""
         self.cursor: str = ""
+        self.dead: list[tuple[str, str, str, str]] = []  # (بطاقة، حالة، حاملٌ ميّت، مالكُ المرحلة الجديد) — W-20261028-010
         self.deferred = False  # أُجّل بعضُها: لا يتقدّم المؤشّر فيعاد في الدورة التالية (والمُوقَظ منها لا يتكرّر بـ already)
 
 
@@ -102,6 +107,8 @@ def payload(item_id: str, state: str, num: str = "") -> str:
     if item_id == INBOX_ID:
         if not SESSION_NUM.match(num):
             raise ValueError("جرسُ الوارد بلا رقم جلسة")
+        if state.startswith("merged:"):  # صندوقُ رقمٍ مدمَج: يُذكر صراحةً فلا تمتنع المستقبِلة (W-20261028-010)
+            return INBOX_MERGED_MSG.format(src=state.split(":", 1)[1], num=num)
         return INBOX_MSG.format(num=num)
     text = PAYLOAD.format(id=item_id, state=state)
     if not PAYLOAD_OK.match(text):
@@ -268,6 +275,37 @@ def pending_wakes(now: datetime, path: Path | None = None) -> list[dict]:
     return out
 
 
+def dead_holders(items: dict, directory: dict, live: set, aliases=None) -> list[tuple[str, str, str, str]]:
+    """بطاقاتٌ في حالةٍ منتظِرةٍ حاملُها رقمٌ بلا جلسةٍ حيّةٍ ولا شجرة (ليس في الدليل ولا العاملين): تُحال إلى مالك المرحلة بدل إيقاظ ميّتٍ كلَّ دورة."""
+    out = []
+    for item_id, it in sorted(items.items()):
+        st = it.get("state")
+        holder = str(it.get("held_by") or "")
+        if st not in STALE_RULES or not SESSION_NUM.match(holder):
+            continue
+        holder = sa.canonical(holder, aliases)
+        owner = DEAD_HOLDER_OWNER.get(st, DEAD_HOLDER_DEFAULT)
+        if holder == owner or holder in directory or holder in live:
+            continue
+        out.append((item_id, st, str(it.get("held_by")), owner))
+    return out
+
+
+def apply_dead_holders(dead, by: str, items: dict, append=None, note=None) -> list[str]:
+    """إعادةُ الإحالة: حدثُ حالةٍ بالحالة نفسها وحاملٍ جديد + ملاحظةٌ. فيها حارسٌ لتكرار التشغيل: لا تُعاد إحالةُ من تغيّر حاملُها."""
+    append = append or ledger.append_event
+    note = note or ledger.add_note
+    done = []
+    for item_id, st, old, owner in dead:
+        cur = items.get(item_id) or {}
+        if cur.get("state") != st or str(cur.get("held_by") or "") != old:
+            continue
+        append("state", item_id, {"state": st, "by": by, "held_by": owner})
+        note(item_id, f"الحاملُ {old} بلا جلسةٍ حيّةٍ ولا شجرة: أُعيدت الإحالة إلى {owner} آليّاً (W-20261028-010)", by)
+        done.append(item_id)
+    return done
+
+
 def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=(), auto=frozenset(), pending=(), inbox=()) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
     aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
@@ -291,8 +329,12 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         for fpr in (row.get("fps") or []):
             key = tuple(fpr)
             last_fp[key] = max(t, last_fp.get(key, t))
+    p.dead = dead_holders(items, directory, live, aliases)
+    dead_ids = {d[0] for d in p.dead}
     cands: dict[str, list[tuple[datetime, str, str]]] = {}
     for item_id, it in items.items():
+        if item_id in dead_ids:
+            continue  # حاملُها ميّت: تُحال لا تُوقَظ (تُسجَّل في p.dead)
         st = it.get("state")
         rule = STALE_RULES.get(st)
         if rule is None or item_id not in since:
@@ -343,7 +385,19 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         else:
             p.wakes.setdefault(num, []).append((CLEAR_ID, AUTO_CLEAR_STATE if num in auto else "pending_clear"))
             since[CLEAR_ID + num] = now
-    for num in sorted(set(inbox)):  # واردٌ غيرُ مسلَّم لجلسةٍ خاملة: جرسٌ واحدٌ (W-20261026-015)؛ الحيّةُ يحقنه لها خطّافُ PostToolUse
+    merged_map = {k: v for k, v in (aliases or {}).items() if k in set(inbox)}
+    for src, num in sorted(merged_map.items()):  # صندوقُ رقمٍ مدمَجٍ حقّاً: جرسٌ لمستقبِلته بصيغة «المدمَج في رقمك»؛ لا حلَّ صامتاً بالاسم المستعار (W-20261028-010)
+        row = (INBOX_ID, f"merged:{src}")
+        if num in live:
+            p.skipped.append((src, "صندوقٌ مدمَجٌ لمستقبِلةٍ حيّةٍ تعمل: يحقنه الخطّاف"))
+        elif num not in directory:
+            p.skipped.append((src, f"لا معرّفَ لمستقبِلة {src}"))
+        elif num in last_wake and now - last_wake[num] < timedelta(minutes=REWAKE_MIN):
+            p.skipped.append((src, f"أُوقظت المستقبِلة {num} قبل أقلّ من {REWAKE_MIN} دقيقة"))
+        elif row not in p.wakes.get(num, []):
+            p.wakes.setdefault(num, []).append(row)
+            since[INBOX_ID + src] = now
+    for num in sorted(set(inbox) - set(merged_map)):  # واردٌ غيرُ مسلَّم لجلسةٍ خاملة: جرسٌ واحدٌ (W-20261026-015)؛ الحيّةُ يحقنه لها خطّافُ PostToolUse
         if num in live:
             p.skipped.append((num, "وارداً لجلسةٍ حيّةٍ تعمل: يحقنه الخطّاف"))
         elif channel is not None and num not in channel:
@@ -586,6 +640,11 @@ def main(argv=None) -> int:
             print(f"إلى {num} ({directory[num]}):\n{message_for(num, rows)}")
     for item_id, why in p.skipped:
         print(f"تخطٍّ {item_id}: {why}")
+    for item_id, st, old, owner in p.dead:
+        print(f"محجوزة لميّت {item_id} ({st}): الحاملُ {old} ← {owner}")
+    if a.commit and p.dead:
+        its = ledger.reduce_state(events)
+        print(f"أُعيدت إحالتها: {apply_dead_holders(p.dead, a.sender, its)}")
     if p.halted:
         print(f"توقّف: {p.halted}")
         if not a.commit:
