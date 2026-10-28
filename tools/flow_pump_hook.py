@@ -89,6 +89,17 @@ def pump_running(now: float) -> bool:
         return False
 
 
+def console_python() -> str:
+    """مفسّرٌ بطرفيّة (python.exe) ولو كان الخطّافُ يعمل بـpythonw.exe. خطّافاتُ الجلسات تُطلَق بـpythonw فيرث pytest tools/ تحت المضخّة
+    مقابضَ std باطلة: 167 فاشلاً و15 خطأً كلّها WinError 6 (قياس 10-28: pythonw ‏98+15، python.exe ‏6 لعلّةٍ أخرى) فلا يُنتَج إيصالُ الحوكمة."""
+    exe = sys.executable
+    if exe.lower().endswith("pythonw.exe"):
+        console = exe[: -len("pythonw.exe")] + "python.exe"
+        if Path(console).is_file():
+            return console
+    return exe
+
+
 def spawn() -> None:
     """يطلق دورةَ المضخّة منفصلةً عن الجلسة؛ تقريرُها الأخير في ledger/flow_pump.out."""
     STAMP.touch()
@@ -100,7 +111,7 @@ def spawn() -> None:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     with OUT.open("w", encoding="utf-8") as out:
         subprocess.Popen(
-            [sys.executable, str(HERE / "flow_pump.py"), "--apply", "--skip", *SKIP],
+            [console_python(), str(HERE / "flow_pump.py"), "--apply", "--skip", *SKIP],
             cwd=str(HERE.parent),
             stdin=subprocess.DEVNULL,
             stdout=out,
