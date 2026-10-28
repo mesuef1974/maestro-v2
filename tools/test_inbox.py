@@ -214,3 +214,13 @@ def test_cli_reap_uses_session_directory(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(session_directory, "entries", lambda: {"0301": {}})
     assert inbox.main(["reap"]) == 0
     assert "لا مراقبَ" in capsys.readouterr().out
+
+
+def test_send_to_a_merged_number_lands_in_its_receivers_inbox(tmp_path, monkeypatch):
+    """(10-29) 0420 مدمَجة في 0409: رسالةٌ إلى 0420 كانت تبقى في صندوقٍ بلا جلسةٍ ولا تُقرأ."""
+    import session_alias
+
+    monkeypatch.setattr(session_alias, "number_map", lambda tabs=None: {"0420": "0409"})
+    inbox.send("0420", "0101", "x", root=tmp_path)
+    assert len(inbox.pending("0409", root=tmp_path)) == 1
+    assert inbox.pending("0420", root=tmp_path) == []
