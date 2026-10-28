@@ -581,7 +581,7 @@ def test_stop_hook_logs_every_call_with_reason(tree):
 
 
 class TestAutoClear:
-    """W-20261025-015: خطّاف Stop يقيس سياق الجلسة من transcript ويكتب طلبَ المسح الذاتيّ عند 175 ألفاً بصمت."""
+    """W-20261025-015: خطّاف Stop يقيس سياق الجلسة من transcript ويكتب طلبَ المسح الذاتيّ عند 180 ألفاً بصمت."""
 
     @staticmethod
     def _tx(tmp_path, *rows):
@@ -624,7 +624,7 @@ class TestAutoClear:
 
     def test_at_threshold_writes_marker_and_request_once(self, tree, tmp_path):
         self._ready(tree)
-        t = self._tx(tmp_path, self._asst(0, 175_000, 0))
+        t = self._tx(tmp_path, self._asst(0, 180_000, 0))
         assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", t, tree, NOW)
         assert list(ss.pending_markers(tree, NOW)) == ["0108"] and ss.auto_clear_nums(tree, NOW) == {"0108"}
         before = ss.auto_clear_path("0108", tree).read_text(encoding="utf-8")
@@ -645,7 +645,7 @@ class TestAutoClear:
 
     def test_stop_hook_triggers_and_never_breaks_refresh(self, tree, tmp_path):
         self._ready(tree)
-        t = self._tx(tmp_path, self._asst(0, 176_000, 0))
+        t = self._tx(tmp_path, self._asst(0, 181_000, 0))
         hook = json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(t)})
         assert json.loads(ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])))["decision"] == "block"  # W-20261026-001
         assert ss.auto_clear_nums(tree) == {"0108"}
