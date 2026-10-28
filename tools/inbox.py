@@ -192,9 +192,20 @@ def send(to: str, frm: str, text: str, root: Path | None = None, ts: str | None 
         raise ValueError(f"النصُّ {len(text)} حرفاً (الحدّ {MAX_TEXT}): اكتبه ملفّاً في handover_notes وأرسل مساره")
     if not NUM.match(frm):
         raise ValueError(f"مرسِلٌ غيرُ صالح: {frm}")
+    to = _successor(to)
     n = max([r["id"] for r in _rows(to, root) if r["k"] == "msg"] or [0]) + 1
     _append(to, {"k": "msg", "id": n, "ts": ts or _now(), "from": frm, "text": text}, root)
     return n
+
+
+def _successor(num: str) -> str:
+    """رقمٌ قديمٌ أو مدمَجٌ (0420 ← 0409، 0502 ← 0501…) يُكتب إلى صندوق مستقبِلته الحيّة: صندوقٌ بلا جلسةٍ لا يقرؤه أحد (10-29)."""
+    try:
+        import session_alias  # noqa: PLC0415
+
+        return session_alias.canonical(num, session_alias.number_map())
+    except Exception:  # noqa: BLE001 — الحلُّ مساعدٌ: عند تعذّره يبقى الرقم كما أُعطي
+        return num
 
 
 def pending(num: str, root: Path | None = None) -> list[dict]:
