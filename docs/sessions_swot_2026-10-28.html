@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SWOT الجلسات والموارد — 2026-10-28</title>
+<style>
+  :root { --ink:#1b1b1b; --muted:#5a5a5a; --line:#d9d9d9; --soft:#f5f5f5; --s:#e8f3ea; --w:#fbeaea; --o:#eaf0fb; --t:#fbf3e4; }
+  html { font-family: system-ui, "Segoe UI", Tahoma, sans-serif; color: var(--ink); line-height: 1.7; }
+  body { max-width: 1180px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: 1.6rem; margin-block: 0 .25rem; }
+  h2 { font-size: 1.25rem; margin-block-start: 2rem; border-block-end: 2px solid var(--line); padding-block-end: .25rem; }
+  h3 { font-size: 1.05rem; margin-block: 1rem .4rem; }
+  .meta { color: var(--muted); font-size: .9rem; }
+  table { border-collapse: collapse; width: 100%; margin-block: .75rem; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .35rem .5rem; vertical-align: top; text-align: start; }
+  th { background: var(--soft); }
+  td.num, th.num { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: end; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: .86em; background: var(--soft); padding: 0 .25em; border-radius: 3px; direction: ltr; unicode-bidi: embed; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .box { border: 1px solid var(--line); border-radius: 6px; padding: .75rem 1rem; }
+  .box.s { background: var(--s); } .box.w { background: var(--w); } .box.o { background: var(--o); } .box.t { background: var(--t); }
+  .box h3 { margin-block-start: 0; }
+  ol, ul { padding-inline-start: 1.4rem; margin-block: .3rem; }
+  li { margin-block: .25rem; }
+  .exec { background: var(--soft); border-inline-start: 4px solid #888; padding: .75rem 1rem; margin-block: 1rem; }
+  .exec p { margin: .25rem 0; }
+  .bad { color: #8a1c1c; font-weight: 600; } .ok { color: #1f6b2e; font-weight: 600; } .mid { color: #8a5a00; font-weight: 600; }
+  .small { font-size: .85rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>تقرير SWOT: الجلسات والموارد وأثرها على الفلو والمضخّة</h1>
+<p class="meta">التاريخ 2026-10-28 11:40 (الدوحة) · كاتبه 0101 بأمر المالك المباشر · كلّ رقم أدناه مقيس من المصدر في هذه الساعة (ملفّات جلسات التطبيق، نصوص CLI، الدفتر، سجلّ الإيقاظ، الصناديق، عدّاد الرسائل، أداة التخزين في التطبيق، PowerShell للذاكرة) لا من ذاكرة أو رسالة.</p>
+
+<h2>1. الملخّص التنفيذيّ</h2>
+<div class="exec">
+<p><span class="v">الحقيقة الأولى:</span> على القرص 889 جلسة Code، منها 373 غير مؤرشفة؛ الجلسات المرقّمة الحيّة 14 فقط، و357 جلسة «كنّاس» من مهمّتين مجدولتين، و2 خارج الفلو. الكنّاس يُنشئ 16 جلسةً في الساعة (384 في اليوم) منذ 10-27، وكان 7 إلى 20 في اليوم قبلها.</p>
+<p><span class="v">الحقيقة الثانية (الـ16 غيغا):</span> مجلّد Claude Code <code>~/.claude</code> يبلغ 15.3 غيغابايت على القرص؛ منه 10.4 غيغا نصوص محادثات (<code>projects/</code>)، وتقرير التطبيق يحصي 13.0 غيغا لجلسات Code: نصوص 9.6 غيغا، وتاريخ آخر 1.3 غيغا، وأشجار 4.3 غيغا (18 شجرةً محجوزة 3.6 غيغا، منها 4 أبقيت بعد الأرشفة لتعديلات غير مودَعة). وفي الذاكرة: 38 عمليّة <code>claude</code> تشغل 5.1 غيغا من 14.2 غيغا مستعملة (31.7 كلّي، 11.1 حرّ).</p>
+<p><span class="v">الحقيقة الثالثة (الإنتاج):</span> المنشور يوميّاً هبط من 42 (10-14) إلى 19 (10-27) مع أنّ الأتمتة زادت؛ زمن الدورة في آخر 3 أيّام: وسيط 2.5 ساعة ومتوسّط 9.3 وp90 34.4؛ وجاهزٌ←اعتماد الفعليّ وسيطه 2.2 ساعة وp90 29.9. عنق الزجاجة ليس عدد الجلسات بل ثلاثة: اعتماد المالك على الواجهات، وسقف المضخّة (دفع 2 وprepush 1 في الدورة)، والمحور 0101 (493 من 600 رسالة، و175 من 285 رسالة صندوق منذ 10-26).</p>
+<p><span class="v">التوكنز (مقيس من 7 أيّام من نصوص CLI):</span> المنظومة تستهلك نحو 675 مليون رمز مدخلات يوميّاً (قراءة ذاكرة 4.73 مليار + كتابة 0.14 مليار في الأسبوع) و3.9 مليون رمز مخرجات يوميّاً. المحور 0101 وحده 35%، وجلسة خارج الفلو («تنظيم الصفحات» في MonitorWidget) 22.5%، و0301 11%. تشغيلة الكنّاس الواحدة تكلّف وسيطاً 187 ألف رمز ومتوسّطاً 317 ألفاً (لا 45 ألفاً كما يوحي حجمها)، فبمعدّل اليوم (384 تشغيلة) تبلغ ≈120 مليون رمز يوميّاً، أي نصف استهلاك المحور. كلفة البطاقة المنشورة ≈ 30 مليون رمز مدخلات و165 ألف رمز مخرجات.</p>
+<p><span class="v">العائد المقيس من التقليل:</span> دمج الكنّاسين في واحد كلّ ربع ساعة يوفّر 288 تشغيلة في اليوم ≈ 91 مليون رمز مدخلات يوميّاً و150 ميغا نصوص يوميّاً (4.5 غيغا شهريّاً). أرشفة خمس جلسات حيّة بلا بطاقات (0108، 0109، 0110، 0201، «تنظيم الصفحات») تحرّر نحو 0.7 غيغا ذاكرة و~0.6 غيغا أشجار و~560 ميغا نصوص، وتخفّض تأجيلات الإيقاظ بسبب سقف الجلسات (57 من 84 دورة فيها تأجيل). أثرها على سرعة النشر: صغير مباشرةً (الاختناق في الاعتماد والمضخّة)، كبير غير مباشر (ذاكرة أكثر = سقف إيقاظ أعلى = بطاقات عالقة تُحرَّك في ساعتها).</p>
+</div>
+
+<h2>2. جرد الجلسات على القرص (مقيس 11:25)</h2>
+<table>
+<tr><th>الصنف</th><th class="num">غير مؤرشفة</th><th class="num">مؤرشفة</th><th class="num">نصوص الحيّة (MB)</th><th class="num">نصوص المؤرشفة (MB)</th><th>ملاحظة</th></tr>
+<tr><td>جلسات مرقّمة (أدوار الفلو)</td><td class="num">14</td><td class="num">52</td><td class="num">1,559</td><td class="num">1,746</td><td>0101 وحدها 182 ميغا في 26 جلسة CLI (مسح ذاتيّ متكرّر)</td></tr>
+<tr><td>جلسات «كنّاس» (مهامّ مجدولة)</td><td class="num">357</td><td class="num">62</td><td class="num">157</td><td class="num">38</td><td>نحو 0.5 ميغا لكلّ تشغيل؛ 419 منذ 10-23</td></tr>
+<tr><td>أخرى (خارج الفلو)</td><td class="num">2</td><td class="num">402</td><td class="num">162</td><td class="num">1,393</td><td>«تنظيم الصفحات والبطاقات» 161.5 ميغا (MonitorWidget)</td></tr>
+<tr><th>المجموع</th><th class="num">373</th><th class="num">516</th><th class="num">1,878</th><th class="num">3,177</th><th>ملفّات سجلّات الجلسات 89 ميغا</th></tr>
+</table>
+
+<h3>2.1 معدّل إنشاء جلسات الكنّاس يوميّاً</h3>
+<table>
+<tr><th>اليوم</th><th class="num">10-23</th><th class="num">10-24</th><th class="num">10-25</th><th class="num">10-26</th><th class="num">10-27</th><th class="num">10-28 (حتى 11:30)</th></tr>
+<tr><td>جلسات كنّاس مُنشأة</td><td class="num">7</td><td class="num">20</td><td class="num">11</td><td class="num">20</td><td class="num bad">180</td><td class="num bad">181</td></tr>
+</table>
+<p>اليوم: 16 جلسة في كلّ ساعة بانتظام (12 من <code>handoff-wake-sweeper</code> كلّ 5 دقائق + 4 من <code>wake-monitor-sweep-2</code> كلّ ربع ساعة)، أي 384 في اليوم. المهمّتان هما الوحيدتان الفعّالتان في جدول التطبيق الآن؛ المضخّة لا تنشئ جلسات (تدور من خطّاف <code>flow_pump_hook.py</code> داخل الجلسات: 225 دورة أمس و115 حتى الآن اليوم).</p>
+
+<h3>2.2 كلفة التوكنز في 7 أيّام (من نصوص CLI)</h3>
+<table>
+<tr><th>الصنف</th><th class="num">جلسات</th><th class="num">طلبات</th><th class="num">قراءة ذاكرة (مليون)</th><th class="num">كتابة ذاكرة (مليون)</th><th class="num">مخرجات (مليون)</th></tr>
+<tr><td>كبيرة (&gt;3 ميغا) في delivery_manager_work</td><td class="num">12</td><td class="num">8,887</td><td class="num">1,340</td><td class="num">31</td><td class="num">6.3</td></tr>
+<tr><td>كبيرة في MonitorWidget (خارج الفلو)</td><td class="num">11</td><td class="num">3,649</td><td class="num">893</td><td class="num">15</td><td class="num">5.0</td></tr>
+<tr><td>كبيرة في أشجار المنصّة (0301، 0108، 0110، 0601، 0501، 0702…)</td><td class="num">16</td><td class="num">7,647</td><td class="num">1,238</td><td class="num">33</td><td class="num">5.9</td></tr>
+<tr><td>صغيرة (كنّاس وتشغيلات قصيرة) في المجلّدات الثلاثة</td><td class="num">520</td><td class="num">11,584</td><td class="num">1,202</td><td class="num">57</td><td class="num">8.4</td></tr>
+</table>
+<p>الأرضيّة (وسيط أوّل طلب) 44,675 رمزاً لكلّ جلسة، لكنّ تشغيلة الكنّاس تطلب عدّة أدوات فتبلغ وسيطاً 187 ألف رمز ومتوسّطاً 317 ألفاً (مقيس من 424 تشغيلة)؛ فبمعدّل اليوم (384 تشغيلة) تكلّف ≈120 مليون رمز مدخلات يوميّاً. الجلسة «تنظيم الصفحات والبطاقات» خارج الفلو استهلكت 1.09 مليار رمز مدخلات في أسبوع. التفصيل الكامل في القسم 8.</p>
+
+<h2>3. الجلسات المرقّمة الحيّة: القياس والحكم</h2>
+<table>
+<tr><th>الجلسة</th><th class="num">بطاقات مفتوحة</th><th class="num">رسائل/600</th><th class="num">إيقاظ 7أ</th><th class="num">صندوق استقبال/إرسال</th><th class="num">نصّ MB</th><th class="num">خمول س</th><th>الشجرة: غير مودَع / غير مدفوع</th><th>الحكم</th><th>إلى أين ينتقل العمل</th></tr>
+<tr><td>0101 المحور</td><td class="num">10</td><td class="num bad">493</td><td class="num">12</td><td class="num">103 / 175</td><td class="num">182</td><td class="num">0</td><td class="bad">601 / 117 إيداعاً (فرع msg-limit-600)</td><td>تبقى؛ اختناق</td><td>تخفيف: التقارير إلى 0701، وتوحيد الفرع مع main بقرار المالك</td></tr>
+<tr><td>0301 الحوكمة</td><td class="num">12</td><td class="num">96</td><td class="num">21</td><td class="num">70 / 55</td><td class="num">138</td><td class="num">3</td><td class="ok">0 / —</td><td>تبقى</td><td>تستقبل أعمال 0109 (الدفتر والقرارات)</td></tr>
+<tr><td>0501 المعاينة</td><td class="num">0 (+2 من 0502)</td><td class="num">71</td><td class="num">64</td><td class="num">19 / 3</td><td class="num">204</td><td class="num">0</td><td class="mid">1 / لا upstream</td><td>تبقى</td><td>تستقبل W-20261003-022 وW-20261022-010 من 0502 المؤرشفة</td></tr>
+<tr><td>0601 الإصدار</td><td class="num">2</td><td class="num">79</td><td class="num">42</td><td class="num">54 / 35</td><td class="num">320</td><td class="num">1</td><td class="mid">3 / لا upstream</td><td>تبقى</td><td>—</td></tr>
+<tr><td>0701 الجودة</td><td class="num">9</td><td class="num">34</td><td class="num">54</td><td class="num">21 / 14</td><td class="num">108</td><td class="num">1</td><td class="ok">0 / —</td><td>تبقى</td><td>تستقبل 0110 (فحص الرؤوس) و0111 (تقييم الإنتاج: 017 و021) و0201 (الرصد)</td></tr>
+<tr><td>0702 معاون 0701</td><td class="num">5</td><td class="num">29</td><td class="num">8</td><td class="num">13 / 0</td><td class="num">64</td><td class="num">3</td><td class="mid">0 / 15 إيداعاً أمام main</td><td>تبقى حتى نشر 006 و033 ثمّ تُدمج في 0701</td><td>0701</td></tr>
+<tr><td>0104 الأمان</td><td class="num">1</td><td class="num">24</td><td class="num bad">0 (لم تُوقَظ قطّ)</td><td class="num">9 / 6</td><td class="num">5</td><td class="num">14</td><td class="ok">—</td><td>تبقى عند الطلب (أحكام أمنيّة قبل الدمج)</td><td>—؛ أُصلح إيقاظها اليوم</td></tr>
+<tr><td>0201 الرصد والتقييم</td><td class="num">0</td><td class="num">31</td><td class="num">0</td><td class="num">2 / 0</td><td class="num bad">342</td><td class="num">8</td><td class="bad">26 / لا upstream</td><td class="mid">تُؤرشف بعد تسليم</td><td>الرصد إلى 0701، التقييم إلى 0108 عند الطلب أو المالك</td></tr>
+<tr><td>0108 التقييم والعصف</td><td class="num">0</td><td class="num">13</td><td class="num">0</td><td class="num">2 / 0</td><td class="num">33</td><td class="num">15</td><td class="mid">5 / 0</td><td class="mid">تُؤرشف بعد إيداع تعديلاتها</td><td>العصف بأمر المالك في 0101 أو جلسة مؤقّتة</td></tr>
+<tr><td>0109 السجلّ</td><td class="num">0</td><td class="num">2</td><td class="num">0</td><td class="num">1 / 0</td><td class="num">9</td><td class="num">9</td><td class="mid">5 / 0</td><td class="mid">تُؤرشف بعد إيداع تعديلاتها</td><td>0301</td></tr>
+<tr><td>0110 الصحّة</td><td class="num">0</td><td class="num">2</td><td class="num">0</td><td class="num">1 / 0</td><td class="num">13</td><td class="num">9</td><td class="mid">8 / 0</td><td class="mid">تُؤرشف بعد إيداع تعديلاتها</td><td>0701</td></tr>
+<tr><td>0409 العيادة</td><td class="num">4</td><td class="num">21</td><td class="num">3</td><td class="num">20 / 6</td><td class="num">71</td><td class="num">14</td><td class="ok">0 / 0</td><td>تبقى حتى نشر بطاقاتها</td><td>تستقبل W-20261020-035 (0420) وW-20261020-033 (0423)</td></tr>
+<tr><td>0421 الواجهة</td><td class="num">3</td><td class="num">18</td><td class="num">12</td><td class="num">3 / 0</td><td class="num">63</td><td class="num">13</td><td class="ok">0 / لا upstream</td><td>تبقى حتى نشر بطاقاتها</td><td>تستقبل W-20261013-025 (0423) وبطاقتَي 0403 (011 و012)</td></tr>
+<tr><td>0426 الإدارة</td><td class="num">3</td><td class="num">6</td><td class="num">4</td><td class="num">5 / 0</td><td class="num">9</td><td class="num">15</td><td class="ok">0 / لا upstream</td><td>تبقى حتى نشر بطاقاتها</td><td>—</td></tr>
+<tr><td>«تنظيم الصفحات والبطاقات» (خارج الفلو)</td><td class="num">0</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num bad">162</td><td class="num">0</td><td>—</td><td class="mid">تُؤرشف</td><td>مهامّها اليدويّة للمالك</td></tr>
+<tr><td>357 جلسة كنّاس</td><td class="num">0</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">157</td><td class="num">—</td><td>—</td><td class="bad">تُؤرشف يوميّاً آليّاً وتُخفَّض وتيرتها</td><td>—</td></tr>
+</table>
+<p class="small">الخمول = ساعات منذ آخر نشاط على القرص. «لا upstream» = فرع محلّيّ لم يُدفع قطّ. إيقاظ 7أ = عدد رسائل الإيقاظ المخطّطة للجلسة في 84 دورة منذ 10-21.</p>
+
+<h3>3.1 بطاقات بيد جلسات لا وجود حيّاً لها (تُنقل الآن)</h3>
+<table>
+<tr><th>الحامل</th><th>البطاقة</th><th>الحالة</th><th>إلى</th><th>السبب</th></tr>
+<tr><td>0502 (أرشفها المالك 11:25)</td><td>W-20261003-022</td><td>ready_for_review</td><td>0501</td><td>حسابات المعاينة الدائمة؛ المالك: معاينة على 8500 ثمّ اعتماد</td></tr>
+<tr><td>0502</td><td>W-20261022-010</td><td>routed</td><td>0501</td><td>رؤوس بلا أدلّة بصريّة؛ اختصاص المعاينة</td></tr>
+<tr><td>0111 (مؤرشفة)</td><td>W-20261027-017، W-20261027-021</td><td>pushed بلا طلب منذ 18 ساعة</td><td>0701</td><td>تقييم المنصّة على الإنتاج = قياس ورصد</td></tr>
+<tr><td>0403 (لا جلسة)</td><td>W-20261021-011، W-20261021-012</td><td>routed</td><td>0421</td><td>تصدير متزامن وإطار PDF: واجهة وطباعة</td></tr>
+<tr><td>0420 (لا جلسة)</td><td>W-20261020-035</td><td>approved @c3ea3cd4 بلا prepush</td><td>0409</td><td>قياس العيادة</td></tr>
+<tr><td>0423 (لا جلسة)</td><td>W-20261013-025</td><td>routed</td><td>0421</td><td>أعمدة الجداول وPDF</td></tr>
+<tr><td>0423</td><td>W-20261020-033</td><td>routed</td><td>0409</td><td>رؤية الملفّ الصحّيّ</td></tr>
+</table>
+
+<h2>4. أين الـ16 غيغا؟ (القرص والذاكرة)</h2>
+<div class="grid">
+<div class="box o"><h3>القرص: <code>~/.claude</code> = 15.26 غيغا</h3>
+<ul>
+<li><code>projects/</code> نصوص محادثات CLI: 10.37 غيغا (الجلسات المرقّمة الحيّة 1.9 غيغا، المؤرشفة 3.2 غيغا، والباقي نصوص جلسات لم تعد لها سجلّات ونصوص وكلاء فرعيّين ومخرجات أدوات محفوظة).</li>
+<li>الباقي نحو 4.9 غيغا (مقيس بـdu): مشروع آخر خارج SchoolOS <code>Azkia/</code> 1.2 غيغا، أرشيف مشاريع قديم <code>projects-archive-2026-04-17/</code> 0.57 غيغا، تاريخ الملفّات <code>file-history/</code> 0.19 غيغا، ونسختا Claude Code 0.88 غيغا، وسجلّات 0.58، وذاكرة الويب 0.47، ولوحات المتصفّح 0.32، والباقي ملفّات تاريخ متفرّقة.</li>
+<li>أكبر نصوص المحادثات كلّها لجلسات ميّتة أو مؤرشفة: شجرة silly-villani 1.24 غيغا، epic-tesla 0.80، distracted-blackwell (0201) 0.75، styleguide-card-layout 0.72، government-school-website 0.63، blissful-neumann (0102) 0.56، ثمّ جذر المنصّة 0.51 وجذر الإدارة 0.48. أي أنّ نحو 70% من الـ10.4 غيغا تاريخُ جلسات لم تعد تعمل.</li>
+<li>الأشجار التي أنشأها التطبيق (خارج هذا المجلّد): 34 شجرة = 4.3 غيغا؛ 18 محجوزة بجلسات 3.57 غيغا (4 منها أبقيت بعد الأرشفة لتعديلات غير مودَعة: 0102، 0201 القديمة، 0401، 0409 القديمة)؛ 13 جاهزة في مخزون التطبيق 0.73 غيغا.</li>
+<li>مجموع ما يحصيه التطبيق لجلسات Code: 13.0 غيغا؛ الحرّ على القرص 103 غيغا، فالمشكلة ليست سعةً بل نموّاً بلا تنظيف: ~150 ميغا يوميّاً من الكنّاس وحده بمعدّل اليوم، و~300 ميغا يوميّاً من الجلسات الكبيرة.</li>
+</ul></div>
+<div class="box t"><h3>الذاكرة: 14.2 غيغا مستعملة من 31.7</h3>
+<ul>
+<li>38 عمليّة <code>claude</code> = 5.06 غيغا (≈133 ميغا لكلّ عمليّة، تشمل الجلسات الخاملة المفتوحة ومراقبي الخلفيّة).</li>
+<li>WSL (Docker للمضخّة وprepush) <code>vmmemWSL</code> = 1.7 غيغا (سقفه 12 غيغا بقرار D-481م).</li>
+<li>22 عمليّة <code>python</code> + 4 <code>pythonw</code> = 0.41 غيغا (مراقبو الصناديق والنبض والخطّافات).</li>
+<li>الحرّ 11.1 غيغا الآن؛ ليلة 09-28 هبط إلى 0.16 غيغا عند إيقاظ جلسات كثيرة معاً، وهذا أصل سقف الإيقاظ (كان 6 ثمّ رُفع إلى 15 في W-20261027-006).</li>
+</ul></div>
+</div>
+
+<h2>5. أثر ذلك على الفلو والأتمتة والمضخّة وسرعة الإنتاج</h2>
+<h3>5.1 الإنتاج حتى النشر (من الدفتر)</h3>
+<table>
+<tr><th>اليوم</th><th class="num">10-14</th><th class="num">10-15</th><th class="num">10-16</th><th class="num">10-17</th><th class="num">10-18</th><th class="num">10-19</th><th class="num">10-20</th><th class="num">10-21</th><th class="num">10-22</th><th class="num">10-23</th><th class="num">10-24</th><th class="num">10-25</th><th class="num">10-26</th><th class="num">10-27</th></tr>
+<tr><td>بطاقات منشورة</td><td class="num">42</td><td class="num">24</td><td class="num">26</td><td class="num">16</td><td class="num">22</td><td class="num">30</td><td class="num">37</td><td class="num">23</td><td class="num">24</td><td class="num">31</td><td class="num">20</td><td class="num">24</td><td class="num">23</td><td class="num bad">19</td></tr>
+</table>
+<table>
+<tr><th>المقياس</th><th>القيمة</th><th>التفسير</th></tr>
+<tr><td>زمن الدورة (3 أيّام، 14 دمجاً = 4.7/يوم)</td><td class="num">وسيط 2.46 س · متوسّط 9.28 · p75 12.7 · p90 34.4</td><td>الذيل الطويل من الاعتماد لا من التنفيذ</td></tr>
+<tr><td>جاهز←اعتماد (30 يوماً، الفعليّ ≥10 د)</td><td class="num">ن=180 · وسيط 2.16 س · p90 29.9 س · أقصى 92.8 س</td><td>اعتماد المالك على الواجهات هو الذيل</td></tr>
+<tr><td>موجّه←قيد التنفيذ (منذ 10-14)</td><td class="num">وسيط 0.2 س · متوسّط <span class="bad">78 س</span> · ن=107</td><td>بطاقات تُوجَّه لجلسات لا تُوقَظ (0104، 0111، 0403، 0423)</td></tr>
+<tr><td>معتمَد←مدفوع</td><td class="num">وسيط 0.1 · متوسّط 4.2 · ن=350</td><td>المضخّة سريعة حين لا يحجبها prepush أو السقف</td></tr>
+<tr><td>مدفوع←مدموج</td><td class="num">وسيط 0.4 · متوسّط 6.3 · ن=354</td><td>CI الأحمر (pip-audit) وطلبات بلا سطر اعتماد</td></tr>
+<tr><td>تراكم ليتل</td><td class="num">فعليّ 4 مفتوحة ÷ متوقَّع 1.8 = 2.2×</td><td>العمل يقف منتظراً لا يُعالَج</td></tr>
+<tr><td>تصعيدات المضخّة</td><td class="num">49 (آخرها W-20261027-033 عند 90)</td><td>ركود مكرَّر للبطاقات نفسها</td></tr>
+</table>
+
+<h3>5.2 الإيقاظ (84 دورة منذ 10-21)</h3>
+<table>
+<tr><th>سبب التخطّي</th><th class="num">مرّات</th><th>الدلالة</th></tr>
+<tr><td>يُؤجَّل إلى الدورة التالية (دفعات/الدقيقة)</td><td class="num">74</td><td>سقف 3 جلسات في الدقيقة</td></tr>
+<tr><td>أُوقظت قبل أقلّ من 10 دقائق</td><td class="num">65</td><td>طبيعيّ</td></tr>
+<tr><td>سقف الجلسات الحيّة (كان 6)</td><td class="num bad">57</td><td>عدد الجلسات المفتوحة يحجب الإيقاظ؛ هنا العائد المباشر من التقليل</td></tr>
+<tr><td>لا معرّف للجلسة (0111: 46، 0104: 26، 0403: 25)</td><td class="num bad">97</td><td>بطاقات بيد جلسات غائبة أو غير مرئيّة للدليل؛ أُصلح 0104 اليوم والباقي بالنقل أعلاه</td></tr>
+</table>
+
+<h3>5.3 ماذا يغيّر تقليل الجلسات فعلاً؟</h3>
+<table>
+<tr><th>الإجراء</th><th>قبل (مقيس)</th><th>بعد (محسوب)</th><th>الأثر على الفلو</th></tr>
+<tr><td>دمج الكنّاسين في مهمّة واحدة كلّ ربع ساعة</td><td class="num">384 تشغيلة/يوم · ≈122 مليون رمز/يوم · ~150 ميغا/يوم</td><td class="num">96 تشغيلة/يوم · ≈30 مليون رمز/يوم · ~40 ميغا/يوم</td><td>لا أثر سلبيّ: إيقاظ ما بعد المسح يتأخّر 10 دقائق في أسوأ حال؛ ويزول ضغط 16 عمليّة قصيرة في الساعة على الذاكرة</td></tr>
+<tr><td>أرشفة 0108 و0109 و0110 و0201 و«تنظيم الصفحات»</td><td class="num">5 عمليّات ≈ 0.67 غيغا ذاكرة · 4 أشجار ≈ 0.8 غيغا · 560 ميغا نصوص حيّة</td><td class="num">0</td><td>الجلسات الحيّة من 16 إلى 11: تأجيلات السقف تنخفض، وتختفي 0 بطاقة لأنّها بلا بطاقات</td></tr>
+<tr><td>نقل بطاقات الغائبين (7 بطاقات) إلى الحيّة</td><td class="num">97 تخطّياً في 84 دورة؛ موجّه←تنفيذ متوسّط 78 س</td><td class="num">0 تخطٍّ من هذا النوع</td><td>هذا أكبر مكسب للسرعة: بطاقات نائمة أيّاماً تُحرَّك في ساعتها</td></tr>
+<tr><td>رفع سقف دفع المضخّة من 2 إلى 4 وprepush من 1 إلى 2 في الدورة</td><td class="num">دفع مؤجَّل في كلّ دورة اليوم (031، 033)</td><td class="num">يعتمد على زمن حاوية prepush (يُقاس قبل الرفع)</td><td>مباشر على معتمَد←مدفوع</td></tr>
+<tr><td>توحيد فرع الجذر مع main (601 ملفّاً غير مودَع، 117 إيداعاً غير مدفوع)</td><td class="num">خطر فقدان عمل المحور والأدوات</td><td class="num">فرع نظيف</td><td>غير مباشر: يزيل سبب اختبارات فاشلة بيئيّاً (D-477م)</td></tr>
+</table>
+<p>الخلاصة الكمّيّة: تقليل الجلسات يوفّر رموزاً وذاكرةً وقرصاً بوضوح (≈13 مليون رمز يوميّاً و≈1.4 غيغا ذاكرة فور التنفيذ)، لكنّ سرعة النشر تتحدّد باعتماد المالك على الواجهات (p90 ≈ 30 ساعة) وبسقوف المضخّة. فالترتيب الصحيح: نقل بطاقات الغائبين أوّلاً (مكسب فوريّ في السرعة)، ثمّ خفض الكنّاس (مكسب في الكلفة)، ثمّ الأرشفة (مكسب في الذاكرة)، ثمّ سقوف المضخّة بعد قياس الحاوية.</p>
+
+<h2>6. SWOT</h2>
+<div class="grid">
+<div class="box s"><h3>قوّة</h3><ul>
+<li>الدفتر مصدر حقيقة فعليّ: 794 بطاقة، 597 منشورة، وكلّ مرحلة مقيسة بالساعة.</li>
+<li>المضخّة من داخل الجلسات (225 دورة أمس) بلا جلسات مجدولة، واعتماد المالك مقروء آليّاً.</li>
+<li>7 جلسات أساسيّة مستقرّة بلا تعديلات ضائعة (0301، 0701، 0409، 0421، 0426 نظيفة).</li>
+<li>القرص فيه 103 غيغا حرّة؛ لا خطر امتلاء.</li>
+</ul></div>
+<div class="box w"><h3>ضعف</h3><ul>
+<li>المحور 0101: 493/600 رسالة و61% من حركة الصناديق، و601 ملفّ غير مودَع على فرع أمام main بـ117 إيداعاً.</li>
+<li>7 بطاقات بيد جلسات غائبة (0502، 0111، 0403، 0420، 0423) ومتوسّط موجّه←تنفيذ 78 ساعة.</li>
+<li>الكنّاس ينشئ 384 جلسة يوميّاً منذ 10-27 (ضاعف نمو النصوص والذاكرة بلا عائد).</li>
+<li>هويّة الجلسة في المجلّد المشترك تخطئ (0101 عملت 0104 اليوم؛ W-20261028-011).</li>
+<li>سجلّ الإيقاظ يتخطّى صامتاً (97 مرّة) ولا أحد يُنذَر.</li>
+</ul></div>
+<div class="box o"><h3>فرصة</h3><ul>
+<li>دمج الكنّاسين وأرشفة الكنّاس آليّاً كلّ ليلة: 13 مليون رمز و150 ميغا يوميّاً.</li>
+<li>أرشفة 5 جلسات بلا بطاقات: 1.4 غيغا ذاكرة وأشجار، وسقف إيقاظ أرحب.</li>
+<li>تحويل التقارير الدوريّة من المحور إلى 0701 وخفض رسائله.</li>
+<li>سقف الدفع 4 وprepush 2 بعد قياس الحاوية: يقصّر معتمَد←مدفوع.</li>
+</ul></div>
+<div class="box t"><h3>تهديد</h3><ul>
+<li>عودة الذاكرة الحرّة إلى الصفر عند إيقاظ موجة (واقعة 09-28) إن بقي عدد العمليّات 38+.</li>
+<li>فقدان عمل غير مودَع عند أرشفة بلا تسليم (4 أشجار أبقيت بعد الأرشفة أصلاً).</li>
+<li>حدّ 600 رسالة للمحور يقترب (107 متبقّية): توقّف التوجيه فجأة.</li>
+<li>الاعتماد على الواجهات بلا 8500 يراكم بطاقات معتمَدة بلا أدلّة بصريّة (023، 031 اليوم).</li>
+</ul></div>
+</div>
+
+<h2>7. المطلوب في الشيفرة والإعداد (كلّه، مرتّباً بالأثر إلى الكلفة)</h2>
+<table>
+<tr><th>#</th><th>الملفّ/الأداة</th><th>التعديل</th><th>الأثر</th><th>الحالة</th></tr>
+<tr><td>1</td><td>الدفتر (نقل held_by)</td><td>نقل البطاقات السبع في 3.1 إلى 0501/0701/0421/0409، وإضافة أسماء مستعارة 0111→0701 و0403→0421 و0420→0409 و0423→0421 في <code>tabs.json</code></td><td>يزيل 97 تخطّياً ويحرّك بطاقات نائمة أيّاماً</td><td>W-20261028-010 (0101)</td></tr>
+<tr><td>2</td><td>مهامّ التطبيق المجدولة</td><td>تعطيل <code>handoff-wake-sweeper</code> ودمج خطوته (قراءة <code>~/.claude/handoff/wake_*.json</code> والإرسال) في <code>wake-monitor-sweep-2</code> كلّ ربع ساعة؛ وخطوة أرشفة جلسات الكنّاس الأقدم من يوم في نظافة 03:00 (D-479م)</td><td>−288 تشغيلة/يوم، −91 مليون رمز/يوم، −110 ميغا/يوم</td><td>قرار المالك (مهامّ التطبيق)</td></tr>
+<tr><td>3</td><td><code>tools/session_identity.py</code></td><td>لا تخمين بالتركيز عند الالتباس؛ انتظار cliSessionId حتى 15 ثانية وإلا «لا أعرف أيَّها أنت» وتحقّق بـget_session self</td><td>يمنع عمل جلسة بهويّة غيرها</td><td>W-20261028-011 (0301)</td></tr>
+<tr><td>4</td><td><code>tools/wake_monitor.py</code></td><td>تحويل الرقم المدمَج في مسارَي المسح والجرس؛ إنذار لصندوق 0101 عند تكرار التخطّي لجلسة أساسيّة؛ ربط 0109/0110 إن بقيتا</td><td>إيقاظ صحيح وصامت لا يضيع</td><td>W-20261028-007/008/009 (0301)</td></tr>
+<tr><td>5</td><td><code>tools/flow_pump.py</code> + <code>approval_check.py</code></td><td>سقف الدفع 2→4 وprepush 1→2 بعد قياس زمن الحاوية؛ وإصلاح <code>HEAD_RE</code> الذي قرأ رقم حساب وهميّ «29000009» رأساً لبطاقة 022 (اشتراط حرف سادس عشريّ a–f أو علامة @)</td><td>يقصّر معتمَد←مدفوع ويمنع اعتماداً على رأس وهميّ</td><td>يحتاج بطاقة بأمر المالك</td></tr>
+<tr><td>6</td><td><code>tools/inbox.py</code> (الخطّاف)</td><td>الإقرار بعد الحقن لا قبله، ولا إقرار في جلسة عليها علامة مسح معلّق (رسالة #100 أُقرّت بجلسة مُسحت بعد دقيقتين فضاعت المهمّة الدوريّة)</td><td>لا يضيع وارد عند المسح</td><td>يحتاج بطاقة</td></tr>
+<tr><td>7</td><td><code>tools/periodic_tasks.py</code></td><td>المهامّ الدوريّة تُسجَّل في الدفتر (ملاحظة بموعد) لا في الصندوق وحده، ويُعاد إرسالها إن لم تُنجَز خلال 6 ساعات</td><td>تنفيذ مضمون</td><td>يحتاج بطاقة</td></tr>
+<tr><td>8</td><td><code>tools/ledger.py show</code></td><td>يطبع وثيقتَي JSON متتاليتين فيفشل التحليل الآليّ؛ تُطبع وثيقة واحدة</td><td>أدوات القياس والمضخّة تقرأ بلا تحايل</td><td>يحتاج بطاقة</td></tr>
+<tr><td>9</td><td>فرع الجذر <code>msg-limit-600-2026-10-22</code></td><td>إيداع ما يخصّ الأدوات ودفعه وطلب دمج إلى main، وإبعاد المخرجات (docs/، archive/، backup_*) إلى .gitignore أو مجلّد خارج المستودع</td><td>يزيل 601 ملفّاً غير مودَع وخطر الفقد</td><td>قرار المالك (D-477م أرجأه)</td></tr>
+<tr><td>10</td><td>التطبيق: تنظيف الأشجار</td><td><code>clean_up_worktrees</code> للأشجار المحجوزة بجلسات خاملة 30 يوماً، و<code>discard_kept_worktree</code> للأربع المبقاة بعد الأرشفة بعد تسليم تعديلاتها</td><td>حتى 3.6 غيغا قرص</td><td>قرار المالك</td></tr>
+<tr><td>11</td><td><code>tools/msg_counter.py</code> / دور 0101</td><td>التقارير الدوريّة (digest، pump_report) تُرسل من 0701 لا من 0101؛ وتصفير العدّاد عند 600 بأمر المالك</td><td>يحمي المحور من التوقّف عند الحدّ</td><td>قرار المالك</td></tr>
+</table>
+
+<h2>8. استهلاك التوكنز: الحاضر والأثر (مقيس 11:50 من كلّ نصوص CLI)</h2>
+<h3>8.1 يوميّاً، كلّ الجلسات</h3>
+<table>
+<tr><th>اليوم</th><th class="num">طلبات</th><th class="num">قراءة ذاكرة (مليون)</th><th class="num">كتابة ذاكرة (مليون)</th><th class="num">مخرجات (مليون)</th><th class="num">منشور</th></tr>
+<tr><td>10-21</td><td class="num">11,304</td><td class="num">2,098</td><td class="num">47.7</td><td class="num">8.16</td><td class="num">23</td></tr>
+<tr><td>10-22</td><td class="num">8,467</td><td class="num">1,612</td><td class="num">34.3</td><td class="num">5.50</td><td class="num">24</td></tr>
+<tr><td>10-23</td><td class="num">9,185</td><td class="num">1,401</td><td class="num">45.6</td><td class="num">5.70</td><td class="num">31</td></tr>
+<tr><td>10-24</td><td class="num">8,591</td><td class="num">1,011</td><td class="num">38.5</td><td class="num">4.66</td><td class="num">20</td></tr>
+<tr><td>10-25</td><td class="num">5,668</td><td class="num">754</td><td class="num">22.0</td><td class="num">3.43</td><td class="num">24</td></tr>
+<tr><td>10-26</td><td class="num">5,306</td><td class="num">1,130</td><td class="num">23.3</td><td class="num">3.70</td><td class="num">23</td></tr>
+<tr><td>10-27</td><td class="num">9,615</td><td class="num">1,413</td><td class="num">40.1</td><td class="num">10.85</td><td class="num">19</td></tr>
+<tr><td>10-28 حتى 11:40</td><td class="num">2,510</td><td class="num">256</td><td class="num">13.5</td><td class="num">2.53</td><td class="num">1</td></tr>
+</table>
+<p>لا علاقة بين الرموز والإنتاج: 10-27 أعلى مخرجات في الأسبوع (10.85 مليون) وأقلّ نشر (19). المنشور يتبع الاعتماد والدمج لا حجم التوليد.</p>
+
+<h3>8.2 بالصنف في 7 أيّام (10-21 إلى 10-28)</h3>
+<table>
+<tr><th>الصنف</th><th class="num">جلسات CLI</th><th class="num">طلبات</th><th class="num">مدخلات (قراءة+كتابة، مليون)</th><th class="num">مخرجات (مليون)</th><th class="num">الحصّة من المدخلات</th><th>ملاحظة</th></tr>
+<tr><td>0101 المحور</td><td class="num">32</td><td class="num">11,467</td><td class="num">1,694</td><td class="num">8.81</td><td class="num bad">35%</td><td>26 مسحاً ذاتيّاً؛ السياق يبلغ 175 ألفاً ثمّ يُمسح</td></tr>
+<tr><td>«تنظيم الصفحات» (خارج الفلو)</td><td class="num">20</td><td class="num">4,930</td><td class="num">1,088</td><td class="num">7.59</td><td class="num bad">22.5%</td><td>لا بطاقة ولا دور؛ أعلى مخرجات بعد المحور</td></tr>
+<tr><td>0301 الحوكمة</td><td class="num">9</td><td class="num">2,796</td><td class="num">548</td><td class="num">1.84</td><td class="num">11%</td><td>بطاقات الأدوات</td></tr>
+<tr><td>0108 التقييم والعصف</td><td class="num">6</td><td class="num">1,515</td><td class="num">239</td><td class="num">1.48</td><td class="num">5%</td><td>بلا بطاقة مفتوحة</td></tr>
+<tr><td>0601 الإصدار</td><td class="num">6</td><td class="num">1,614</td><td class="num">212</td><td class="num">0.59</td><td class="num">4.4%</td><td></td></tr>
+<tr><td>كنّاس (424 تشغيلة)</td><td class="num">424</td><td class="num">2,688</td><td class="num">134</td><td class="num">0.78</td><td class="num">2.8%</td><td>بمعدّل اليوم تصير ≈120 مليون يوميّاً (≈15% فأكثر)</td></tr>
+<tr><td>0110 الصحّة</td><td class="num">3</td><td class="num">740</td><td class="num">123</td><td class="num">0.50</td><td class="num">2.5%</td><td>بلا بطاقة مفتوحة</td></tr>
+<tr><td>0501 المعاينة</td><td class="num">5</td><td class="num">943</td><td class="num">119</td><td class="num">0.44</td><td class="num">2.4%</td><td></td></tr>
+<tr><td>0702 معاون 0701</td><td class="num">3</td><td class="num">765</td><td class="num">97</td><td class="num">0.40</td><td class="num">2%</td><td></td></tr>
+<tr><td>0201 الرصد والتقييم</td><td class="num">4</td><td class="num">594</td><td class="num">73</td><td class="num">0.28</td><td class="num">1.5%</td><td>بلا بطاقة مفتوحة</td></tr>
+<tr><td>0109 السجلّ</td><td class="num">4</td><td class="num">454</td><td class="num">67</td><td class="num">0.31</td><td class="num">1.4%</td><td>بلا بطاقة مفتوحة</td></tr>
+<tr><td>0701 الجودة</td><td class="num">3</td><td class="num">536</td><td class="num">61</td><td class="num">0.24</td><td class="num">1.3%</td><td>أقلّ الأساسيّات كلفةً مع أعلى إيقاظ (54)</td></tr>
+<tr><td>المنفّذون 04 (0409، 0421، 0426، 0403، 0420، 0423، 0111)</td><td class="num">14</td><td class="num">1,483</td><td class="num">200</td><td class="num">1.74</td><td class="num">4.1%</td><td>الإنتاج الفعليّ للمنصّة</td></tr>
+<tr><td>الباقي (0104، 0502، 0105، 0106، 0107، بلا سجلّ)</td><td class="num">47</td><td class="num">1,789</td><td class="num">216</td><td class="num">1.21</td><td class="num">4.5%</td><td></td></tr>
+<tr><th>المجموع</th><th class="num">606</th><th class="num">33,000</th><th class="num">≈4,870 (≈675/يوم)</th><th class="num">27.3 (≈3.9/يوم)</th><th class="num">100%</th><th>كلفة البطاقة المنشورة ≈30 مليون مدخلات و165 ألف مخرجات (164 بطاقة في الأسبوع)</th></tr>
+</table>
+
+<h3>8.3 أثر كلّ إجراء على التوكنز يوميّاً (محسوب من القياس أعلاه)</h3>
+<table>
+<tr><th>الإجراء</th><th class="num">قبل (مدخلات/يوم)</th><th class="num">بعد</th><th class="num">الوفر/يوم</th><th class="num">الوفر/شهر</th><th>الثقة</th></tr>
+<tr><td>دمج الكنّاسين: 384 ← 96 تشغيلة (317 ألف للتشغيلة)</td><td class="num">≈122 مليون</td><td class="num">≈30 مليون</td><td class="num ok">≈91 مليون</td><td class="num">≈2.7 مليار</td><td>عالية (مقيس لكلّ تشغيلة)</td></tr>
+<tr><td>تقليص تشغيلة الكنّاس (list_sessions بحدّ 80 + ثلاث أدوات) إلى سكربت واحد يطبع ما يُرسَل</td><td class="num">317 ألف/تشغيلة</td><td class="num">≈90 ألف/تشغيلة</td><td class="num ok">≈22 مليون (بعد الدمج)</td><td class="num">≈0.65 مليار</td><td>متوسّطة</td></tr>
+<tr><td>أرشفة «تنظيم الصفحات» (خارج الفلو)</td><td class="num">≈155 مليون</td><td class="num">0</td><td class="num ok">≈155 مليون</td><td class="num">≈4.7 مليار</td><td>عالية (ما لم تُفتح من جديد)</td></tr>
+<tr><td>أرشفة 0108 و0109 و0110 و0201</td><td class="num">≈72 مليون</td><td class="num">≈10 مليون (عند الطلب)</td><td class="num ok">≈60 مليون</td><td class="num">≈1.8 مليار</td><td>عالية</td></tr>
+<tr><td>المحور: التقارير إلى 0701 ومسح عند 120 ألفاً بدل 175</td><td class="num">≈242 مليون</td><td class="num">≈170 مليون</td><td class="num ok">≈70 مليون</td><td class="num">≈2.1 مليار</td><td>متوسّطة (تعتمد على حجم المحادثة)</td></tr>
+<tr><th>المجموع الممكن</th><th class="num">≈675 مليون</th><th class="num">≈280 مليون</th><th class="num ok">≈400 مليون (−58%)</th><th class="num">≈12 مليار</th><th>بلا أيّ أثر على الإنتاج: كلّه خارج مسار البطاقة</th></tr>
+</table>
+<p>ما لا يوفّره التقليل: رموز المنفّذين 04 (4.1%) و0501 و0601 و0701 هي كلفة الإنتاج نفسها، وتزيد لا تنقص حين يتسارع النشر. الهدف الصحيح: خفض حصّة المحور والكنّاس وخارج الفلو من 60% إلى أقلّ من 30%، فيصير أكثر من ثلثي الرموز في أيدي من ينتج.</p>
+
+<h2>9. توصية الأرشفة النهائيّة (للمالك؛ الأرشفة بيده وحدَه)</h2>
+<ol>
+<li><span class="v">الآن بلا شرط:</span> 357 جلسة كنّاس (بعد تعطيل المهمّة المكرّرة)، و«تنظيم الصفحات والبطاقات».</li>
+<li><span class="v">بعد تسليم (إيداع التعديلات غير المودَعة ومذكّرة في handover_notes):</span> 0108 (5 ملفّات)، 0109 (5)، 0110 (8)، 0201 (26 ملفّاً و342 ميغا نصوص). أعمالها: 0109→0301، 0110→0701، 0201 الرصد→0701 والتقييم عند الطلب.</li>
+<li><span class="v">بعد نشر بطاقاتها:</span> 0702 (تُدمج في 0701)، 0409، 0421، 0426 (مرنة 04).</li>
+<li><span class="v">تبقى:</span> 0101، 0301، 0501، 0601، 0701، و0104 عند الطلب للأحكام الأمنيّة.</li>
+</ol>
+<p>النتيجة: من 16 جلسة مرقّمة/عاملة إلى 6 دائمة + 3 مرنة مؤقّتة، ومن 384 جلسة كنّاس يوميّاً إلى 96، وذاكرة Claude من 5.1 غيغا إلى نحو 3.5، ونموّ القرص من ~450 ميغا يوميّاً إلى ~300.</p>
+
+<p class="small">المصادر: <code>%APPDATA%/Claude/claude-code-sessions</code> (889 ملفّاً)، <code>~/.claude/projects</code> (نصوص CLI)، <code>ledger/events.jsonl</code>، <code>wake_log.jsonl</code>، <code>ledger/inbox/*.jsonl</code>، <code>msg_counter.json</code>، <code>ledger/flow_pump.log</code>، <code>ledger/pump_escalations.jsonl</code>، أداة التطبيق get_storage_usage (11:18)، PowerShell Get-Process (11:35)، <code>tools/flow_metrics.py</code>، <code>tools/ready_to_approval_metric.py</code>، <code>tools/token_report.py</code>، <code>tools/session_health.py</code>.</p>
+</body>
+</html>
