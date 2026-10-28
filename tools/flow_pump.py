@@ -845,6 +845,9 @@ def tree_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = No
 
 #: (W-20261023-016) مرحلة فتح الطلب: بطاقةٌ pushed بلا طلبٍ على فرعها
 PLATFORM_SLUG = "sh-school/shschool_mvp"
+#: مستودعُ الحوكمة (maestro-v2): بطاقاتُه تُدفع إلى فروع w0xxx/claude ‏ثمّ يُفتح طلبها هنا لا في المنصّة
+GOV_SLUG = "mesuef1974/maestro-v2"
+GOV_DIR = str(HERE.parent).replace("\\", "/")
 OPENPR_MAX = 2
 #: مفتاحُ إيقاف المرحلة وحدَها
 NO_OPENPR = HERE.parent / "ledger" / "flow_pump.noopenpr"
@@ -888,7 +891,7 @@ def openpr_block(cid: str, head_full: str, files: list[str]) -> str | None:
 
 
 def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None, sh=None, platform: str | None = None,
-                limit: int = OPENPR_MAX) -> list[str]:
+                limit: int = OPENPR_MAX, gov: str | None = None) -> list[str]:
     """(W-20261023-016) بطاقةٌ pushed بلا طلبٍ مفتوحٍ أو مدموج: يُفتح طلبٌ إلى المنصّة من فرعها بعنوانٍ ووصفٍ من حقول البطاقة بالعربية
     وسطرِ الاعتماد، بشرط: رأسُ الفرع البعيد = رأسُ الاعتماد، approval_check ✔، والمساراتُ بلا هجراتٍ أو أمنٍ أو اتّساع. لا دمج ولا --auto
     (تتولّاه مرحلةُ الدمج بعد سطر الاعتماد وخضرة CI). يُسجَّل رقمُ الطلب ملاحظةً على البطاقة (ledger_sync يربط بالرأس). حدٌّ أقصى `limit` في الدورة."""
@@ -899,8 +902,10 @@ def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None,
         return []
     git, sh = git or push_approved._git, sh or _sh
     platform = platform or PLATFORM_DIR
+    gov = gov or GOV_DIR
     pairs, _ = card_prs(states, prs)
     remote: list[tuple[str, str]] | None = None
+    gov_remote: list[tuple[str, str]] | None = None
     out: list[str] = []
     done = 0
     for cid in sorted(items):
@@ -912,6 +917,11 @@ def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None,
             if remote is None:
                 return out + ["تعذّرت قراءةُ فروع origin — لا فتحَ طلبات في هذه الدورة"]
         cands = [(n, sha) for n, sha in remote if push_approved.PUMP_BRANCH_RE.match(n) and push_approved.same_head(sha, want)]
+        cands_platform = list(cands)
+        if not cands:  # لا فرعَ في المنصّة على الرأس: بطاقةُ حوكمةٍ؟ يُقرأ مستودعُ maestro-v2
+            if gov_remote is None:
+                gov_remote = _remote_branches(gov, git) or []
+            cands = [(n, sha) for n, sha in gov_remote if push_approved.PUMP_BRANCH_RE.match(n) and push_approved.same_head(sha, want)]
         if len(cands) != 1:
             rmap = dict(remote)
             if len(cands) > 1:
@@ -922,9 +932,12 @@ def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None,
                 out.append(f"{cid}: لا فرعَ بعيداً مسموحاً على الرأس {want[:8]} — لا طلب {hand_off(cid, 'pushed_no_pr', item, apply)}")
             continue
         branch, full = cands[0]
+        repo_dir, slug = platform, PLATFORM_SLUG
+        if len(cands) == 1 and not cands_platform:
+            repo_dir, slug = gov, GOV_SLUG
         if any(p.get("headRefName") == branch or str(p.get("headRefOid") or "")[:8] == full[:8] for p in prs):
             continue
-        rc, text = sh(["gh", "pr", "list", "--repo", PLATFORM_SLUG, "--head", branch, "--state", "all", "--json", "number,state,headRefOid"], platform)
+        rc, text = sh(["gh", "pr", "list", "--repo", slug, "--head", branch, "--state", "all", "--json", "number,state,headRefOid"], repo_dir)
         try:
             known = json.loads(text) if rc == 0 else None
         except ValueError:
@@ -937,7 +950,7 @@ def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None,
         if not approval_ok(cid, want[:8]):
             out.append(f"{cid}: رأس {want[:8]} بلا اعتمادٍ ثابت — لا طلب")
             continue
-        rc, listing = sh(["gh", "api", f"repos/{PLATFORM_SLUG}/compare/main...{full}", "--paginate", "--jq", ".files[].filename"], platform)
+        rc, listing = sh(["gh", "api", f"repos/{slug}/compare/main...{full}", "--paginate", "--jq", ".files[].filename"], repo_dir)
         files = [f for f in listing.splitlines() if f.strip()] if rc == 0 else None
         if not files:
             out.append(f"{cid}: تعذّر قياسُ مسارات الفرع {branch} أو لا فرقَ عن main — لا طلب")
@@ -962,7 +975,7 @@ def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None,
         try:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
                 f.write(_pr_body(line, cid, item))
-            rc, msg = sh(["gh", "pr", "create", "--repo", PLATFORM_SLUG, "--base", "main", "--head", branch, "--title", title, "--body-file", tmp], platform)
+            rc, msg = sh(["gh", "pr", "create", "--repo", slug, "--base", "main", "--head", branch, "--title", title, "--body-file", tmp], repo_dir)
         finally:
             try:
                 os.unlink(tmp)
