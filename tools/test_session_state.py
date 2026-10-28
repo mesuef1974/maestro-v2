@@ -292,6 +292,17 @@ def test_title_wins_over_pending_and_pending_is_consumed(tree):
     assert not list((tree / "handover_notes").glob("pending_clear_*"))
 
 
+def test_w20261028_027_root_sweeper_after_clear_request_keeps_marker_and_injects_nothing(tree):
+    """W-20261028-027 (الواقعة 14:09): كنّاسٌ يبدأ في جذر المجلّد المشترك بمعرّفٍ غير مطابق بعد طلب مسحٍ لـ0108 ⇒ لا حقنَ ولا حذفَ للعلامة."""
+    root = "C:/Users/mesue/delivery_manager_work"
+    sweeper = json.dumps({"source": "startup", "cwd": root, "session_id": "wake-sweeper-unknown"})
+    _ready(tree)
+    marker = ss.write_pending("0108", root, tree, NOW)
+    assert ss.cmd_hook(sweeper, tree, NOW, UNKNOWN) == ""
+    assert marker.exists()  # العلامةُ تبقى لتستهلكها الجلسةُ الصحيحة
+    assert "0108" in ss.pending_markers(tree, NOW)
+
+
 def test_injection_logged_in_ledger_without_staling_focus(tree):
     _ready(tree)
     ss.set_focus("0108", "W-1", 1, root=tree)
