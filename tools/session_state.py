@@ -620,6 +620,13 @@ def pending_markers(root: Path | None = None, now: datetime | None = None) -> di
     return out
 
 
+def clear_markers_for_sid(num: str, sid: str, root: Path | None = None) -> int:
+    """W-20261028-027: لا تُحذف العلامةُ إلا بمعرّفٍ يطابق جلسةً حيّة؛ بلا معرّفٍ أو بمعرّفٍ غير مطابق = قراءةٌ فقط (0)."""
+    if not sid or not local_session_id(sid).startswith("local_"):
+        return 0
+    return clear_markers(num, root)
+
+
 def clear_markers(num: str, root: Path | None = None) -> int:
     """يحذف علامتَي المسح لرقمٍ بعد أن استعادت الجلسةُ حالتَها (my_state أو restore)؛ يعيد عددَ الملفّات المحذوفة. لا يرفع استثناءً."""
     if not SESSION_RE.match(num):
@@ -735,6 +742,23 @@ def alert_guard_failure(num: str, tokens: int, reasons: list[str], root: Path | 
         return False
 
 
+def session_identity_ttl() -> int:
+    import session_identity
+
+    return session_identity.AUTO_CLEAR_TTL_S
+
+
+def _auto_clear_fresh(num: str, root: Path | None, now: datetime) -> bool:
+    """W-20261028-027 (5): طلبٌ أقدمُ من مهلة المسح الذاتيّ والسياقُ ما زال فوق العتبة = علامةٌ قديمةٌ لا تمنع طلباً جديداً."""
+    import session_identity
+
+    try:
+        d = json.loads(auto_clear_path(num, root).read_text(encoding="utf-8"))
+        return now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=session_identity.AUTO_CLEAR_TTL_S)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def maybe_auto_clear(num: str, cwd: str, transcript: str | Path, root: Path | None = None, now: datetime | None = None) -> str:
     """عند بلوغ العتبة يكتب علامةَ «مسح معلّق» وطلبَ المسح الذاتيّ بصمت؛ ويسقط بصمت إن فشل الحارس (focus/duties/verify).
     idempotent: لا يكتب ثانيةً ما دام الطلب قائماً. يعيد وصفاً قصيراً للسجلّ ولا يرفع استثناءً."""
@@ -746,7 +770,7 @@ def maybe_auto_clear(num: str, cwd: str, transcript: str | Path, root: Path | No
         return f"سياق: {tokens}"
     if not cwd:
         return f"سياق: {tokens}، بلا شجرة"
-    if num in auto_clear_nums(root, now):
+    if num in auto_clear_nums(root, now) and _auto_clear_fresh(num, root, now):
         return f"سياق: {tokens}، الطلبُ قائم"
     if renew_focus(num, root) or derive_focus(num, root):  # W-20261027-018: بلا focus معلَن يُشتقّ من أحدث بطاقة محجوزة؛ W-20261025-024: تقدّمُ الدفتر لا يُسقط جلسةً أعلنت تركيزَها؛ ثمّ تُولَّد الحالةُ ليطابقها verify
         try:
@@ -1219,6 +1243,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("generate", "verify", "restore", "prepare-clear"):
         sp = sub.add_parser(name)
         sp.add_argument("num")
+        if name == "restore":
+            sp.add_argument("--sid", default="", help="معرّفُ جلسة CLI؛ بلا مطابقةٍ لجلسةٍ حيّةٍ لا تُحذف علامةُ المسح (W-20261028-027)")
         if name in ("generate", "prepare-clear"):
             sp.add_argument("--label", default="")
             sp.add_argument("--cwd", default="", help="شجرةُ عمل الجلسة لالتقاط فرعها وملفّاتها المعدَّلة")
@@ -1379,7 +1405,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001 — تُطبع المحفوظةُ مع تنبيه
             print(f"تنبيه: تعذّرت إعادة الاشتقاق ({e}); المطبوع هو المحفوظ", file=sys.stderr)
         print(render(st))
-        clear_markers(a.num)  # الاستعادةُ تمّت: لا إيقاظَ «بعد المسح» بعدها (W-20261026-007)
+        clear_markers_for_sid(a.num, getattr(a, "sid", ""))  # الاستعادةُ تمّت: لا إيقاظَ «بعد المسح» بعدها (W-20261026-007)
         return 0
     return 2
 

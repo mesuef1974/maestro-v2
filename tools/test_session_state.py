@@ -642,6 +642,14 @@ class TestAutoClear:
         assert "الطلبُ قائم" in ss.maybe_auto_clear("0108", "D:/w", t, tree, NOW + timedelta(minutes=1))
         assert ss.auto_clear_path("0108", tree).read_text(encoding="utf-8") == before  # idempotent
 
+    def test_w20261028_027_stale_request_does_not_block_new_one(self, tree, tmp_path):
+        """W-20261028-027 (5): علامةٌ أقدمُ من مهلة المسح الذاتيّ والسياقُ ما زال فوق العتبة لا تمنع طلباً جديداً."""
+        self._ready(tree)
+        t = self._tx(tmp_path, self._asst(0, 175_000, 0))
+        assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", t, tree, NOW)
+        later = NOW + timedelta(seconds=ss.session_identity_ttl() + 60)
+        assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", t, tree, later)
+
     def test_request_expires_after_ttl(self, tree, tmp_path):
         self._ready(tree)
         ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(0, 180_000, 0)), tree, NOW)
@@ -945,7 +953,14 @@ def test_restore_command_clears_markers(tree, monkeypatch, capsys):
     ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
     ss.write_pending("0108", "D:/a", tree, NOW)
     monkeypatch.setattr(ss, "ROOT", tree)
+    monkeypatch.setattr(ss, "local_session_id", lambda s, base=None: "local_1" if s == "live" else s)
     monkeypatch.setattr("sys.argv", ["session_state.py", "restore", "0108"])
+    ss.main()
+    assert "0108" in ss.pending_markers(tree, NOW)  # W-20261028-027: بلا --sid قراءةٌ فقط
+    monkeypatch.setattr("sys.argv", ["session_state.py", "restore", "0108", "--sid", "unknown"])
+    ss.main()
+    assert "0108" in ss.pending_markers(tree, NOW)  # معرّفٌ غير مطابق
+    monkeypatch.setattr("sys.argv", ["session_state.py", "restore", "0108", "--sid", "live"])
     ss.main()
     assert ss.pending_markers(tree, NOW) == {}
 

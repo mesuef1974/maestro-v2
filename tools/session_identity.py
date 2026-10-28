@@ -160,7 +160,7 @@ def _num_of(title: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def message(title: str | None, tree: str | None) -> str:
+def message(title: str | None, tree: str | None, sid: str = "") -> str:
     if title is None:
         return ("[هويّة الجلسة] لم أجد اسمَ هذه الشجرة (" + str(tree) + ") في session_names.json — "
                 "اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض أنّك مرنة 04SS.")
@@ -177,7 +177,7 @@ def message(title: str | None, tree: str | None) -> str:
             else "role_cards/04.md (المرنة) ثمّ ledger.py show <رمز بطاقتك>") if flexible else f"role_cards/{num}.md"
     return (f"[هويّة الجلسة] أنت «{title}» — رقمُك {num}. "
             f"اقرأ بطاقتك `C:/Users/mesue/delivery_manager_work/{card}` ثمّ شغّل "
-            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ (اكتب وصفَ أداة Bash بالعربيّة، مثل «قراءة حالة جلستي»، وإلا رفضه lang_guard). "
+            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}{f' --sid {sid}' if sid else ''}` قبل أيّ ردّ (اكتب وصفَ أداة Bash بالعربيّة، مثل «قراءة حالة جلستي»، وإلا رفضه lang_guard). "
             + ("" if flexible else "لا تفترض أنّك مرنة 04SS. ")
             + "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل.")
 
@@ -275,7 +275,7 @@ def main() -> int:
         if live is None:
             mark_pending(session_id, cwd)
         if live is not None:
-            print(message(live, None))
+            print(message(live, None, session_id))
         elif candidates:
             print("[هويّة الجلسة] تشترك في هذا المجلّد جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
                   + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
@@ -303,7 +303,7 @@ def main() -> int:
         print("[هويّة الجلسة] تشترك في هذه الشجرة (" + tree + ") جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
               + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
     else:
-        print(message(live or lookup(cwd, names), tree))
+        print(message(live or lookup(cwd, names), tree, session_id))
     for line in directory_lines(_num_of(live or lookup(cwd, names))):
         print(line)
     try:  # تحذيرٌ فقط (لا حجب): شجرةٌ بلا ترقية مهارة الهويّة البصريّة (#897) تعمل بنسخةٍ قديمةٍ منها

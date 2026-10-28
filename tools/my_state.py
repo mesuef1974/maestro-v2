@@ -214,6 +214,7 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="اعرض المنتهيةَ أيضاً")
     parser.add_argument("--check-remote", action="store_true", help="افحص بـgit ls-remote بطاقاتِ pushed (شبكة)")
     parser.add_argument("--brief", action="store_true", help="حالةٌ موجزةٌ ≤12 سطراً")
+    parser.add_argument("--sid", default="", help="معرّفُ جلسة CLI؛ بلا مطابقةٍ لجلسةٍ حيّةٍ لا تُحذف علامةُ المسح (W-20261028-027)")
     args = parser.parse_args()
     m = re.match(r"\s*(\d{4})\b", args.session)  # يقبل الاسمَ الظاهر كاملاً: نأخذ أوّل أربع خانات
     if not m:
@@ -223,7 +224,7 @@ def main() -> None:
     try:  # أوّلُ تشغيلٍ بعد المسح = استعادة: تُحذف علامتا المسح فلا يوقظها الكنّاسُ ثانيةً (W-20261026-007)
         import session_state
 
-        session_state.clear_markers(args.session)
+        session_state.clear_markers_for_sid(args.session, args.sid)
     except Exception:  # noqa: BLE001 — قراءةُ البطاقات لا تسقط بسبب العلامات
         pass
     try:  # W-20261026-008: انتظارٌ كُتب تقريرُه المذكور يُغلق آلياً فلا يبقى في الحالة
