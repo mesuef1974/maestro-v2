@@ -234,6 +234,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
+    if sys.stdout is not None: sys.stdout.reconfigure(encoding="utf-8")
+    if sys.stderr is not None: sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())
