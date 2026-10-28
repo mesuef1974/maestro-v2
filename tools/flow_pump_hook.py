@@ -39,6 +39,7 @@ STALE_LOCK_S = 900
 
 #: بطاقاتٌ تُستثنى من النقل كما كانت في المهمّة المجدولة.
 SKIP = ("W-20261001-006",)
+CREATE_NO_WINDOW = 0x08000000
 
 #: مهلةُ الدورة بعد أمرٍ يحرّك الفلو، ومهلةُ الدورة الاحتياطيّة عند ختام الدور أو بدء الجلسة.
 FLOW_INTERVAL_S = 60
@@ -93,7 +94,9 @@ def spawn() -> None:
     STAMP.touch()
     flags = 0
     if os.name == "nt":
-        flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: طرفيّةٌ مخفيّة لا DETACHED_PROCESS. بلا طرفيّة يرث أحفادُ المضخّة
+        # (pytest tools/ ثمّ git في الاختبارات) مقبضَ دخلٍ باطلاً فيسقط كلُّ subprocess بـWinError 6، فلا يُنتَج إيصالُ الحوكمة أبداً (10-28).
+        flags = CREATE_NO_WINDOW | 0x00000200
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     with OUT.open("w", encoding="utf-8") as out:
         subprocess.Popen(
