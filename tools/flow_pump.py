@@ -98,9 +98,11 @@ OWNER_BY_COND = {
     "head_unapproved": "0101",   # رأسٌ بلا اعتمادٍ ثابت
     "migrations": "0601",        # هجراتٌ/أمنٌ تمنع الآليّ: الدمجُ والنشر لـ0601
     "pushed_no_pr": "holder",    # pushed بلا طلبٍ يُفتح: صاحبُ البطاقة
-    "prepush": "0501",           # إيصالُ prepush لا يُنتَج
+    "prepush": "holder",         # prepush أحمرُ على الرأس: عيبٌ في شيفرة البطاقة يصلحه حاملُها (لا 0501 التي لا تكتب شيفرة)
+    "prepush_env": "0701",       # prepush لم يُقَس لعلّةٍ في البيئة (مهلة، أداةٌ غائبة، WinError): الأتمتة
 }
 PUMP_FROM = "0000"  # مرسِلُ المضخّة في الصندوق (W-20261027-006)؛ رقمٌ صالحٌ لـinbox.NUM لا يخصّ جلسة
+ROUTER = "0101"  # حاملٌ بلا مراقبٍ حيّ لا يقرأ صندوقه: تُحال رسالتُه إلى التوجيه لإعادة التكليف
 PENDING_DEDUPE_H = 6
 
 
@@ -114,16 +116,41 @@ COND_TEXT = {
     "head_unapproved": "رأسها بلا اعتمادٍ ثابت",
     "migrations": "تمسّ هجراتٍ/أمناً فيمنع الآليُّ: الدمجُ والنشر لك",
     "pushed_no_pr": "مدفوعةٌ بلا طلب",
-    "prepush": "إيصالُ prepush لا يُنتَج",
+    "prepush": "إيصالُ prepush لا يُنتَج: فحصٌ أحمر على رأسها",
+    "prepush_env": "إيصالُ prepush لا يُنتَج لعلّةٍ في البيئة لا في الشيفرة",
 }
 
+#: علاماتُ الفشل البيئيّ في مخرَج prepush: لا عيبَ في شيفرة البطاقة، فمالكُه الأتمتة لا الحامل
+ENV_FAIL_MARKS = ("WinError", "The handle is invalid", "غير مقيس", "غير متاح")
 
-def hand_off(cid: str, cond: str, item: dict, apply: bool, root: Path | None = None, now=None) -> str:
+
+def failure_cond(code: int, log: str) -> str:
+    """شرطُ الإحالة لفشل prepush: «prepush_env» لمهلةٍ (124) أو أداةٍ غائبة (3، 127) أو حين يحمل كلُّ سطرِ فشلٍ علامةَ بيئة
+    (WinError 6 في كلّ FAILED)؛ وسطرُ فشلٍ واحدٌ بلا علامةٍ يجعله «prepush»: فحصٌ أحمر في الشيفرة يصلحه الحامل."""
+    if code in (3, 124, 127):
+        return "prepush_env"
+    text = log or ""
+    bad = [x for x in text.splitlines() if x.lstrip().startswith(("✘", "FAILED", "ERROR"))]
+    if bad:
+        return "prepush_env" if all(any(m in x for m in ENV_FAIL_MARKS) for x in bad) else "prepush"
+    return "prepush_env" if any(m in text for m in ENV_FAIL_MARKS) else "prepush"
+
+
+def hand_off(cid: str, cond: str, item: dict, apply: bool, root: Path | None = None, now=None, *, detail: str = "",
+             alive=None) -> str:
     """يُنسب الشرطُ العالقُ إلى مالكه: يُلحَق بصندوقه رسالةٌ بـinbox.send (لا pending_wakes) فيلتقطها مراقبُه فوراً، ويعيد وسمَ «[مالك=XXXX]» للسطر.
-    في العرض (apply=False) لا كتابة. لا تتكرّر رسالةُ (بطاقة، شرط، حالة) خلال PENDING_DEDUPE_H ساعات. بلا مالكٍ معروفٍ يُوسَم «[مالك=؟]»."""
+    في العرض (apply=False) لا كتابة. لا تتكرّر رسالةُ (بطاقة، شرط، حالة) خلال PENDING_DEDUPE_H ساعات. بلا مالكٍ معروفٍ يُوسَم «[مالك=؟]».
+    `detail` (السببُ وموضعُ السجلّ) يُلحق بالنصّ ليعمل المالكُ بلا تشخيص. مالكٌ مشتقٌّ من الحامل بلا مراقبٍ حيّ (`alive`، الافتراضيّ
+    inbox.watcher_alive) يُحال إلى ROUTER: الجلسةُ المؤرشفة أو الخاملة بلا مراقب لا تقرأ صندوقها فتعلق البطاقة صامتة (035 عند 0420، 10-28)."""
     owner = owner_of(cond, item)
     if not re.match(r"^\d{4}", owner):
         return "[مالك=؟]"
+    if OWNER_BY_COND[cond] == "holder" and owner != ROUTER:
+        import inbox  # noqa: PLC0415
+
+        if not (alive or inbox.watcher_alive)(owner, root):
+            detail = (detail + " — " if detail else "") + f"الحامل {owner} بلا مراقبٍ حيّ: أعيدي تكليفها"
+            owner = ROUTER
     if not apply:
         return f"[مالك={owner}]"
     from datetime import datetime, timedelta  # noqa: PLC0415
@@ -137,7 +164,7 @@ def hand_off(cid: str, cond: str, item: dict, apply: bool, root: Path | None = N
         for r in inbox._rows(owner, root):
             if r["k"] == "msg" and r["text"].startswith(tag) and now - datetime.fromisoformat(r["ts"]) < timedelta(hours=PENDING_DEDUPE_H):
                 return f"[مالك={owner}]"
-        text = f"{tag} {cid}: {COND_TEXT.get(cond, cond)} — أنت مالكُ حلّه (من المضخّة)."
+        text = f"{tag} {cid}: {COND_TEXT.get(cond, cond)}" + (f" — {detail}" if detail else "") + " — أنت مالكُ حلّه (من المضخّة)."
         inbox.send(owner, PUMP_FROM, text, root, ts=now.isoformat(timespec="seconds"))
     except (OSError, ValueError, KeyError, TypeError):
         pass
@@ -400,11 +427,25 @@ def _log_once(text: str) -> None:
 PUSH_STATUS = {"pushed": "دُفع ✔", "dry": "يُدفع (عرض)", "refused": "✘ رُفض الدفع", "skipped": "تخطٍّ"}
 
 
-def defer_for_ci(items: dict[str, dict], repos: list[str], git, busy_fn) -> tuple[dict[str, dict], list[str]]:
+def guard_passes(cid: str, tree: dict, items: dict[str, dict], git, approved=None) -> bool:
+    """هل يقبل حارسُ الدفع (بشروط المضخّة: فرعٌ مسموح وإيصالُ prepush للرأس) هذه البطاقةَ الآن؟"""
+    try:
+        push_approved.guard(cid, tree["branch"], tree["path"], items, git, approved or push_approved.approval_ok,
+                            push_approved.PUMP_BRANCH_RE, require_receipt=True)
+    except (push_approved.PushRefused, ledger.LedgerError, OSError, KeyError):
+        return False
+    return True
+
+
+def defer_for_ci(items: dict[str, dict], repos: list[str], git, busy_fn, *, ready=None,
+                 approved=None) -> tuple[dict[str, dict], list[str]]:
     """(W-20261022-019) بطاقاتُ المنصّة لا تُدفع وفي المنصّة طلبان قيد الفحص: (ما يُدفع، أسطرُ التأجيل بسببه).
-    السقفُ يشمل ما يُدفع في هذه الدورة نفسِها (المفتوحُ قيدَ الفحص + المدفوعُ الآن ≤ MAX_IN_CI)؛ ولا يُعاد فحصٌ آليّاً."""
+    السقفُ يشمل ما يُدفع في هذه الدورة نفسِها (المفتوحُ قيدَ الفحص + المدفوعُ الآن ≤ MAX_IN_CI)؛ ولا يُعاد فحصٌ آليّاً.
+    الخانةُ تُحجز لما يقبله حارسُ الدفع وحدَه (`ready(cid, tree)`، الافتراضيّ guard_passes): بطاقةٌ سيرفضها الحارس (بلا إيصال مثلاً)
+    تمرّ إلى المسح ليظهر سببُ رفضها ولا تأخذ خانةً، فلا تُجوِّع بطاقةً جاهزةً بعدها في الترتيب (W-20261027-031، 10-28)."""
     import push_watch  # noqa: PLC0415
 
+    ready = ready or (lambda cid, tree: guard_passes(cid, tree, items, git, approved))
     keep: dict[str, dict] = {}
     lines: list[str] = []
     busy: int | None = None
@@ -424,7 +465,7 @@ def defer_for_ci(items: dict[str, dict], repos: list[str], git, busy_fn) -> tupl
             why = f"{busy} طلباً قيد الفحص" + (f" و{taken} يُدفع الآن" if taken else "") + f" (السقف {MAX_IN_CI})"
         else:
             keep[cid] = items[cid]
-            taken += 1
+            taken += 1 if ready(cid, tree) else 0
             continue
         lines.append(f"{cid}: ⏸ يُؤجَّل الدفع — {why}")
     return keep, lines
@@ -443,7 +484,7 @@ def push_pass(states: dict[str, dict], apply: bool, repos: list[str] | None = No
     where_repos = repos or ready_mark.candidate_repos(None)
     deferred: list[str] = []
     if busy_fn is not None:
-        items, deferred = defer_for_ci(items, where_repos, git or push_approved._git, busy_fn)
+        items, deferred = defer_for_ci(items, where_repos, git or push_approved._git, busy_fn, approved=approved)
         if apply:
             for line in deferred:
                 _log_once("دفع: " + line)
@@ -479,7 +520,8 @@ NO_PREPUSH = HERE.parent / "ledger" / "flow_pump.noprepush"
 def _docker(cmd: list[str], timeout: int) -> tuple[int, str]:
     """(رمز الخروج، المخرَج)؛ عند المهلة تُقتل الحاويةُ باسمها ويعاد 124."""
     try:
-        p = subprocess.run(["docker", *cmd], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        p = subprocess.run(["docker", *cmd], stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout)
     except subprocess.TimeoutExpired:
         if "--name" in cmd:
             subprocess.run(["docker", "rm", "-f", cmd[cmd.index("--name") + 1]], capture_output=True, timeout=60)
@@ -545,11 +587,49 @@ def _attempts() -> dict:
         return {}
 
 
+#: (10-28) نسخةُ مشغّل prepush. محاولاتٌ سُجّلت بالصيغة القديمة (نصٌّ مجرّد) أو بمشغّلٍ أقدم تُعاد مرّةً: كانت المضخّةُ تُطلَق
+#: بـDETACHED_PROCESS فيحمرّ pytest tools/ كلُّه بـWinError 6، ثمّ يُحجب الرأسُ «فاشلاً» للأبد بلا عيبٍ في شيفرته.
+RUNNER_V = 2
+#: فشلٌ بيئيّ (prepush_env) يُعاد بعد هذه الساعات ولو لم يتغيّر الرأس: علّةُ البيئة تزول بلا إيداع؛ والفحصُ الأحمر لا يُعاد حتى يتغيّر الرأس
+ENV_RETRY_H = 2
+
+
+def record_failure(tried: dict, key: str, why: str, cond: str, now=None) -> dict:
+    from datetime import datetime  # noqa: PLC0415
+
+    rec = {"why": why, "cond": cond, "v": RUNNER_V, "ts": (now or datetime.now().astimezone()).isoformat(timespec="seconds")}
+    tried[key] = rec
+    return rec
+
+
+def standing_failure(rec, now=None) -> dict | None:
+    """محاولةٌ فاشلةٌ تحجب الإعادةَ للرأس نفسه، أو None فيُعاد الفحص: الصيغةُ القديمة ونسخةُ مشغّلٍ أخرى تُعادان، والفشلُ البيئيّ
+    يُعاد بعد ENV_RETRY_H، والفحصُ الأحمر في الشيفرة يحجب حتى يتغيّر الرأس."""
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    if not isinstance(rec, dict) or rec.get("v") != RUNNER_V:
+        return None
+    if rec.get("cond") == "prepush_env":
+        try:
+            age = (now or datetime.now().astimezone()) - datetime.fromisoformat(str(rec.get("ts")))
+        except (TypeError, ValueError):
+            return None
+        if age >= timedelta(hours=ENV_RETRY_H):
+            return None
+    return rec
+
+
+def failure_detail(rec: dict, cid: str, head: str) -> str:
+    """السببُ وموضعُ السجلّ في رسالة الإحالة: يعمل المالكُ بلا تشخيصٍ ولا سؤال."""
+    return f"{rec.get('why', '')} — السجلّ ledger/prepush_{cid}_{head[:8]}.log"
+
+
 def _pytest_run(path: str, timeout: int) -> tuple[int, str]:
-    """(رمز الخروج، المخرَج) لـ pytest tools/ في شجرة الحوكمة؛ المهلةُ 124 وتعذّرُ التشغيل 127."""
+    """(رمز الخروج، المخرَج) لـ pytest tools/ في شجرة الحوكمة؛ المهلةُ 124 وتعذّرُ التشغيل 127.
+    stdin=DEVNULL صراحةً: دخلٌ موروثٌ باطل يُسقط كلَّ subprocess في الاختبارات بـWinError 6 فيحمرّ الفحصُ بلا عيبٍ في الشيفرة (10-28)."""
     try:
-        p = subprocess.run([sys.executable, "-m", "pytest", "tools", "-q", "-p", "no:cacheprovider"], cwd=path, capture_output=True,  # noqa: S603
-                           text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        p = subprocess.run([sys.executable, "-m", "pytest", "tools", "-q", "-p", "no:cacheprovider"], cwd=path,  # noqa: S603
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return 124, "تجاوز المهلة"
     except OSError as exc:
@@ -559,7 +639,7 @@ def _pytest_run(path: str, timeout: int) -> tuple[int, str]:
 
 def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_run=None, timeout: int = GOV_PYTEST_TIMEOUT_S) -> str:
     """(W-20261026-018) مستودعُ الحوكمة بلا scripts/prepush_check.py: الإيصالُ البديل pytest tools/ أخضرَ للرأس نفسه في الشجرة النظيفة.
-    لا يُكتب إلا برمز خروج 0 وبقاءِ الرأس ونظافةِ الشجرة بعد التشغيل؛ والفشلُ يُسجَّل لرأسه فلا يُعاد حتى يتغيّر الرأس.
+    لا يُكتب إلا برمز خروج 0 وبقاءِ الرأس ونظافةِ الشجرة بعد التشغيل؛ والفشلُ يُسجَّل لرأسه بشرطه (record_failure).
     يعيد سطرَ النتيجة المطبوع."""
     rc, gitdir = git(path, "rev-parse", "--absolute-git-dir")
     if rc or not gitdir.strip():
@@ -574,7 +654,7 @@ def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_
         return f"{cid}: ✔ pytest tools/ أخضر للرأس {head[:8]} — كُتب الإيصال البديل (حوكمة)"
     why = ("الرأس أو الشجرة تغيّر أثناء الفحص" if code == 0 else "تجاوز المهلة" if code == 124 else f"رمز الخروج {code}")
     tail = " | ".join((log or "").strip().splitlines()[-3:])[:300]
-    tried[f"{cid}:{head[:8]}"] = why
+    record_failure(tried, f"{cid}:{head[:8]}", why, "prepush_env" if code == 0 else failure_cond(code, log))
     try:
         PREPUSH_ATTEMPTS.write_text(json.dumps(tried), encoding="utf-8")
         (PREPUSH_ATTEMPTS.parent / f"prepush_{cid}_{head[:8]}.log").write_text(log or "", encoding="utf-8")
@@ -588,7 +668,8 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
                  limit: int = PREPUSH_MAX, timeout: int = PREPUSH_TIMEOUT_S, pytest_run=None) -> list[str]:
     """(W-20261023-016) بطاقةٌ approved سيرفضها حارسُ الدفع لغياب إيصال prepush: يُشغَّل prepush_check في الحاوية، وإن خرج بـ0
     (كلُّ الحرّاس قيست ونجحت) كُتب الإيصالُ للرأس نفسه في مجلّد git للشجرة. غيرُ ذلك لا إيصال: الفشلُ وغيرُ المقيس يبقيان ظاهرَين.
-    رأسٌ جُرِّب وفشل لا يُعاد تجريبُه حتى يتغيّر الرأس (prepush_attempts.json). حدٌّ أقصى `limit` بطاقةً في الدورة، ولا رسائل."""
+    رأسٌ احمرّ فحصُه لا يُعاد حتى يتغيّر الرأس، والفشلُ البيئيّ يُعاد بعد ENV_RETRY_H (standing_failure، prepush_attempts.json).
+    الفشلُ يُحال بسببه وسجلّه: فحصٌ أحمر إلى حامل البطاقة، وعلّةُ البيئة إلى الأتمتة (failure_cond). حدٌّ أقصى `limit` بطاقةً في الدورة."""
     import push_watch  # noqa: PLC0415
     import ready_mark  # noqa: PLC0415
 
@@ -615,8 +696,11 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
         if push_approved.receipt_problem(path, head, git) is None:
             continue  # الإيصالُ قائم
         key = f"{cid}:{head[:8]}"
-        if tried.get(key):
-            out.append(f"{cid}: prepush لم يُعَد للرأس {head[:8]} — {tried[key]} (يُعاد حين يتغيّر الرأس) {hand_off(cid, 'prepush', items[cid], apply)}")
+        rec = standing_failure(tried.get(key))
+        if rec:
+            when = f"يُعاد بعد {ENV_RETRY_H} ساعة" if rec["cond"] == "prepush_env" else "يُعاد حين يتغيّر الرأس"
+            owner = hand_off(cid, rec["cond"], items[cid], apply, detail=failure_detail(rec, cid, head))
+            out.append(f"{cid}: prepush لم يُعَد للرأس {head[:8]} — {rec['why']} ({when}) {owner}")
             continue
         if ran >= limit:
             out.append(f"{cid}: ⏸ prepush في الدورة التالية (الحدّ {limit} في الدورة)")
@@ -626,7 +710,11 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             if not apply:
                 out.append(f"{cid}: يُشغَّل pytest tools/ إيصالاً بديلاً (حوكمة) للرأس {head[:8]} (عرض)")
                 continue
-            out.append(governance_receipt(cid, path, head, git, tried, pytest_run))
+            line = governance_receipt(cid, path, head, git, tried, pytest_run)
+            rec = standing_failure(tried.get(key))
+            if rec:
+                line += " " + hand_off(cid, rec["cond"], items[cid], apply, detail=failure_detail(rec, cid, head))
+            out.append(line)
             continue
         if not apply:
             out.append(f"{cid}: يُشغَّل prepush في الحاوية للرأس {head[:8]} (عرض)")
@@ -661,9 +749,10 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             (PREPUSH_ATTEMPTS.parent / f"prepush_{cid}_{head[:8]}.log").write_text(log or "", encoding="utf-8")
         except OSError:
             pass
-        tried[key] = why
+        rec = record_failure(tried, key, why, "prepush_env" if sound else failure_cond(code, log))
         PREPUSH_ATTEMPTS.write_text(json.dumps(tried), encoding="utf-8")
-        out.append(f"{cid}: ✘ prepush لم يُنتج إيصالاً للرأس {head[:8]} — {why}: {tail} {hand_off(cid, 'prepush', items[cid], apply)}")
+        owner = hand_off(cid, rec["cond"], items[cid], apply, detail=failure_detail(rec, cid, head))
+        out.append(f"{cid}: ✘ prepush لم يُنتج إيصالاً للرأس {head[:8]} — {why}: {tail} {owner}")
         _log_once(f"prepush: {cid} {head[:8]} ✘ {why}")
     return out
 
