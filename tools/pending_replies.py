@@ -4,6 +4,7 @@
     python pending_replies.py add --to 0101 --about "قرارُ pr_red (أ)/(ب)"
     python pending_replies.py list
     python pending_replies.py overdue [--minutes 30]     ما تأخّر ردُّه → أعيد السؤالَ فوراً بلا أمرٍ
+    python pending_replies.py autoclose                 يغلق ما كُتب تقريرُه أو بلغت بطاقتُه merged/published أو اندمج/أُغلق طلبُه
     python pending_replies.py done <رقم> [--note "…"]
     python pending_replies.py asked <رقم>               سجّلتُ إعادةَ سؤال (يُحسب العدّاد)
 
@@ -37,8 +38,19 @@ def _now() -> datetime:
     return datetime.now(DOHA)
 
 
-def add(to: str, about: str, path: Path = FILE, now: datetime | None = None, from_: str = "") -> int:
-    """from_ (اختياري): الجلسةُ المنتظِرة، فتظهر في حقل waiting من حالتها (W-20261025-001)."""
+#: رمزُ بطاقةٍ أو طلبٍ في نصّ الإحالة: يربط البند بما يُغلقه آلياً (W-20261028-031)
+CARD_RE = re.compile(r"(?<![A-Za-z0-9])W-\d{8}-\d{3}(?!\d)")
+PR_RE = re.compile(r"(?<![A-Za-z0-9&])#(\d{1,6})(?!\d)")
+#: حالاتُ البطاقة التي تنتهي عندها المتابعة
+DONE_CARD_STATES = {"merged", "published"}
+DONE_PR_STATES = {"MERGED", "CLOSED"}
+
+
+def add(to: str, about: str, path: Path = FILE, now: datetime | None = None, from_: str = "", strict: bool = False) -> int:
+    """from_ (اختياري): الجلسةُ المنتظِرة، فتظهر في حقل waiting من حالتها (W-20261025-001).
+    strict: يرفض about بلا رمز بطاقةٍ W-… أو طلبٍ #… فلا تبقى إحالةٌ لا يُعرف متى تنتهي (W-20261028-031)."""
+    if strict and not (CARD_RE.search(about) or PR_RE.search(about)):
+        raise ValueError("about بلا رمز بطاقة W-YYYYMMDD-NNN ولا رقم طلب #N — اذكر ما تنتظره")
     n = sum(1 for r in _rows(path) if r["kind"] == "add") + 1
     row = {"kind": "add", "n": n, "ts": (now or _now()).isoformat(timespec="minutes"), "to": to, "about": about.strip()}
     if from_:
@@ -97,6 +109,51 @@ def close_reported(path: Path = FILE, base: Path | None = None) -> list[int]:
     return closed
 
 
+def _default_card_state(card: str) -> str | None:
+    import ledger  # noqa: PLC0415 — تأخيرٌ حتى لا يُحمَّل الدفترُ لمن لا يغلق آلياً
+
+    item = ledger.reduce_state(ledger.load_events()).get(card)
+    return item.get("state") if item else None
+
+
+def _default_pr_state(num: str) -> str | None:
+    import ground_truth  # noqa: PLC0415
+
+    return ground_truth.default_pr_state(num)
+
+
+def close_by_state(path: Path = FILE, card_state=None, pr_state=None) -> list[int]:
+    """يُغلق كلَّ بندٍ مفتوحٍ تبلغ كلُّ بطاقاته merged/published وكلُّ طلباته MERGED/CLOSED، ويكتب الدليلَ في note.
+    بندٌ بلا رمزٍ (قديم) أو برمزٍ مجهولٍ أو غيرِ منتهٍ يبقى؛ ولا يرفع استثناءً (W-20261028-031)."""
+    card_state = card_state or _default_card_state
+    pr_state = pr_state or _default_pr_state
+    closed: list[int] = []
+    for r in open_items(path):
+        cards = CARD_RE.findall(r["about"])
+        prs = PR_RE.findall(r["about"])
+        if not cards and not prs:
+            continue
+        evidence: list[str] = []
+        try:
+            for c in dict.fromkeys(cards):
+                st = card_state(c)
+                if st not in DONE_CARD_STATES:
+                    break
+                evidence.append(f"{c} {st}")
+            else:
+                for num in dict.fromkeys(prs):
+                    st = pr_state(num)
+                    if not st or st.split()[0] not in DONE_PR_STATES:
+                        break
+                    evidence.append(f"#{num} {st}")
+                else:
+                    done(r["n"], "أُغلق آلياً: " + "؛ ".join(evidence), path)
+                    closed.append(r["n"])
+        except Exception:  # noqa: BLE001 — مصدرٌ غائب (شبكة/دفتر) لا يوقف الإغلاق لغيره
+            continue
+    return closed
+
+
 def asked(n: int, path: Path = FILE) -> None:
     if not any(r["kind"] == "add" and r["n"] == n for r in _rows(path)):
         raise ValueError(f"لا بندَ برقم {n}")
@@ -112,10 +169,14 @@ def main() -> int:
     o = sub.add_parser("overdue"); o.add_argument("--minutes", type=float, default=30.0)
     d = sub.add_parser("done"); d.add_argument("n", type=int); d.add_argument("--note", default="")
     k = sub.add_parser("asked"); k.add_argument("n", type=int)
-    sub.add_parser("autoclose", help="يُغلق البنودَ التي كُتب تقريرُها المذكور")
+    sub.add_parser("autoclose", help="يُغلق البنودَ التي كُتب تقريرُها أو بلغت بطاقتُها/طلبُها حالةً منتهية")
     x = ap.parse_args()
     if x.cmd == "add":
-        print(f"سُجّل #{add(x.to, x.about, from_=x.from_)}")
+        try:
+            print(f"سُجّل #{add(x.to, x.about, from_=x.from_, strict=True)}")
+        except ValueError as e:
+            print(f"رُفض: {e}", file=sys.stderr)
+            return 2
     elif x.cmd in ("list", "overdue"):
         items = open_items() if x.cmd == "list" else overdue(x.minutes)
         for r in items:
@@ -123,7 +184,7 @@ def main() -> int:
         if not items:
             print("لا ردودَ منتظَرة" if x.cmd == "list" else "لا ما تأخّر")
     elif x.cmd == "autoclose":
-        print("أُغلق: " + ("، ".join(f"#{n}" for n in close_reported()) or "لا شيء"))
+        print("أُغلق: " + ("، ".join(f"#{n}" for n in close_reported() + close_by_state()) or "لا شيء"))
     elif x.cmd == "done":
         done(x.n, x.note); print("ok")
     else:
