@@ -38,9 +38,10 @@ def _now() -> datetime:
     return datetime.now(DOHA)
 
 
-#: رمزُ بطاقةٍ أو طلبٍ في نصّ الإحالة: يربط البند بما يُغلقه آلياً (W-20261028-031)
+#: رمزُ بطاقةٍ أو طلبٍ في نصّ الإحالة: يربط البند بما يُغلقه آلياً (W-20261028-031).
+#: #N المجرّدُ طلبُ المنصّة وحدَها، وmaestro-v2#N طلبُ مستودع الإدارة (رقمان متطابقان في المستودعين يختلفان)
 CARD_RE = re.compile(r"(?<![A-Za-z0-9])W-\d{8}-\d{3}(?!\d)")
-PR_RE = re.compile(r"(?<![A-Za-z0-9&])#(\d{1,6})(?!\d)")
+PR_RE = re.compile(r"(?<![A-Za-z0-9&])(maestro-v2)?#(\d{1,6})(?!\d)")
 #: حالاتُ البطاقة التي تنتهي عندها المتابعة
 DONE_CARD_STATES = {"merged", "published"}
 DONE_PR_STATES = {"MERGED", "CLOSED"}
@@ -116,10 +117,14 @@ def _default_card_state(card: str) -> str | None:
     return item.get("state") if item else None
 
 
-def _default_pr_state(num: str) -> str | None:
+def _default_pr_state(ref: str) -> str | None:
+    """ref: «216» للمنصّة أو «maestro-v2#216» لمستودع الإدارة؛ مستودعٌ واحد لا الاثنان."""
     import ground_truth  # noqa: PLC0415
 
-    return ground_truth.default_pr_state(num)
+    admin = ref.startswith("maestro-v2#")
+    slug = ground_truth.SLUGS[1] if admin else ground_truth.SLUG
+    code, out = ground_truth.run(["gh", "pr", "view", ref.split("#")[-1], "--repo", slug, "--json", "state", "--jq", ".state"])
+    return f"{out.strip()} ({slug.split('/')[1]})" if code == 0 and out.strip() else None
 
 
 def close_by_state(path: Path = FILE, card_state=None, pr_state=None) -> list[int]:
@@ -130,7 +135,7 @@ def close_by_state(path: Path = FILE, card_state=None, pr_state=None) -> list[in
     closed: list[int] = []
     for r in open_items(path):
         cards = CARD_RE.findall(r["about"])
-        prs = PR_RE.findall(r["about"])
+        prs = [f"{pre}#{num}" if pre else num for pre, num in PR_RE.findall(r["about"])]
         if not cards and not prs:
             continue
         evidence: list[str] = []
@@ -141,11 +146,11 @@ def close_by_state(path: Path = FILE, card_state=None, pr_state=None) -> list[in
                     break
                 evidence.append(f"{c} {st}")
             else:
-                for num in dict.fromkeys(prs):
-                    st = pr_state(num)
+                for ref in dict.fromkeys(prs):
+                    st = pr_state(ref)
                     if not st or st.split()[0] not in DONE_PR_STATES:
                         break
-                    evidence.append(f"#{num} {st}")
+                    evidence.append(f"{ref if '#' in ref and ref[0] != '#' else '#' + ref} {st}")
                 else:
                     done(r["n"], "أُغلق آلياً: " + "؛ ".join(evidence), path)
                     closed.append(r["n"])

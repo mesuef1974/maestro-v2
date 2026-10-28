@@ -92,3 +92,18 @@ def test_autoclose_closed_pr_and_idempotent(tmp_path):
     n = pr.add("0601", "طلب #77", path=p)
     assert pr.close_by_state(p, card_state=lambda _: None, pr_state={"77": "CLOSED (x)"}.get) == [n]
     assert pr.close_by_state(p, card_state=lambda _: None, pr_state={"77": "CLOSED (x)"}.get) == []
+
+
+def test_bare_pr_means_platform_and_maestro_prefix_means_admin_repo(tmp_path):
+    p = tmp_path / "p.jsonl"
+    a = pr.add("0601", "دمج #216", path=p, strict=True)                    # المنصّة
+    b = pr.add("0601", "دمج maestro-v2#216", path=p, strict=True)          # مستودع الإدارة
+    seen = []
+
+    def pr_state(ref):
+        seen.append(ref)
+        return {"216": "MERGED (shschool_mvp)", "maestro-v2#216": "OPEN (maestro-v2)"}.get(ref)
+
+    assert pr.close_by_state(p, card_state=lambda _: None, pr_state=pr_state) == [a]
+    assert sorted(seen) == ["216", "maestro-v2#216"]
+    assert [r["n"] for r in pr.open_items(p)] == [b]
