@@ -453,6 +453,15 @@ def running_from_arg(text: str | None) -> set[str] | None:
     return {t for t in re.split(r"[,\s]+", text.strip()) if SESSION_NUM.match(t) and len(t) == 4}
 
 
+def clear_requests(root: Path, now: datetime) -> tuple[dict, frozenset]:
+    """(كلُّ الجلسات عليها طلبُ مسح، المسحُ الذاتيّ منها). W-20261028-027: المسحُ الذاتيّ يوقظ كالعلامة المعلّقة."""
+    import session_state
+
+    auto = frozenset(session_state.auto_clear_nums(root, now))
+    cleared = {**dict.fromkeys(auto, ""), **session_state.pending_markers(root, now)}
+    return cleared, auto
+
+
 def live_minus_cleared(live: set[str], cleared, running: set[str] | None) -> set[str]:
     """جلسةٌ عليها علامةُ مسحٍ معلَّقةٍ لم تُستهلك لا تُعدّ حيّةً بنافذة النشاط: المسحُ نفسُه يجدّد ختمَ نشاطها فتبدو عاملةً وهي خاملة
     (تجربة 0101 على 0301: تُخطّيَت «حيّةً تعمل»). أمّا إن قُدِّم `--running` الفعليُّ فيُحكَم به وحدَه."""
@@ -499,10 +508,7 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
     aliases = sa.number_map()
     if a.stale:
         now = datetime.now().astimezone()
-        import session_state
-
-        cleared = session_state.pending_markers(ROOT, now)
-        auto = session_state.auto_clear_nums(ROOT, now)
+        cleared, auto = clear_requests(ROOT, now)
         import inbox
 
         if getattr(a, "commit", False) or getattr(a, "watch", False):  # العرضُ الجافّ لا يرسل شيئاً
