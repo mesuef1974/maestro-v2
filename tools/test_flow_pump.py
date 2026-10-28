@@ -1358,6 +1358,20 @@ class OpenPrPass(unittest.TestCase):
         note.assert_not_called()
         self.assertIn("(عرض)", lines[0])
 
+    def test_a_governance_card_opens_its_pr_in_maestro_v2_not_the_platform(self):
+        """(10-28) فرعُ بطاقة الحوكمة بعيدٌ في maestro-v2 لا المنصّة: كان يُقال «لا فرعَ بعيداً» ولا يُفتح طلب."""
+        def git(repo, *args):
+            if args[:2] == ("ls-remote", "--heads"):
+                return 0, (f"{self.HEAD}\trefs/heads/claude/w5-gov\n" if repo == "GOV" else "")
+            return 0, ""
+
+        lines, sh, note = self.run_pass(git=git, gov="GOV")
+        made = self.creates(sh)
+        self.assertEqual(len(made), 1)
+        self.assertEqual(made[0][made[0].index("--repo") + 1], fp.GOV_SLUG)
+        self.assertTrue(any(c[:2] == ["gh", "api"] and f"repos/{fp.GOV_SLUG}/" in c[2] for c in sh.calls))
+        self.assertIn("✔", lines[0])
+
     def test_a_remote_head_that_differs_from_the_approved_head_is_never_opened(self):
         lines, sh, _ = self.run_pass(git=self.git(remote=[("claude/w5-x", "e" * 40)]))
         self.assertEqual(self.creates(sh), [])
