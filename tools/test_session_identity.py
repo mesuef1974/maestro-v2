@@ -156,6 +156,37 @@ def test_late_cli_session_id_is_found_by_rereading_within_wait(tmp_path):
     assert len(sleeps) == 1
 
 
+def test_default_wait_is_15_seconds_and_finds_id_written_after_14(tmp_path):
+    """W-20261028-011: 3 ثوانٍ لم تكفِ يوم 10-28؛ الانتظارُ الافتراضيّ 15 ثانيةً يجد معرّفاً يصل بعد 14."""
+    assert si.ID_WAIT_S == 15.0
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE, cli="old-1")
+    _session(tmp_path, "2", "local_2", "0104 · عاملة", TREE, cli="cli-2")
+    clock = {"t": 0.0}
+
+    def sleep(s):
+        clock["t"] += s
+        if clock["t"] >= 14.0:
+            _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE, cli="new-1")
+
+    assert si.app_title(TREE, "new-1", tmp_path, pending=set(), sleep=sleep) == ("0101 · خفيفة", [])
+
+
+def test_ambiguity_never_guesses_by_last_focus(tmp_path):
+    """واقعة 10-28 10:13: جلستان في مجلّد واحد ولا معرّف مطابق ولا علامة مسح ← «لا أعرف» ولو اختلف lastFocusedAt."""
+    for n, title, focus in (("1", "0101 · خفيفة", 1793128425711), ("2", "0104 · عاملة", 1793128370824)):
+        d = tmp_path / "a" / "b"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"local_{n}.json").write_text(json.dumps({"sessionId": f"local_{n}", "cliSessionId": f"cli-{n}", "title": title,
+                                                     "worktreePath": TREE, "lastFocusedAt": focus}), encoding="utf-8")
+    assert si.app_title(TREE, "unknown", tmp_path, wait_s=0, pending=set()) == (None, ["0101 · خفيفة", "0104 · عاملة"])
+
+
+def test_ambiguous_message_asks_for_get_session_self_before_any_write():
+    msg = si.ambiguous_message("هذا المجلّد", ["0101 · خفيفة", "0104 · عاملة"])
+    assert "لا أعرف أيَّها أنت" in msg and "get_session" in msg and "self" in msg and "قبل أيّ كتابةٍ باسم رقمٍ" in msg
+    assert "0101 · خفيفة؛ 0104 · عاملة" in msg
+
+
 def test_unmatched_id_falls_back_after_wait_and_stops_polling(tmp_path):
     _session(tmp_path, "1", "local_1", "0105 · وحيدة", TREE)
     sleeps = []
