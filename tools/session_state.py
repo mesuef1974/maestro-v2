@@ -61,7 +61,7 @@ TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "q
 PENDING_TTL_S = 900  # مهلةُ علامة «مسح قيد الانتظار» لحسم الشجرة في خطّاف SessionStart (find_pending): 15 دقيقةً (W-20261024-005)
 MARKER_MAX_AGE_S = 86_400  # علامتا المسح (pending_clear وauto_clear) تبقيان حتى الاستعادة بسقفٍ 24 ساعةً للعلامة اليتيمة (W-20261026-007)
 POST_TOOL_EVERY = 15  # قياسُ السياق داخل الدور كلَّ N أداة (W-20261027-018)
-CLEAR_AT_TOKENS = 175_000  #عتبةُ المسح الذاتي: سياقُ آخر رسالةٍ في transcript (W-20261025-015)
+CLEAR_AT_TOKENS = 180_000  # عتبةُ المسح الذاتي: سياقُ آخر رسالةٍ في transcript (W-20261025-015)؛ رُفعت من 175 ألفاً باختيار المالك 2026-10-28 بعد النصيحة الرقميّة (D-501م)، والضغطُ الإجباريّ 200 ألفاً (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=20 من نافذة المليون في ~/.claude/settings.json)
 TRANSCRIPT_TAIL = 400_000  # يُقرأ ذيلُ الملفّ فقط: الاستهلاكُ في آخر رسالة مساعد
 DUTIES_MAX = 6
 WAITING_MAX = 8  # الإحالاتُ الصادرة المنتظَرة في الحالة
@@ -1092,7 +1092,7 @@ def _log_stop_call(root: Path | None, cwd: str, sid: str, outcome: str) -> None:
 def self_clear_reason(num: str, cleared: str, local_sid: str) -> str:
     """نصُّ أمر المسح الذاتيّ (يستعمله Stop في قرار المنع وPostToolUse في السياق الإضافيّ)."""
     m = re.search(r"(\d+)", cleared)
-    reason = (f"[مسحٌ ذاتيّ] سياقُك بلغ {m.group(1) if m else '175 ألف'} توكناً (العتبة {CLEAR_AT_TOKENS}) وحارسُ المسح ناجح؛ نفِّذ الآن بلا سؤال: "
+    reason = (f"[مسحٌ ذاتيّ] سياقُك بلغ {m.group(1) if m else '180 ألف'} توكناً (العتبة {CLEAR_AT_TOKENS}) وحارسُ المسح ناجح؛ نفِّذ الآن بلا سؤال: "
               "1) أنهِ ما بيدك وسجّل ما يلزم (ledger.py، session_state.py focus وwaiting للإحالات المعلّقة). "
               f"2) شغّل `python C:/Users/mesue/delivery_manager_work/tools/session_state.py guard {num}` (وصفٌ عربيّ للأداة) فإن رفض فأصلح ولا تتجاوز. "
               f"3) امسح جلستك بأداة clear_session لمعرّفك `{local_sid}`. "

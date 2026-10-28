@@ -581,7 +581,7 @@ def test_stop_hook_logs_every_call_with_reason(tree):
 
 
 class TestAutoClear:
-    """W-20261025-015: خطّاف Stop يقيس سياق الجلسة من transcript ويكتب طلبَ المسح الذاتيّ عند 175 ألفاً بصمت."""
+    """W-20261025-015: خطّاف Stop يقيس سياق الجلسة من transcript ويكتب طلبَ المسح الذاتيّ عند العتبة CLEAR_AT_TOKENS بصمت (180 ألفاً باختيار المالك 2026-10-28، وكانت 175)."""
 
     @staticmethod
     def _tx(tmp_path, *rows):
@@ -618,13 +618,13 @@ class TestAutoClear:
 
     def test_below_threshold_writes_nothing(self, tree, tmp_path):
         self._ready(tree)
-        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(1, 174_997, 1)), tree, NOW)
-        assert "174999" in out
+        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(1, ss.CLEAR_AT_TOKENS - 3, 1)), tree, NOW)
+        assert str(ss.CLEAR_AT_TOKENS - 1) in out
         assert ss.pending_markers(tree, NOW) == {} and ss.auto_clear_nums(tree, NOW) == set()
 
     def test_at_threshold_writes_marker_and_request_once(self, tree, tmp_path):
         self._ready(tree)
-        t = self._tx(tmp_path, self._asst(0, 175_000, 0))
+        t = self._tx(tmp_path, self._asst(0, ss.CLEAR_AT_TOKENS, 0))
         assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", t, tree, NOW)
         assert list(ss.pending_markers(tree, NOW)) == ["0108"] and ss.auto_clear_nums(tree, NOW) == {"0108"}
         before = ss.auto_clear_path("0108", tree).read_text(encoding="utf-8")
@@ -633,19 +633,19 @@ class TestAutoClear:
 
     def test_request_expires_after_ttl(self, tree, tmp_path):
         self._ready(tree)
-        ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(0, 180_000, 0)), tree, NOW)
+        ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(0, ss.CLEAR_AT_TOKENS + 5_000, 0)), tree, NOW)
         assert ss.auto_clear_nums(tree, NOW + timedelta(hours=2)) == {"0108"}  # W-20261026-007: تبقى حتى الاستعادة
         assert ss.auto_clear_nums(tree, NOW + timedelta(seconds=ss.MARKER_MAX_AGE_S + 1)) == set()  # سقفُ العلامة اليتيمة
 
     def test_guard_failure_is_silent_and_writes_nothing(self, tree, tmp_path):
         ss.write_state("0108", ss.derive("0108", "0108 · التقييم والعصف", NOW, tree, cwd="D:/w"), tree)  # بلا focus ولا واجبات
-        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(0, 200_000, 0)), tree, NOW)
+        out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, self._asst(0, ss.CLEAR_AT_TOKENS + 25_000, 0)), tree, NOW)
         assert "سقط الحارسُ" in out
         assert ss.pending_markers(tree, NOW) == {} and ss.auto_clear_nums(tree, NOW) == set()
 
     def test_stop_hook_triggers_and_never_breaks_refresh(self, tree, tmp_path):
         self._ready(tree)
-        t = self._tx(tmp_path, self._asst(0, 176_000, 0))
+        t = self._tx(tmp_path, self._asst(0, ss.CLEAR_AT_TOKENS + 1_000, 0))
         hook = json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(t)})
         assert json.loads(ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])))["decision"] == "block"  # W-20261026-001
         assert ss.auto_clear_nums(tree) == {"0108"}
@@ -654,7 +654,7 @@ class TestAutoClear:
     def test_wake_message_differs_when_auto_clear_requested(self):
         import wake_monitor as wm
 
-        assert "175 ألفاً" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108") and "COMMON" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108")
+        assert "180 ألفاً" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108") and "COMMON" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108")
         assert wm.payload(wm.CLEAR_ID, "pending_clear", "0108").startswith("بعد المسح")
 
 
@@ -780,20 +780,20 @@ class TestSelfClearBlock:
         return json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(tp)})
 
     def test_new_request_blocks_stop_with_clear_instructions(self, tree):
-        hook = self._setup(tree, 180_000)
+        hook = self._setup(tree, ss.CLEAR_AT_TOKENS + 5_000)
         out = ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
         d = json.loads(out)
         assert d["decision"] == "block" and "clear_session" in d["reason"] and "guard 0108" in d["reason"] and "role_cards/0108.md" in d["reason"]
         assert ss.auto_clear_path("0108", tree).exists()
 
     def test_existing_request_does_not_block_again(self, tree):
-        hook = self._setup(tree, 180_000)
+        hook = self._setup(tree, ss.CLEAR_AT_TOKENS + 5_000)
         titles = lambda c, i: ("0108 · التقييم", [])  # noqa: E731
         assert ss.cmd_stop_hook(hook, tree, titles)
         assert ss.cmd_stop_hook(hook, tree, titles) == ""  # الطلبُ قائم: مرّةً واحدةً فقط
 
     def test_stop_hook_active_never_loops(self, tree):
-        hook = json.loads(self._setup(tree, 180_000))
+        hook = json.loads(self._setup(tree, ss.CLEAR_AT_TOKENS + 5_000))
         hook["stop_hook_active"] = True
         assert ss.cmd_stop_hook(json.dumps(hook), tree, lambda c, i: ("0108 · التقييم", [])) == ""
 
@@ -822,7 +822,7 @@ class TestDeriveFocus:
         ss.set_duties("0108", none=True, root=tree, now=NOW)
         ss.write_state("0108", ss.derive("0108", "0108 · التقييم والعصف", NOW, tree, cwd="D:/w"), tree)
         tx = tmp_path / "t.jsonl"
-        tx.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": 207_000, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
+        tx.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": ss.CLEAR_AT_TOKENS + 32_000, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
         assert ss._load_focus("0108", tree) is None
         assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", tx, tree, NOW)
 
@@ -859,7 +859,7 @@ class TestFitState:
         assert wrote and ss.validate(back) == [] and len(json.dumps(back, ensure_ascii=False, indent=1).encode("utf-8")) <= ss.MAX_BYTES
 
     def test_stop_hook_measures_and_requests_clear_even_when_state_is_oversized(self, tree, monkeypatch):
-        hook = TestSelfClearBlock._setup(tree, 180_000)
+        hook = TestSelfClearBlock._setup(tree, ss.CLEAR_AT_TOKENS + 5_000)
         full = len(json.dumps(ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), ensure_ascii=False, indent=1).encode("utf-8"))
         monkeypatch.setattr(ss, "MAX_BYTES", full - 30)  # الحالةُ الكاملةُ تتجاوز السقفَ بقليل: كان write_state يرفع ValueError فيسقط Stop
         out = ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
@@ -884,20 +884,20 @@ class TestPostToolHook:
         return [ss.cmd_post_tool_hook(hook, tree, self.TITLES) for _ in range(times)]
 
     def test_measures_only_every_n_tools(self, tree):
-        outs = self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY)
+        outs = self._run(self._hook(tree, ss.CLEAR_AT_TOKENS + 5_000), tree, ss.POST_TOOL_EVERY)
         assert all(o == "" for o in outs[:-1]) and outs[-1]
         assert ss.auto_clear_nums(tree) == {"0108"}
 
     def test_injects_clear_instructions_as_additional_context(self, tree):
-        d = json.loads(self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY)[-1])["hookSpecificOutput"]
+        d = json.loads(self._run(self._hook(tree, ss.CLEAR_AT_TOKENS + 5_000), tree, ss.POST_TOOL_EVERY)[-1])["hookSpecificOutput"]
         assert d["hookEventName"] == "PostToolUse" and "clear_session" in d["additionalContext"] and "guard 0108" in d["additionalContext"]
 
     def test_no_repeat_within_same_turn(self, tree):
-        outs = self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY * 3)
+        outs = self._run(self._hook(tree, ss.CLEAR_AT_TOKENS + 5_000), tree, ss.POST_TOOL_EVERY * 3)
         assert sum(1 for o in outs if o) == 1  # الطلبُ قائم: لا حقنَ ثانياً
 
     def test_stop_does_not_block_again_after_injection(self, tree):
-        hook = self._hook(tree, 180_000)
+        hook = self._hook(tree, ss.CLEAR_AT_TOKENS + 5_000)
         self._run(hook, tree, ss.POST_TOOL_EVERY)
         assert ss.cmd_stop_hook(hook, tree, self.TITLES) == ""
 
@@ -907,7 +907,7 @@ class TestPostToolHook:
 
     def test_guard_failure_silent(self, tree):
         tp = tree / "t.jsonl"  # بلا focus ولا واجبات: الحارس يسقط
-        tp.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": 200_000, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
+        tp.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": ss.CLEAR_AT_TOKENS + 25_000, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
         hook = json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(tp)})
         assert all(o == "" for o in self._run(hook, tree, ss.POST_TOOL_EVERY))
         assert ss.auto_clear_nums(tree) == set()
@@ -1055,11 +1055,11 @@ def test_guard_failure_above_threshold_escalates_once_a_day_to_0101_inbox(tree, 
     import inbox
 
     monkeypatch.setattr(ss, "clear_guard", lambda num, root, now: ["لا تركيز مُعلَن"])
-    monkeypatch.setattr(ss, "context_tokens", lambda t: 180_000)
+    monkeypatch.setattr(ss, "context_tokens", lambda t: ss.CLEAR_AT_TOKENS + 5_000)
     out = ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW)
     assert "سقط الحارسُ" in out and "صُعِّد إلى 0101" in out
     msgs = inbox.pending("0101", tree)
-    assert len(msgs) == 1 and "0108" in msgs[0]["text"] and "180000" in msgs[0]["text"] and "لا تركيز مُعلَن" in msgs[0]["text"]
+    assert len(msgs) == 1 and "0108" in msgs[0]["text"] and str(ss.CLEAR_AT_TOKENS + 5_000) in msgs[0]["text"] and "لا تركيز مُعلَن" in msgs[0]["text"]
     assert "صُعِّد" not in ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW + timedelta(hours=1))  # مرّةً في اليوم
     assert len(inbox.pending("0101", tree)) == 1
     assert "صُعِّد" in ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW + timedelta(days=1))  # يومٌ جديد
