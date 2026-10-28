@@ -39,6 +39,7 @@ STALE_LOCK_S = 900
 
 #: بطاقاتٌ تُستثنى من النقل كما كانت في المهمّة المجدولة.
 SKIP = ("W-20261001-006",)
+CREATE_NO_WINDOW = 0x08000000
 
 #: مهلةُ الدورة بعد أمرٍ يحرّك الفلو، ومهلةُ الدورة الاحتياطيّة عند ختام الدور أو بدء الجلسة.
 FLOW_INTERVAL_S = 60
@@ -88,16 +89,29 @@ def pump_running(now: float) -> bool:
         return False
 
 
+def console_python() -> str:
+    """مفسّرٌ بطرفيّة (python.exe) ولو كان الخطّافُ يعمل بـpythonw.exe. خطّافاتُ الجلسات تُطلَق بـpythonw فيرث pytest tools/ تحت المضخّة
+    مقابضَ std باطلة: 167 فاشلاً و15 خطأً كلّها WinError 6 (قياس 10-28: pythonw ‏98+15، python.exe ‏6 لعلّةٍ أخرى) فلا يُنتَج إيصالُ الحوكمة."""
+    exe = sys.executable
+    if exe.lower().endswith("pythonw.exe"):
+        console = exe[: -len("pythonw.exe")] + "python.exe"
+        if Path(console).is_file():
+            return console
+    return exe
+
+
 def spawn() -> None:
     """يطلق دورةَ المضخّة منفصلةً عن الجلسة؛ تقريرُها الأخير في ledger/flow_pump.out."""
     STAMP.touch()
     flags = 0
     if os.name == "nt":
-        flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: طرفيّةٌ مخفيّة لا DETACHED_PROCESS. بلا طرفيّة يرث أحفادُ المضخّة
+        # (pytest tools/ ثمّ git في الاختبارات) مقبضَ دخلٍ باطلاً فيسقط كلُّ subprocess بـWinError 6، فلا يُنتَج إيصالُ الحوكمة أبداً (10-28).
+        flags = CREATE_NO_WINDOW | 0x00000200
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     with OUT.open("w", encoding="utf-8") as out:
         subprocess.Popen(
-            [sys.executable, str(HERE / "flow_pump.py"), "--apply", "--skip", *SKIP],
+            [console_python(), str(HERE / "flow_pump.py"), "--apply", "--skip", *SKIP],
             cwd=str(HERE.parent),
             stdin=subprocess.DEVNULL,
             stdout=out,

@@ -569,8 +569,9 @@ def test_stop_hook_logs_every_call_with_reason(tree):
     log = ss.state_path("0000", tree).with_name("stop_hook_calls.log")
     hook = json.dumps({"cwd": "D:/w", "session_id": "s1"})
     ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
-    ss.cmd_stop_hook(hook, tree, lambda c, i: (None, ["0108 · أ", "0102 · ب"]))
-    ss.cmd_stop_hook(hook, tree, lambda c, i: (None, []))
+    other = lambda s: json.dumps({"cwd": "D:/w", "session_id": s})  # noqa: E731 — جلساتٌ بلا ذاكرةٍ سابقة (W-20261027-007)
+    ss.cmd_stop_hook(other("s2"), tree, lambda c, i: (None, ["0108 · أ", "0102 · ب"]))
+    ss.cmd_stop_hook(other("s3"), tree, lambda c, i: (None, []))
     ss.cmd_stop_hook("not json", tree)
     rows = log.read_text(encoding="utf-8").splitlines()
     assert len(rows) == 4
@@ -653,7 +654,7 @@ class TestAutoClear:
     def test_wake_message_differs_when_auto_clear_requested(self):
         import wake_monitor as wm
 
-        assert "175 ألفاً" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108") and "COMMON" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108")
+        assert "180 ألفاً" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108") and "COMMON" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108")
         assert wm.payload(wm.CLEAR_ID, "pending_clear", "0108").startswith("بعد المسح")
 
 
@@ -741,11 +742,12 @@ class TestUnifiedGuardAndFocusRenewal:
         out = ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, ss.CLEAR_AT_TOKENS + 5000), tree, NOW)
         assert "كُتب طلبُ المسح" in out and ss.auto_clear_nums(tree, NOW) == {"0108"}
 
-    def test_no_declared_focus_still_blocks_auto_clear(self, tree, tmp_path):
+    def test_no_declared_focus_derives_from_held_card_and_requests_clear(self, tree, tmp_path):
+        """W-20261027-018: كان غيابُ focus يحجب المسحَ إلى الأبد (0426 و0601 عند 207 ألفاً)؛ يُشتقّ الآن من أحدث بطاقةٍ محجوزة."""
         ss.set_duties("0108", none=True, root=tree, now=NOW)
         ss.write_state("0108", ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), tree)
-        assert "سقط الحارسُ" in ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, ss.CLEAR_AT_TOKENS + 5000), tree, NOW)
-        assert ss.auto_clear_nums(tree, NOW) == set()
+        assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", self._tx(tmp_path, ss.CLEAR_AT_TOKENS + 5000), tree, NOW)
+        assert ss.auto_clear_nums(tree, NOW) == {"0108"} and ss._load_focus("0108", tree) is not None
 
 
 def test_hook_does_not_repeat_identity_directory_lines(tree):
@@ -798,6 +800,122 @@ class TestSelfClearBlock:
     def test_below_threshold_stays_silent(self, tree):
         hook = self._setup(tree, 100_000)
         assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
+
+
+class TestDeriveFocus:
+    """W-20261027-018: جلسةٌ فوق العتبة تحجز بطاقاتٍ بلا focus معلَن: يُشتقّ التركيز من أحدث بطاقةٍ محجوزة فلا يُحجب المسحُ دائماً."""
+
+    def test_derives_from_latest_held_card(self, tree):
+        _append_event(tree, _ev("2026-10-23T19:30:00+03:00", "W-9", "created", {"source": "owner", "problem": "جديدة", "held_by": "0108"}))
+        assert ss.derive_focus("0108", tree) is True
+        assert ss._load_focus("0108", tree)["card"] == "W-9" and ss._load_focus("0108", tree)["step"] == 1
+
+    def test_never_overrides_declared_focus(self, tree):
+        ss.set_focus("0108", "W-1", 3, root=tree)
+        assert ss.derive_focus("0108", tree) is False
+        assert ss._load_focus("0108", tree)["step"] == 3
+
+    def test_no_held_card_derives_nothing(self, tree):
+        assert ss.derive_focus("0777", tree) is False and ss._load_focus("0777", tree) is None
+
+    def test_auto_clear_no_longer_blocked_forever_without_focus(self, tree, tmp_path):
+        ss.set_duties("0108", none=True, root=tree, now=NOW)
+        ss.write_state("0108", ss.derive("0108", "0108 · التقييم والعصف", NOW, tree, cwd="D:/w"), tree)
+        tx = tmp_path / "t.jsonl"
+        tx.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": 207_000, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
+        assert ss._load_focus("0108", tree) is None
+        assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", tx, tree, NOW)
+
+
+class TestFitState:
+    """W-20261027-037: حالةٌ فوق 4096 بايت تُقصّ ولا تُسقط Stop (0101: 10 بطاقات محجوزة وطابورٌ طويل فبلغت 249 ألفاً بلا مسح)."""
+
+    @staticmethod
+    def _big(tree):
+        st = ss.derive("0108", "0108 · التقييم والعصف", NOW, tree)
+        st["queue"] = [{"n": i, "at": "2026-10-27T11:28+03:00"} for i in range(ss.QUEUE_MAX)]
+        st["held_cards"] = [{"id": f"W-20261027-{i:03d}", "state": "in_progress", "at": "2026-10-27T11:28:00+03:00"} for i in range(ss.HELD_MAX)]
+        st["waiting"] = [{"n": i, "to": "0101", "at": "2026-10-27T11:28+03:00"} for i in range(ss.WAITING_MAX)]
+        return st
+
+    def test_fit_trims_variable_fields_to_limit_without_mutating_input(self, tree, monkeypatch):
+        monkeypatch.setattr(ss, "MAX_BYTES", 3000)  # الحالةُ الكاملةُ بالسقوف الحاليّة 4058 بايتاً؛ يُخفَّض السقف لإثبات القصّ
+        st = self._big(tree)
+        before = json.dumps(st, ensure_ascii=False)
+        size = lambda d: len(json.dumps(d, ensure_ascii=False, indent=1).encode("utf-8"))  # noqa: E731
+        assert size(st) > ss.MAX_BYTES
+        out = ss.fit_state(st)
+        assert size(out) <= ss.MAX_BYTES and json.dumps(st, ensure_ascii=False) == before
+        assert out["queue"] != st["queue"] or out["waiting"] != st["waiting"] or out["held_cards"] != st["held_cards"]
+
+    def test_small_state_untouched(self, tree):
+        st = ss.derive("0108", "0108 · التقييم والعصف", NOW, tree)
+        assert ss.fit_state(st) is st
+
+    def test_write_state_no_longer_raises_on_big_state(self, tree, monkeypatch):
+        monkeypatch.setattr(ss, "MAX_BYTES", 3000)
+        p, wrote = ss.write_state("0108", self._big(tree), tree)
+        back = json.loads(p.read_text(encoding="utf-8"))  # حجمُ الملف على ويندوز يزيد بـCRLF؛ المعيارُ حجمُ JSON نفسه
+        assert wrote and ss.validate(back) == [] and len(json.dumps(back, ensure_ascii=False, indent=1).encode("utf-8")) <= ss.MAX_BYTES
+
+    def test_stop_hook_measures_and_requests_clear_even_when_state_is_oversized(self, tree, monkeypatch):
+        hook = TestSelfClearBlock._setup(tree, 180_000)
+        full = len(json.dumps(ss.derive("0108", "0108 · التقييم", NOW, tree, cwd="D:/w"), ensure_ascii=False, indent=1).encode("utf-8"))
+        monkeypatch.setattr(ss, "MAX_BYTES", full - 30)  # الحالةُ الكاملةُ تتجاوز السقفَ بقليل: كان write_state يرفع ValueError فيسقط Stop
+        out = ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
+        assert json.loads(out)["decision"] == "block" and ss.auto_clear_nums(tree) == {"0108"}
+
+    def test_stop_hook_survives_refresh_exception(self, tree, monkeypatch):
+        hook = TestSelfClearBlock._setup(tree, 100_000)
+        monkeypatch.setattr(ss, "write_state", lambda *a, **k: (_ for _ in ()).throw(ValueError("x")))
+        assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
+        assert "تعذّر التجديد" in ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8")
+
+
+class TestPostToolHook:
+    """W-20261027-018: PostToolUse يقيس السياق داخل الدور كلَّ N أداة ويحقن أمر المسح عند العتبة مرّةً واحدة."""
+
+    TITLES = staticmethod(lambda c, i: ("0108 · التقييم", []))
+
+    def _hook(self, tree, tokens):
+        return TestSelfClearBlock._setup(tree, tokens)
+
+    def _run(self, hook, tree, times):
+        return [ss.cmd_post_tool_hook(hook, tree, self.TITLES) for _ in range(times)]
+
+    def test_measures_only_every_n_tools(self, tree):
+        outs = self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY)
+        assert all(o == "" for o in outs[:-1]) and outs[-1]
+        assert ss.auto_clear_nums(tree) == {"0108"}
+
+    def test_injects_clear_instructions_as_additional_context(self, tree):
+        d = json.loads(self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY)[-1])["hookSpecificOutput"]
+        assert d["hookEventName"] == "PostToolUse" and "clear_session" in d["additionalContext"] and "guard 0108" in d["additionalContext"]
+
+    def test_no_repeat_within_same_turn(self, tree):
+        outs = self._run(self._hook(tree, 180_000), tree, ss.POST_TOOL_EVERY * 3)
+        assert sum(1 for o in outs if o) == 1  # الطلبُ قائم: لا حقنَ ثانياً
+
+    def test_stop_does_not_block_again_after_injection(self, tree):
+        hook = self._hook(tree, 180_000)
+        self._run(hook, tree, ss.POST_TOOL_EVERY)
+        assert ss.cmd_stop_hook(hook, tree, self.TITLES) == ""
+
+    def test_below_threshold_silent(self, tree):
+        assert all(o == "" for o in self._run(self._hook(tree, 100_000), tree, ss.POST_TOOL_EVERY * 2))
+        assert ss.auto_clear_nums(tree) == set()
+
+    def test_guard_failure_silent(self, tree):
+        tp = tree / "t.jsonl"  # بلا focus ولا واجبات: الحارس يسقط
+        tp.write_text(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 0, "cache_read_input_tokens": 200_000, "cache_creation_input_tokens": 0}}}) + "\n", encoding="utf-8")
+        hook = json.dumps({"cwd": "D:/w", "session_id": "s", "transcript_path": str(tp)})
+        assert all(o == "" for o in self._run(hook, tree, ss.POST_TOOL_EVERY))
+        assert ss.auto_clear_nums(tree) == set()
+
+    def test_never_raises_on_garbage(self, tree):
+        assert ss.cmd_post_tool_hook("not json", tree) == ""
+        assert ss.cmd_post_tool_hook(json.dumps({"cwd": "D:/w"}), tree, self.TITLES) == ""
+        assert ss.cmd_post_tool_hook(json.dumps({"cwd": "D:/w", "transcript_path": "x"}), tree, lambda c, i: (None, ["0108 · أ", "0102 · ب"])) == ""
 
 
 def test_clear_markers_removes_both_markers_of_that_number_only(tree):
@@ -909,3 +1027,41 @@ def test_stop_hook_blocks_once_when_no_live_watcher_and_not_when_alive(tree, mon
     assert ss.cmd_stop_hook(active, tree, titles) == ""  # لا حلقةَ منع
     inbox.beat("0108", tree)
     assert ss.cmd_stop_hook(hook, tree, titles) == ""  # مراقبٌ حيّ
+
+
+def test_stop_hook_uses_remembered_number_when_app_title_fails(tree):
+    """W-20261027-007: session_id→رقم يُحفظ عند أوّل نجاح ويُستعمل حين يفشل العنوان فلا يُتخطّى الاستدعاء."""
+    hook = json.dumps({"cwd": "D:/w", "session_id": "sid-1"})
+    ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", []))
+    assert ss.cached_num("sid-1", tree) == "0108"
+    ss.cmd_stop_hook(hook, tree, lambda c, i: (None, []))  # العنوان فشل: لا مرشّحون
+    log = ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8").splitlines()
+    assert "0108: جُدِّد (من ذاكرة session_id)" in log[-1] and "تخطّي" not in log[-1]
+    ss.cmd_stop_hook(json.dumps({"cwd": "D:/w", "session_id": "other"}), tree, lambda c, i: (None, []))
+    assert "تخطّي: الرقمُ غيرُ محدَّد" in ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8").splitlines()[-1]
+
+
+def test_num_cache_ignores_bad_input_and_is_capped(tree):
+    ss.cache_num("", "0108", tree)
+    ss.cache_num("s", "abc", tree)
+    assert not ss.num_cache_path(tree).exists()
+    for i in range(ss.NUM_CACHE_MAX + 5):
+        ss.cache_num(f"s{i}", "0108", tree)
+    data = json.loads(ss.num_cache_path(tree).read_text(encoding="utf-8"))
+    assert len(data) == ss.NUM_CACHE_MAX and "s0" not in data and f"s{ss.NUM_CACHE_MAX + 4}" in data
+
+
+def test_guard_failure_above_threshold_escalates_once_a_day_to_0101_inbox(tree, tmp_path, monkeypatch):
+    import inbox
+
+    monkeypatch.setattr(ss, "clear_guard", lambda num, root, now: ["لا تركيز مُعلَن"])
+    monkeypatch.setattr(ss, "context_tokens", lambda t: 180_000)
+    out = ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW)
+    assert "سقط الحارسُ" in out and "صُعِّد إلى 0101" in out
+    msgs = inbox.pending("0101", tree)
+    assert len(msgs) == 1 and "0108" in msgs[0]["text"] and "180000" in msgs[0]["text"] and "لا تركيز مُعلَن" in msgs[0]["text"]
+    assert "صُعِّد" not in ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW + timedelta(hours=1))  # مرّةً في اليوم
+    assert len(inbox.pending("0101", tree)) == 1
+    assert "صُعِّد" in ss.maybe_auto_clear("0108", "D:/w", "t.jsonl", tree, NOW + timedelta(days=1))  # يومٌ جديد
+    monkeypatch.setattr(ss, "context_tokens", lambda t: 100_000)
+    assert "صُعِّد" not in ss.maybe_auto_clear("0109", "D:/w", "t.jsonl", tree, NOW)  # تحت العتبة لا تصعيد

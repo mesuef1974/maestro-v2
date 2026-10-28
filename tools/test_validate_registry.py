@@ -102,3 +102,10 @@ def test_ordinal_tab_accepts_sstt_and_keeps_ttss():
     assert vr.name_problems("0302 · خطأ", "01", serial) != []
     assert vr.name_problems("0201 · الرصد", "01", {"max_title_len": 40}) != [], "بلا ordinal_tabs يبقى TTSS وحده"
 
+
+
+def test_live_charter_number_as_alias_key_is_flagged():
+    # W-20261028-010: رقمٌ مفتاحٌ في aliases يُعاد لميثاقٍ حيّ (حادثة 0111) يُرفض
+    tabs = _merge_tabs(aliases={"0702": "0701", "0201": "0101", "0111": "0701"})
+    tabs["session_policy"]["charters"]["0111 · تقييم"] = {}
+    assert any("0111 ← 0701 مستعارٌ وما زال جلسةً قائمة" in p for p in vr.alias_problems(tabs))

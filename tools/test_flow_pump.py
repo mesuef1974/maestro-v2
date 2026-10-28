@@ -113,7 +113,7 @@ class ApprovePass(unittest.TestCase):
         with (
             mock.patch.object(fp, "approval_ok", return_value=False),
             mock.patch.object(fp, "approval_why", return_value="لا اعتماد"),
-            mock.patch.object(fp, "PENDING", Path(tempfile.mkdtemp()) / "p.jsonl"),
+            mock.patch.object(fp.hand_off, "__defaults__", (Path(tempfile.mkdtemp()), None)),
             mock.patch.object(fp.subprocess, "run") as run,
         ):
             lines = fp.approve_pass({"W-1": self.STATES["W-1"]}, apply=True)
@@ -765,6 +765,9 @@ class PrepushPass(unittest.TestCase):
         p = mock.patch.object(fp, "LOG", self.tmp / "pump.log")
         p.start()
         self.addCleanup(p.stop)
+        p = mock.patch.object(fp.hand_off, "__defaults__", (self.tmp, None))  # رسائلُ الإحالة في صندوقٍ مؤقّت لا صندوق المستودع
+        p.start()
+        self.addCleanup(p.stop)
         self.card = fp.ledger.add_item("owner", "tool", "م", "أ", "ق", start="2026-10-20T08:00", priority="P2", path=self.path, held_by="0702")
         fp.ledger.move(self.card, "approved", path=self.path, note="اعتمد المالك على 8500", head="aaaaaaaa", by="0501", waive_spec="اختبار")
 
@@ -913,6 +916,48 @@ class PrepushPass(unittest.TestCase):
         (self.tree / "x").touch()
         lines, _ = self.run_pass(apply=False)
         self.assertIsNone(self.receipt())
+
+    def test_an_old_format_or_old_runner_failure_is_retried_once(self):
+        """(10-28) محاولاتُ مشغّل DETACHED_PROCESS حُجبت للأبد بـWinError 6 بلا عيبٍ في الشيفرة؛ الصيغةُ القديمة ونسخةُ مشغّلٍ أخرى تُعادان."""
+        older = {"why": "رمز الخروج 1", "cond": "prepush", "v": fp.RUNNER_V - 1, "ts": "2026-10-28T10:00:00+03:00"}
+        for old in ("رمز الخروج 1", older):
+            fp.PREPUSH_ATTEMPTS.write_text(json.dumps({f"{self.card}:aaaaaaaa": old}), encoding="utf-8")
+            lines, docker = self.run_pass()
+            self.assertEqual(len(self.runs(docker)), 1, old)
+            self.assertIn("✔ prepush", lines[0])
+            (self.gitdir / fp.ledger.RECEIPT_NAME).unlink()
+
+    def test_red_code_goes_to_the_live_holder_with_the_reason_and_the_log(self):
+        import inbox
+
+        with mock.patch.object(fp.hand_off, "__kwdefaults__", {"detail": "", "alive": lambda n, r: True}):
+            lines, _ = self.run_pass(docker=self.docker(code=1, log="✘ ruff check: فشل"))
+        self.assertIn("[مالك=0702]", lines[0])
+        rows = [r for r in inbox._rows("0702", self.tmp) if r["k"] == "msg"]
+        self.assertIn(f"ledger/prepush_{self.card}_aaaaaaaa.log", rows[0]["text"])
+        self.assertIn("رمز الخروج 1", rows[0]["text"])
+        self.assertEqual(json.loads(fp.PREPUSH_ATTEMPTS.read_text(encoding="utf-8"))[f"{self.card}:aaaaaaaa"]["cond"], "prepush")
+
+    def test_an_environment_failure_goes_to_automation_and_is_retried_later(self):
+        (self.tree / "scripts" / "prepush_check.py").unlink()
+        calls = []
+
+        def broken(path, timeout):
+            calls.append(1)
+            return 1, "FAILED tools/test_a.py::T::t - OSError: [WinError 6] The handle is invalid\n1 failed, 9 passed"
+
+        lines, _ = self.run_pass(pytest_run=broken)
+        self.assertIn("[مالك=0701]", lines[0])
+        lines, _ = self.run_pass(pytest_run=broken)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("يُعاد بعد", lines[0])
+        key = f"{self.card}:aaaaaaaa"
+        tried = json.loads(fp.PREPUSH_ATTEMPTS.read_text(encoding="utf-8"))
+        tried[key]["ts"] = (datetime.now().astimezone() - timedelta(hours=fp.ENV_RETRY_H + 1)).isoformat(timespec="seconds")
+        fp.PREPUSH_ATTEMPTS.write_text(json.dumps(tried), encoding="utf-8")
+        self.run_pass(pytest_run=lambda path, timeout: (calls.append(1) or (0, "10 passed")))
+        self.assertEqual(len(calls), 2)
+        self.assertIsNotNone(self.receipt())
 
     def test_governance_dry_run_only_announces_the_substitute_receipt(self):
         (self.tree / "scripts" / "prepush_check.py").unlink()
@@ -1102,10 +1147,29 @@ class CiLimitPush(PushPass):
     def test_the_cap_counts_pushes_of_the_same_cycle(self):
         items = {"W-1": {"approved_head": "aaaaaaaa"}, "W-2": {"approved_head": "aaaaaaaa"}}
         with mock.patch("push_watch.find_tree", return_value=({"path": "C:/repo/wt1", "branch": "w1"}, "")):
-            keep, lines = fp.defer_for_ci(items, ["C:/repo"], lambda *a: (0, "git@github.com:x/shschool_mvp.git"), lambda: 1)
+            keep, lines = fp.defer_for_ci(items, ["C:/repo"], lambda *a: (0, "git@github.com:x/shschool_mvp.git"), lambda: 1,
+                                          ready=lambda cid, tree: True)
         self.assertEqual(sorted(keep), ["W-1"])
         self.assertEqual(len(lines), 1)
         self.assertIn("W-2", lines[0])
+
+    def test_a_card_the_guard_refuses_takes_no_slot_so_the_ready_one_after_it_pushes(self):
+        """(10-28، W-20261027-031) بطاقةٌ بلا إيصالٍ قبلها في الترتيب كانت تحجز الخانةَ ثمّ يرفضها الحارس فتُؤجَّل الجاهزة."""
+        items = {"W-1": {"approved_head": "aaaaaaaa"}, "W-2": {"approved_head": "aaaaaaaa"}}
+        with mock.patch("push_watch.find_tree", return_value=({"path": "C:/repo/wt1", "branch": "w1"}, "")):
+            keep, lines = fp.defer_for_ci(items, ["C:/repo"], lambda *a: (0, "git@github.com:x/shschool_mvp.git"), lambda: 1,
+                                          ready=lambda cid, tree: cid == "W-2")
+        self.assertEqual((sorted(keep), lines), (["W-1", "W-2"], []))
+
+    def test_the_default_readiness_is_the_push_guard_itself(self):
+        (self.gitdir / fp.ledger.RECEIPT_NAME).write_text(json.dumps({"head": "aaaaaaaa", "ok": True}), encoding="utf-8")
+        states = fp.ledger.reduce_state(fp.ledger.load_events(self.path))
+        tree = {"path": "C:/repo/wt1", "branch": "w20261020-001-x"}
+        git = self.git("w20261020-001-x")
+        self.assertTrue(fp.guard_passes(self.card, tree, states, git, lambda c, h: True))
+        self.assertFalse(fp.guard_passes(self.card, tree, states, git, lambda c, h: False))
+        (self.gitdir / fp.ledger.RECEIPT_NAME).unlink()
+        self.assertFalse(fp.guard_passes(self.card, tree, states, git, lambda c, h: True))
 
 
 class TreePass(unittest.TestCase):
@@ -1294,6 +1358,20 @@ class OpenPrPass(unittest.TestCase):
         note.assert_not_called()
         self.assertIn("(عرض)", lines[0])
 
+    def test_a_governance_card_opens_its_pr_in_maestro_v2_not_the_platform(self):
+        """(10-28) فرعُ بطاقة الحوكمة بعيدٌ في maestro-v2 لا المنصّة: كان يُقال «لا فرعَ بعيداً» ولا يُفتح طلب."""
+        def git(repo, *args):
+            if args[:2] == ("ls-remote", "--heads"):
+                return 0, (f"{self.HEAD}\trefs/heads/claude/w5-gov\n" if repo == "GOV" else "")
+            return 0, ""
+
+        lines, sh, note = self.run_pass(git=git, gov="GOV")
+        made = self.creates(sh)
+        self.assertEqual(len(made), 1)
+        self.assertEqual(made[0][made[0].index("--repo") + 1], fp.GOV_SLUG)
+        self.assertTrue(any(c[:2] == ["gh", "api"] and f"repos/{fp.GOV_SLUG}/" in c[2] for c in sh.calls))
+        self.assertIn("✔", lines[0])
+
     def test_a_remote_head_that_differs_from_the_approved_head_is_never_opened(self):
         lines, sh, _ = self.run_pass(git=self.git(remote=[("claude/w5-x", "e" * 40)]))
         self.assertEqual(self.creates(sh), [])
@@ -1479,33 +1557,83 @@ def test_pr_body_names_only_its_own_card():
     assert body.count("W-") == 1 and "W-20261013-004" in body
 
 
+class FailureCond(unittest.TestCase):
+    """(10-28) فشلُ prepush: علّةُ البيئة للأتمتة، والفحصُ الأحمر في الشيفرة لحامل البطاقة."""
+
+    def test_timeout_and_missing_tools_are_the_environment(self):
+        for code in (3, 124, 127):
+            self.assertEqual(fp.failure_cond(code, ""), "prepush_env", code)
+
+    def test_every_failure_line_carrying_winerror_is_the_environment(self):
+        log = "FAILED a::t - OSError: [WinError 6] The handle is invalid\nERROR b::u - OSError: [WinError 6]\n2 failed"
+        self.assertEqual(fp.failure_cond(1, log), "prepush_env")
+
+    def test_truncated_summary_lines_are_judged_by_their_reason_lines(self):
+        """ملخّصُ pytest يقصّ FAILED/ERROR فتضيع العلامة؛ يُحكم بأسطر «E »: كلُّ فشلٍ سببُه علّةُ بيئة."""
+        env = "ERROR tools/test_a.py::t - OSE...\nE   OSError: [WinError 6] The handle is invalid\n1 error"
+        self.assertEqual(fp.failure_cond(1, env), "prepush_env")
+        browser = "ERROR t::a - pla...\nE   playwright._impl._errors.Error: BrowserType.launch: Executable doesn't exist\n1 error"
+        self.assertEqual(fp.failure_cond(1, browser), "prepush_env")
+        mixed = "FAILED t::a - Ass...\nE   AssertionError\nERROR t::b - OSE...\nE   OSError: [WinError 6]\n1 failed, 1 error"
+        self.assertEqual(fp.failure_cond(1, mixed), "prepush")
+
+    def test_one_unmarked_failure_line_makes_it_the_code(self):
+        self.assertEqual(fp.failure_cond(1, "FAILED a::t - OSError: [WinError 6]\nFAILED b::u - AssertionError"), "prepush")
+        self.assertEqual(fp.failure_cond(1, "✘ ruff check: فشل"), "prepush")
+        self.assertEqual(fp.failure_cond(1, "شيءٌ آخر"), "prepush")
+
+
 class HandOff(unittest.TestCase):
-    """جدولُ شرط←مالك: يسمّي المالك، ويكتب صفَّ إيقاظٍ عند التطبيق فقط، ولا يكرّره خلال ست ساعات."""
+    """جدولُ شرط←مالك: يسمّي المالك، ويُلحق رسالةً بصندوقه عند التطبيق فقط، ولا يكرّرها خلال ست ساعات (W-20261027-006)."""
 
     def setUp(self):
-        self.path = Path(tempfile.mkdtemp()) / "pending_wakes.jsonl"
+        self.path = Path(tempfile.mkdtemp())
         self.item = {"state": "approved", "held_by": "0408"}
 
-    def _rows(self):
-        return [json.loads(x) for x in self.path.read_text(encoding="utf-8").splitlines()] if self.path.is_file() else []
+    def _rows(self, owner="0501"):
+        import inbox
+
+        return [r for r in inbox._rows(owner, self.path) if r["k"] == "msg"]
 
     def test_owner_table(self):
-        for cond, owner in (("visual_evidence", "0502"), ("head_unapproved", "0101"), ("migrations", "0601"), ("prepush", "0501")):
-            self.assertEqual(fp.hand_off("W-1", cond, self.item, False, self.path), f"[مالك={owner}]")
+        """(10-28) prepush الأحمر لحامل البطاقة (عيبٌ في شيفرتها)، والبيئيُّ للأتمتة؛ لا 0501 التي لا تكتب شيفرة."""
+        live = lambda num, root: True  # noqa: E731
+        for cond, owner in (("visual_evidence", "0502"), ("head_unapproved", "0101"), ("migrations", "0601"), ("prepush", "0408"),
+                            ("prepush_env", "0701")):
+            self.assertEqual(fp.hand_off("W-1", cond, self.item, False, self.path, alive=live), f"[مالك={owner}]")
 
     def test_pushed_no_pr_goes_to_card_holder_and_unknown_is_marked(self):
-        self.assertEqual(fp.hand_off("W-1", "pushed_no_pr", self.item, False, self.path), "[مالك=0408]")
+        self.assertEqual(fp.hand_off("W-1", "pushed_no_pr", self.item, False, self.path, alive=lambda n, r: True), "[مالك=0408]")
         self.assertEqual(fp.hand_off("W-1", "pushed_no_pr", {"state": "approved"}, False, self.path), "[مالك=؟]")
+
+    def test_a_holder_without_a_live_watcher_goes_to_the_router_with_the_reason(self):
+        """(10-28) 035 عند 0420 المؤرشفة: رسالةُ صندوقٍ لا يقرؤه أحد؛ تُحال إلى 0101 لإعادة التكليف ومعها السبب والسجلّ."""
+        self.assertEqual(fp.hand_off("W-1", "prepush", self.item, False, self.path, alive=lambda n, r: False), f"[مالك={fp.ROUTER}]")
+        t0 = datetime(2026, 10, 28, 10, 0).astimezone()
+        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0, detail="رمز الخروج 1 — السجلّ ledger/x.log", alive=lambda n, r: False)
+        text = self._rows(fp.ROUTER)[0]["text"]
+        self.assertIn("الحامل 0408 بلا مراقبٍ حيّ", text)
+        self.assertIn("ledger/x.log", text)
+        self.assertEqual(self._rows("0408"), [])
+
+    def test_a_watcher_beat_keeps_the_message_with_the_holder(self):
+        import inbox
+
+        inbox.beat("0408", self.path)
+        self.assertEqual(fp.hand_off("W-1", "prepush", self.item, False, self.path), "[مالك=0408]")
 
     def test_dry_run_writes_nothing(self):
         fp.hand_off("W-1", "prepush", self.item, False, self.path)
         self.assertEqual(self._rows(), [])
+        self.assertFalse((self.path / "ledger").exists())
 
     def test_apply_writes_row_once_within_six_hours(self):
         t0 = datetime(2026, 10, 24, 10, 0).astimezone()
-        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0)
-        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0 + timedelta(hours=5))
-        self.assertEqual(len(self._rows()), 1)
-        self.assertEqual(self._rows()[0]["owner"], "0501")
-        fp.hand_off("W-1", "prepush", self.item, True, self.path, t0 + timedelta(hours=7))
-        self.assertEqual(len(self._rows()), 2)
+        fp.hand_off("W-1", "migrations", self.item, True, self.path, t0)
+        fp.hand_off("W-1", "migrations", self.item, True, self.path, t0 + timedelta(hours=5))
+        self.assertEqual(len(self._rows("0601")), 1)
+        row = self._rows("0601")[0]
+        self.assertEqual((row["from"], row["text"].startswith("[مضخّة:W-1:migrations:approved]")), (fp.PUMP_FROM, True))
+        self.assertFalse((self.path / "ledger" / "pending_wakes.jsonl").exists())
+        fp.hand_off("W-1", "migrations", self.item, True, self.path, t0 + timedelta(hours=7))
+        self.assertEqual(len(self._rows("0601")), 2)

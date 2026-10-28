@@ -129,6 +129,8 @@ def check_base_fresh(repo: str, base: str = "origin/main") -> list[str]:
 def check_mypy_version(repo: str, installed=None) -> list[str]:
     """مقارنةُ إصدار mypy وحزمِ الأنواع المثبَّتة محلّياً بـrequirements-mypy.txt (ما تحكم به البوّابة)؛ لا تشغّل mypy."""
     req = Path(repo) / "requirements-mypy.txt"
+    if not req.is_file() and (Path(repo) / "tools" / "ledger.py").is_file():
+        return []  # مستودعُ الحوكمة (maestro-v2): لا بوّابة mypy فيه، وإيصاله pytest tools/ — لا إعفاءَ يدويّ ولا خطأ
     if not req.is_file():
         return [f"لا يوجد {req.name} في {repo}: تعذّر معرفةُ إصدار البوّابة."]
     if installed is None:

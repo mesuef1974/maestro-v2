@@ -5,6 +5,8 @@
     python inbox.py send --to 0301 --from 0101 --text "…"        # أو --file مسار
     python inbox.py read 0301 [--peek]                            # الواردُ غيرُ المسلَّم (ويُسلَّم ما لم يكن --peek)
     python inbox.py pending                                       # الأرقامُ التي لها وارد غيرُ مسلَّم وعددُه
+    python inbox.py wait 0301 [--once] [--timeout ث]              # مراقبٌ: يطبع كلَّ وارد ويواصل؛ --once يخرج بأوّله
+    python inbox.py reap                                          # يوقف مراقباتِ الأرقام غير الحيّة (W-20261028-033)
     python inbox.py hook                                          # خطّاف PostToolUse (JSON على stdin): يحقن الواردَ في سياق الجلسة العاملة
 
 الملف: ledger/inbox/<رقم>.jsonl يُلحَق فقط: {"k":"msg"} للرسالة و{"k":"ack"} للتسليم و{"k":"block"} لمنع الإنهاء مرّةً لكلّ دفعة.
@@ -13,8 +15,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import signal
 import re
 import sys
 import time
@@ -52,11 +56,30 @@ def _beat_path(num: str, root: Path | None = None) -> Path:
     return _path(num, root).with_suffix(".beat")
 
 
+def code_fingerprint() -> str:
+    """بصمةُ هذا الملفّ على القرص الآن؛ مراقبٌ بدأ ببصمةٍ ثمّ رآها تغيّرت يعمل بشيفرةٍ قديمة (W-20261028-033)."""
+    try:
+        return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
 def beat(num: str, root: Path | None = None) -> None:
     """يكتب نبضَ المراقب: pid ووقتٌ يثبتان أنّه حيّ."""
     p = _beat_path(num, root)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"pid": os.getpid(), "t": time.time()}), encoding="utf-8")
+
+
+def beat_owner(num: str, root: Path | None = None, now: float | None = None) -> int | None:
+    """pid صاحبِ النبض الطازج لهذا الرقم، أو None إن لا نبضَ حيّاً."""
+    try:
+        d = json.loads(_beat_path(num, root).read_text(encoding="utf-8"))
+        if (now if now is not None else time.time()) - float(d["t"]) <= BEAT_MAX_AGE_S:
+            return int(d["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
 
 
 def watcher_alive(num: str, root: Path | None = None, now: float | None = None) -> bool:
@@ -69,24 +92,69 @@ def watcher_alive(num: str, root: Path | None = None, now: float | None = None) 
 
 
 def wait(num: str, root: Path | None = None, interval: float = WAIT_INTERVAL_S, timeout: float | None = None,
-         sleep=time.sleep, clock=time.time) -> list[dict]:
-    """يراقب صندوقَ `num` كلَّ `interval` ثانيةً ويكتب نبضاً؛ يعيد الواردَ (مسلَّماً) فور وصوله، أو [] عند انتهاء `timeout`.
-    يخرج فتوقظ الجلسةَ التطبيقُ (تشغّله Bash في الخلفيّة)؛ وعند الخروج يحذف نبضَه فيعرف المرسِلُ أنّ لا مراقبَ."""
+         sleep=time.sleep, clock=time.time, once: bool = True, emit=None, fingerprint=code_fingerprint, note=None) -> list[dict]:
+    """يراقب صندوقَ `num` كلَّ `interval` ثانيةً ويكتب نبضاً.
+    once=True (الافتراضيّ للمكتبة وسلوكُ `--once`): يعيد الواردَ (غيرَ مقرٍّ به: الإقرارُ لـread وحده، W-20261027-001) فور وصوله، أو [] عند انتهاء `timeout`.
+    once=False (W-20261027-006): يواصل الحلقةَ، ويمرّر كلَّ دفعةِ واردٍ إلى `emit(msgs)` فور وصولها (مرّةً لكلّ رسالة)، ويعيد كلَّ ما وصل عند انتهاء `timeout`.
+    المراقبُ لا يقرّ أبداً (W-20261027-020): طباعتُه في ملفّ مخرجات مهمّةٍ خلفيّةٍ ليست وصولاً إلى سياق الجلسة؛ والإقرارُ لـread والخطّاف وحدَهما.
+    وعند الخروج يحذف نبضَه فيعرف المرسِلُ أنّ لا مراقب.
+    W-20261028-033: (1) مراقبٌ واحد لكلّ رقم: إن كان نبضُ مراقبٍ آخر حيّاً يخرج الجديدُ بسطر شرحٍ عبر `note` دون أن يمسّ نبضَه؛
+    (2) يخرج بسطر شرحٍ متى تغيّرت بصمةُ inbox.py على القرص عن بصمتها عند البدء (شيفرةٌ قديمة)؛ فيعيد خطّافُ Stop تشغيلَه بالجديدة."""
     start = clock()
+    got: list[dict] = []
+    announced: set[int] = set()  # ما طُبع في هذه الحلقة: يمنع التكرارَ دون إقرار
+    other = beat_owner(num, root)
+    if other is not None and other != os.getpid():
+        if note:
+            note(f"مراقبٌ آخر حيٌّ لـ{num} (pid {other}): خرجتُ ولم أمسّ نبضه")
+        return got
+    fp0 = fingerprint()
     try:
         while True:
+            if fingerprint() != fp0:
+                if note:
+                    note(f"تغيّر inbox.py على القرص منذ بدء هذا المراقب ({fp0}): أخرج ليُعاد تشغيلي بالشيفرة الجديدة")
+                return got
             beat(num, root)
-            msgs = read(num, True, root)
-            if msgs:
+            msgs = read(num, False, root)  # W-20261027-020: لا إقرارَ في المراقب مطلقاً؛ فيجد read/الخطّافُ الواردَ ولو طُبع في ملفّ المهمّة
+            if msgs and once:
                 return msgs
+            fresh = [m for m in msgs if m["id"] not in announced]
+            if fresh:
+                announced.update(m["id"] for m in fresh)
+                got.extend(fresh)
+                if emit:
+                    emit(fresh)
             if timeout is not None and clock() - start >= timeout:
-                return []
+                return got
             sleep(interval)
     finally:
-        try:
-            _beat_path(num, root).unlink()
-        except OSError:
-            pass
+        if beat_owner(num, root) in (None, os.getpid()):  # لا نحذف نبضَ مراقبٍ آخر
+            try:
+                _beat_path(num, root).unlink()
+            except OSError:
+                pass
+
+
+def reap(live: set[str], root: Path | None = None, kill=os.kill, now: float | None = None) -> list[str]:
+    """يوقف مراقباتِ الأرقام غير الحيّة في session_directory ويحذف نبضَها (W-20261028-033). يعيد أسطرَ ما فُعل.
+    الإيقافُ لنبضٍ طازجٍ وحده (pid حيّ على الأرجح)؛ أمّا القديم فيُحذف ملفُّه بلا إيقاف فلا نقتل pid أُعيد استعمالُه."""
+    out: list[str] = []
+    for f in sorted(_dir(root).glob("*.beat")):
+        num = f.stem
+        if num in live:
+            continue
+        pid = beat_owner(num, root, now)
+        if pid is not None and pid != os.getpid():
+            try:
+                kill(pid, signal.SIGTERM)
+                out.append(f"أُوقف مراقب {num} (pid {pid}): لا جلسةَ حيّةً بهذا الرقم")
+            except OSError as e:
+                out.append(f"تعذّر إيقاف مراقب {num} (pid {pid}): {e}")
+        else:
+            out.append(f"حُذف نبضٌ قديم لـ{num}")
+        f.unlink(missing_ok=True)
+    return out
 
 
 def _now() -> str:
@@ -115,7 +183,7 @@ def _append(num: str, row: dict, root: Path | None = None) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def send(to: str, frm: str, text: str, root: Path | None = None) -> int:
+def send(to: str, frm: str, text: str, root: Path | None = None, ts: str | None = None) -> int:
     """يلحق رسالةً بصندوق `to` ويعيد رقمَها. يرفض الفارغ والأطول من MAX_TEXT ومرسِلاً غيرَ صالح."""
     text = (text or "").strip()
     if not text:
@@ -124,9 +192,20 @@ def send(to: str, frm: str, text: str, root: Path | None = None) -> int:
         raise ValueError(f"النصُّ {len(text)} حرفاً (الحدّ {MAX_TEXT}): اكتبه ملفّاً في handover_notes وأرسل مساره")
     if not NUM.match(frm):
         raise ValueError(f"مرسِلٌ غيرُ صالح: {frm}")
+    to = _successor(to)
     n = max([r["id"] for r in _rows(to, root) if r["k"] == "msg"] or [0]) + 1
-    _append(to, {"k": "msg", "id": n, "ts": _now(), "from": frm, "text": text}, root)
+    _append(to, {"k": "msg", "id": n, "ts": ts or _now(), "from": frm, "text": text}, root)
     return n
+
+
+def _successor(num: str) -> str:
+    """رقمٌ قديمٌ أو مدمَجٌ (0420 ← 0409، 0502 ← 0501…) يُكتب إلى صندوق مستقبِلته الحيّة: صندوقٌ بلا جلسةٍ لا يقرؤه أحد (10-29)."""
+    try:
+        import session_alias  # noqa: PLC0415
+
+        return session_alias.canonical(num, session_alias.number_map())
+    except Exception:  # noqa: BLE001 — الحلُّ مساعدٌ: عند تعذّره يبقى الرقم كما أُعطي
+        return num
 
 
 def pending(num: str, root: Path | None = None) -> list[dict]:
@@ -211,10 +290,12 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("read")
     r.add_argument("num")
     r.add_argument("--peek", action="store_true")
-    w = sub.add_parser("wait", help="مراقبٌ لحظيّ: يخرج بطباعة الوارد فور وصوله")
+    w = sub.add_parser("wait", help="مراقبٌ لحظيّ: يطبع كلَّ وارد فور وصوله ويواصل (--once: يخرج بأوّل وارد)")
     w.add_argument("num")
+    w.add_argument("--once", action="store_true", help="السلوكُ القديم: يخرج بأوّل وارد")
     w.add_argument("--timeout", type=float, default=None, help="ثوانٍ؛ بلا قيمة = بلا نهاية")
     sub.add_parser("pending")
+    sub.add_parser("reap", help="يوقف مراقباتِ الأرقام غير الحيّة في session_directory")
     sub.add_parser("hook")
     a = ap.parse_args(argv)
     if a.cmd == "send":
@@ -232,8 +313,19 @@ def main(argv: list[str] | None = None) -> int:
         print(render(msgs) if msgs else "لا وارد")
         return 0
     if a.cmd == "wait":
-        msgs = wait(a.num, timeout=a.timeout)
-        print(render(msgs) if msgs else "انتهت المهلة بلا وارد")
+        if a.once:
+            msgs = wait(a.num, timeout=a.timeout, note=lambda t: print(t, flush=True))
+            print(render(msgs) if msgs else "انتهت المهلة بلا وارد")
+            return 0
+        msgs = wait(a.num, timeout=a.timeout, once=False, emit=lambda m: print(render(m), flush=True), note=lambda t: print(t, flush=True))
+        if not msgs:
+            print("انتهت المهلة بلا وارد")
+        return 0
+    if a.cmd == "reap":
+        import session_directory
+
+        lines = reap(set(session_directory.entries()))
+        print("\n".join(lines) if lines else "لا مراقبَ لرقمٍ غير حيّ")
         return 0
     if a.cmd == "pending":
         nums = pending_nums()

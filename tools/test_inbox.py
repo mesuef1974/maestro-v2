@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 
 import pytest
 
@@ -86,11 +88,12 @@ def test_cli_wait_read_send_use_main_root_from_subtree(tmp_path, monkeypatch, ca
     assert (tmp_path / "ledger" / "inbox" / "0301.jsonl").exists() and not (sub / "ledger").exists()
 
 
-def test_wait_returns_incoming_at_once_acks_and_removes_beat(tmp_path):
+def test_wait_returns_incoming_at_once_without_ack_and_removes_beat(tmp_path):
     inbox.send("0301", "0101", "جاهز", tmp_path)
     msgs = inbox.wait("0301", tmp_path, sleep=lambda s: pytest.fail("لا نوم والواردُ حاضر"))
     assert [m["text"] for m in msgs] == ["جاهز"]
-    assert inbox.pending("0301", tmp_path) == []
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["جاهز"]  # لا إقرار: read يجده بعد الإيقاظ
+    assert [m["text"] for m in inbox.read("0301", True, tmp_path)] == ["جاهز"] and inbox.pending("0301", tmp_path) == []
     assert not inbox.watcher_alive("0301", tmp_path)  # خرج فحُذف نبضُه
 
 
@@ -131,3 +134,93 @@ def test_send_cli_warns_when_receiver_has_no_watcher(tmp_path, monkeypatch, caps
     inbox.beat("0501")
     assert inbox.main(["send", "--to", "0501", "--from", "0301", "--text", "ص"]) == 0
     assert "send_message" not in capsys.readouterr().out
+
+
+def test_wait_follow_mode_emits_every_batch_and_keeps_looping(tmp_path):
+    """W-20261027-006: بلا --once يطبع كلَّ دفعةٍ مرّةً ويواصل حتى المهلة؛ W-20261027-020: ولا يقرّ شيئاً (الإقرارُ لـread)."""
+    inbox.send("0301", "0101", "أ", tmp_path)
+    seen, arrived = [], []
+
+    def sleep(s):
+        if not arrived:
+            inbox.send("0301", "0101", "ب", tmp_path)
+            arrived.append(1)
+
+    t = iter(range(0, 100, 2))
+    got = inbox.wait("0301", tmp_path, timeout=6, sleep=sleep, clock=lambda: next(t), once=False, emit=seen.append)
+    assert [m["text"] for m in got] == ["أ", "ب"] and [[m["text"] for m in b] for b in seen] == [["أ"], ["ب"]]
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["أ", "ب"] and not inbox.watcher_alive("0301", tmp_path)
+    assert [m["text"] for m in inbox.read("0301", True, tmp_path)] == ["أ", "ب"] and inbox.pending("0301", tmp_path) == []
+
+
+def test_cli_wait_once_exits_at_first_message(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(inbox, "ROOT", tmp_path)
+    inbox.send("0301", "0101", "س", tmp_path)
+    assert inbox.main(["wait", "0301", "--once"]) == 0
+    assert "س" in capsys.readouterr().out
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["س"]  # W-20261027-001: --once لا يقرّ؛ read يجده بعد الإيقاظ
+
+
+# ===== W-20261028-033: بصمة الشيفرة ومراقبٌ واحد وreap =====
+def test_watcher_exits_with_note_when_code_fingerprint_changes(tmp_path):
+    """مراقبٌ بدأ ثمّ تغيّر inbox.py على القرص: يخرج بسطر شرحٍ ويحذف نبضَه ولا يقرّ شيئاً."""
+    inbox.send("0301", "0101", "أ", tmp_path)
+    fps = iter(["aaa", "aaa", "bbb"])
+    notes = []
+    inbox.wait("0301", tmp_path, once=False, sleep=lambda s: None, fingerprint=lambda: next(fps), note=notes.append)
+    assert len(notes) == 1 and "تغيّر inbox.py" in notes[0] and "aaa" in notes[0]
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["أ"]  # لم يُقرّ
+    assert not inbox.watcher_alive("0301", tmp_path)
+
+
+def test_second_watcher_for_same_number_exits_without_touching_first_beat(tmp_path, monkeypatch):
+    p = inbox._beat_path("0301", tmp_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"pid": os.getpid() + 1, "t": time.time()}), encoding="utf-8")
+    notes = []
+    assert inbox.wait("0301", tmp_path, once=False, sleep=lambda s: None, note=notes.append) == []
+    assert len(notes) == 1 and "مراقبٌ آخر حيٌّ" in notes[0] and str(os.getpid() + 1) in notes[0]
+    assert json.loads(p.read_text(encoding="utf-8"))["pid"] == os.getpid() + 1  # نبضُ الأول سليم
+
+
+def test_stale_beat_does_not_block_a_new_watcher(tmp_path):
+    p = inbox._beat_path("0301", tmp_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"pid": os.getpid() + 1, "t": time.time() - 100}), encoding="utf-8")
+    inbox.send("0301", "0101", "س", tmp_path)
+    assert [m["text"] for m in inbox.wait("0301", tmp_path, sleep=lambda s: None)] == ["س"]
+
+
+def test_reap_stops_fresh_watchers_of_dead_numbers_and_drops_stale_beats(tmp_path):
+    def mk(num, pid, age):
+        q = inbox._beat_path(num, tmp_path)
+        q.parent.mkdir(parents=True, exist_ok=True)
+        q.write_text(json.dumps({"pid": pid, "t": time.time() - age}), encoding="utf-8")
+
+    mk("0301", 111, 1)   # حيّ ورقمه حيّ: يبقى
+    mk("0409", 222, 1)   # رقمٌ غير حيّ ونبضُه طازج: يُوقَف
+    mk("0426", 333, 100)  # رقمٌ غير حيّ ونبضُه قديم: يُحذف ملفُّه فقط
+    killed = []
+    out = inbox.reap({"0301"}, tmp_path, kill=lambda pid, sig: killed.append(pid))
+    assert killed == [222] and len(out) == 2
+    assert inbox._beat_path("0301", tmp_path).exists()
+    assert not inbox._beat_path("0409", tmp_path).exists() and not inbox._beat_path("0426", tmp_path).exists()
+
+
+def test_cli_reap_uses_session_directory(tmp_path, monkeypatch, capsys):
+    import session_directory
+
+    monkeypatch.setattr(inbox, "ROOT", tmp_path)
+    monkeypatch.setattr(session_directory, "entries", lambda: {"0301": {}})
+    assert inbox.main(["reap"]) == 0
+    assert "لا مراقبَ" in capsys.readouterr().out
+
+
+def test_send_to_a_merged_number_lands_in_its_receivers_inbox(tmp_path, monkeypatch):
+    """(10-29) 0420 مدمَجة في 0409: رسالةٌ إلى 0420 كانت تبقى في صندوقٍ بلا جلسةٍ ولا تُقرأ."""
+    import session_alias
+
+    monkeypatch.setattr(session_alias, "number_map", lambda tabs=None: {"0420": "0409"})
+    inbox.send("0420", "0101", "x", root=tmp_path)
+    assert len(inbox.pending("0409", root=tmp_path)) == 1
+    assert inbox.pending("0420", root=tmp_path) == []

@@ -120,6 +120,26 @@ class Main(unittest.TestCase):
         self.assertIn("W-20261001-006", args)
         self.assertEqual(popen.call_args.kwargs["stdin"], hook.subprocess.DEVNULL)
 
+    def test_spawn_gives_a_hidden_console_not_a_detached_process(self):
+        """(10-28) DETACHED_PROCESS يورث أحفادَ المضخّة مقبضَ دخلٍ باطلاً (WinError 6) فيحمرّ pytest tools/ كلُّه؛ الطرفيّةُ المخفيّة تصلحه."""
+        with mock.patch("subprocess.Popen") as popen, mock.patch.object(hook.os, "name", "nt"):
+            hook.spawn()
+        flags = popen.call_args.kwargs["creationflags"]
+        self.assertTrue(flags & hook.CREATE_NO_WINDOW)
+        self.assertFalse(flags & 0x00000008)
+
+    def test_the_pump_runs_under_a_console_python_even_when_the_hook_runs_under_pythonw(self):
+        """(10-28) خطّافاتُ الجلسات pythonw.exe: pytest tools/ تحت المضخّة كان يحمرّ كلُّه بـWinError 6؛ المفسّرُ ذو الطرفيّة يصلحه."""
+        with mock.patch.object(hook.sys, "executable", "C:/Py/pythonw.exe"), mock.patch.object(hook.Path, "is_file", return_value=True):
+            self.assertEqual(hook.console_python(), "C:/Py/python.exe")
+            with mock.patch("subprocess.Popen") as popen:
+                hook.spawn()
+        self.assertEqual(popen.call_args.args[0][0], "C:/Py/python.exe")
+        with mock.patch.object(hook.sys, "executable", "C:/Py/pythonw.exe"), mock.patch.object(hook.Path, "is_file", return_value=False):
+            self.assertEqual(hook.console_python(), "C:/Py/pythonw.exe")
+        with mock.patch.object(hook.sys, "executable", "C:/Py/python.exe"):
+            self.assertEqual(hook.console_python(), "C:/Py/python.exe")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,15 +26,43 @@ def never(merge, prod):
     return False
 
 
-def test_maestro_v2_merged_pr_goes_to_published_in_chain():
-    rows = ls.plan({"W-1": st("approved")}, {MV2: {"aaaaaaaa": pr()}}, None)
+def live(merge):
+    return True
+
+
+def not_live(merge):
+    return False
+
+
+def test_maestro_v2_merged_pr_goes_to_published_only_when_live_in_root():
+    """W-20261027-003: published في maestro-v2 يعني حيّاً في الجذر (سلفاً لرأسه) لا مجرّد مدموج في GitHub."""
+    rows = ls.plan({"W-1": st("approved")}, {MV2: {"aaaaaaaa": pr()}}, None, live=live)
     assert [(r["target"], r["slug"]) for r in rows] == [("published", MV2)]
     assert ls.steps(rows[0]) == ["pushed", "merged", "published"]
+    rows = ls.plan({"W-1": st("approved")}, {MV2: {"aaaaaaaa": pr()}}, None, live=not_live)
+    assert rows[0]["target"] == "merged" and ls.steps(rows[0]) == ["pushed", "merged"]
+    rows = ls.plan({"W-1": st("approved")}, {MV2: {"aaaaaaaa": pr()}}, None)  # بلا فاحصٍ حيّ: لا ادّعاء
+    assert rows[0]["target"] == "merged"
+
+
+def test_merged_card_is_promoted_to_published_once_root_catches_up():
+    assert ls.plan({"W-1": st("merged")}, {MV2: {"aaaaaaaa": pr()}}, None, live=not_live) == []
+    rows = ls.plan({"W-1": st("merged")}, {MV2: {"aaaaaaaa": pr()}}, None, live=live)
+    assert ls.steps(rows[0]) == ["published"]
 
 
 def test_pushed_card_skips_nothing_and_does_not_repeat_steps():
-    rows = ls.plan({"W-1": st("pushed")}, {MV2: {"aaaaaaaa": pr()}}, None)
+    rows = ls.plan({"W-1": st("pushed")}, {MV2: {"aaaaaaaa": pr()}}, None, live=live)
     assert ls.steps(rows[0]) == ["merged", "published"]
+
+
+def test_root_live_uses_merge_base_ancestry_and_unknown_commit_is_not_live():
+    seen = []
+    assert ls.root_live("a" * 40, "/r", run=lambda cmd, cwd: seen.append((cmd, cwd)) or 0) is True
+    assert seen == [(["git", "merge-base", "--is-ancestor", "a" * 40, "HEAD"], "/r")]
+    assert ls.root_live("a" * 40, "/r", run=lambda cmd, cwd: 1) is False  # ليس سلفاً
+    assert ls.root_live("a" * 40, "/r", run=lambda cmd, cwd: 128) is False  # commit مجهول محلّياً
+    assert ls.root_live("", "/r", run=lambda cmd, cwd: 0) is False
 
 
 def test_shschool_merged_but_not_in_production_stops_at_merged():
@@ -68,7 +96,7 @@ def test_card_at_target_or_without_merged_pr_is_untouched():
 
 def test_apply_walks_chain_without_claiming_0601_and_waives_only_pushed():
     calls = []
-    rows = ls.plan({"W-1": st("approved")}, {MV2: {"aaaaaaaa": pr()}}, None)
+    rows = ls.plan({"W-1": st("approved")}, {MV2: {"aaaaaaaa": pr()}}, None, live=live)
     done = ls.apply_rows(
         rows, None, move=lambda cid, step, **kw: calls.append((step, kw))
     )

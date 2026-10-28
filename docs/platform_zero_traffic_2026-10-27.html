@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تشخيص صفر الحركة على الإنتاج — W-20261027-021 — 2026-10-27</title>
+<style>
+  :root { --ink:#1b1b1b; --muted:#5a5a5a; --line:#d9d9d9; --soft:#f5f5f5; --s:#e8f3ea; --w:#fbeaea; --o:#eaf0fb; --t:#fbf3e4; --hi:#f6d5d5; --mid:#fbe9c9; --lo:#e3efe4; }
+  html { font-family: system-ui, "Segoe UI", Tahoma, sans-serif; color: var(--ink); line-height: 1.7; }
+  body { max-width: 1160px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: 1.6rem; margin-block: 0 .25rem; }
+  h2 { font-size: 1.25rem; margin-block-start: 2rem; border-block-end: 2px solid var(--line); padding-block-end: .25rem; }
+  h3 { font-size: 1.05rem; margin-block: 1rem .4rem; }
+  .meta { color: var(--muted); font-size: .9rem; }
+  table { border-collapse: collapse; width: 100%; margin-block: .75rem; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .4rem .55rem; vertical-align: top; text-align: start; }
+  th { background: var(--soft); }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: .86em; background: var(--soft); padding: 0 .25em; border-radius: 3px; direction: ltr; unicode-bidi: embed; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .box { border: 1px solid var(--line); border-radius: 6px; padding: .75rem 1rem; }
+  .box.s { background: var(--s); } .box.w { background: var(--w); } .box.o { background: var(--o); } .box.t { background: var(--t); }
+  .box h3 { margin-block-start: 0; }
+  ol, ul { padding-inline-start: 1.4rem; margin-block: .3rem; }
+  li { margin-block: .25rem; }
+  .exec { background: var(--soft); border-inline-start: 4px solid #888; padding: .75rem 1rem; margin-block: 1rem; }
+  .exec p { margin: .25rem 0; }
+  .v { font-weight: 600; }
+  .bad { color: #8a1c1c; } .ok { color: #1f6b2e; } .mid { color: #8a5a00; }
+  .small { font-size: .85rem; color: var(--muted); }
+  .hi { background: var(--hi); } .md { background: var(--mid); } .lo { background: var(--lo); }
+  .matrix td { text-align: center; }
+  .ev { color: var(--muted); font-size: .85em; }
+
+  tr.lo td { background: var(--lo); } tr.mid td { background: var(--mid); } tr.hi td { background: var(--hi); }
+  .verdict { font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>تشخيص صفر الحركة على الإنتاج — W-20261027-021</h1>
+<p class="meta">الجلسة 0111 · 2026-10-27 · قراءةٌ فقط بلا تغييرٍ في الإنتاج · التوقيت: الدوحة (سجلُّ الوصول يُكتب بتوقيت Asia/Qatar لأنّ Django يضبط TZ منه) · أعدادٌ مجمَّعة فقط، لا أسماءَ ولا معرّفات · أمرُ المالك 14:33 على R1 من سواط 017: «تشخيص سبب صفر الحركة فقط».</p>
+
+<h2>1) الخلاصة</h2>
+
+<div class="exec">
+<p><b>السبب:</b> نافذةُ قياس سواط 017 (مساء السبت 24 → الثلاثاء 27 أكتوبر) كلُّها أيّامُ لا دوام: عطلةُ نهاية الأسبوع (الجمعة 23 والسبت 24) ثمّ <b>إجازةُ منتصف الفصل الدراسيّ الأوّل من الأحد 25 إلى الخميس 29 أكتوبر 2026</b> بتقويم وزارة التربية والتعليم والتعليم العالي، ويُستأنف الدوام الأحد 1 نوفمبر.</p>
+<ul>
+<li><b>المنصّة مستعمَلة يوميّاً في الدوام:</b> في 15 يومَ دوامٍ معيَّناً بين 4 و22 أكتوبر سُجّل <b>482 طلبَ دخول</b> (POST /auth/login/) و<b>16،611 طلبَ صفحةٍ مصادَقة</b> (منها 1،534 كتابة)؛ في الأيّام المغطّاة 8 ساعاتٍ فأكثر (11 يوماً): 11–100 دخولاً و180–2،627 طلباً مصادَقاً في اليوم، بذروةٍ بين 07:00 و13:00 (83% من طلبات التطبيق) أي يومُ الدراسة نفسُه.</li>
+<li><b>الصفر يبدأ مع العطلة لا قبلها:</b> الخميس 22 أكتوبر بعد الظهر ما زال فيه دخولٌ واستعمالٌ للجدول الذكيّ؛ الجمعة 23: 5 دخولاتٍ إداريّة؛ ومن السبت 24 إلى الثلاثاء 27: <b>0 دخول</b> و40 طلباً غير مجسّ (إعادةُ توجيه مجهولين ومجسّاتُ 0111 نفسِها) من أصل 7،085 سطر. عطلاتُ نهاية الأسبوع السابقة بالنمط نفسه (23 دخولاً في ستّة أيّام عطلة).</li>
+<li><b>الفرضيّات الثلاث مرفوضة:</b> «غير مُطلَقة» ✗ (مستعمَلة منذ 4 أكتوبر على الأقلّ، وصندوق المطوّر فيه رسائلُ معلّمين منذ 25 سبتمبر)؛ «رابط آخر» ✗ (نطاقُ Railway وحدَه، لا نطاقَ مخصّصاً، والحركةُ في أيّام الدوام تصل إلى هذه الخدمة بعينها)؛ «لا حسابات» ✗ عمليّاً (عشراتُ الدخولات الناجحة يوميّاً؛ العدُّ الدقيق لم يُقَس، انظر §7).</li>
+<li><b>أثره على سواط 017:</b> الخطرُ R1 «تُنشر ولا تُستعمل» منتفٍ وصُوِّب في الفرع نفسه؛ التقديرُ 63/100 لا يتغيّر لأنّه لم يُبنَ على الحركة.</li>
+<li><b>التوصية الواحدة للمالك:</b> لا قرارَ تشغيلٍ مطلوب — المنصّةُ مشغَّلةٌ ومستعمَلة. يُعتمَد <b>مؤشّرُ حركةٍ أسبوعيّ</b> يقرأ سجلّ Railway لأيّام الدوام وحدَها (07:00–14:00، مع تقويم الإجازات) ويُحكَم به على الاستعمال من أسبوع العودة (1–5 نوفمبر) فصاعداً، ولا يُحكَم على «الاستعمال» في أيّ تقييمٍ قادمٍ من نافذةٍ لا تُراجَع على التقويم المدرسيّ.</li>
+</ul>
+</div>
+
+<h2>2) الفرضيّات الثلاث والأدلّة</h2>
+<table>
+<thead><tr><th>الفرضيّة</th><th>ما قيس</th><th>الحكم</th></tr></thead>
+<tbody>
+<tr><td>غير مُطلَقة (لا مستخدمين أصلاً)</td><td class="ev">سجلُّ الوصول لنشرةٍ من كلّ يومٍ منذ 2 أكتوبر: دخولٌ واستعمالٌ مصادَق في كلّ يوم دوامٍ من 4 إلى 22 أكتوبر (482 دخولاً / 16،611 طلباً)؛ أقسامٌ مستعمَلة: لوحةُ الدور، صفحاتُ المعلّم (الحصص، الجدول الذكيّ، التقارير اليوميّة)، الأجنحة (المباشر والرصد)، الإشعارات، شؤونُ الطلبة، لوحةُ الإدارة. ووثائقيّاً: قراءةُ صندوق المطوّر على الإنتاج في 25 سبتمبر وجدت رسائلَ معلّمين، وقراراتُ المالك 10-06 (D-236م رسالةٌ للمعلّمين «اضغط حصّتك فقط»، D-237م نافذةُ رصد الغياب 07:10–14:00) تخصّ استعمالاً جارياً.</td><td class="verdict">مرفوضة</td></tr>
+<tr><td>رابط آخر (المستخدمون على نطاقٍ غير المقيس)</td><td class="ev">railway status: نطاقُ الخدمة الوحيد <code>shschoolmvp-production.up.railway.app</code> ونطاقاتٌ مخصّصة 0 لكلّ الخدمات؛ <code>ALLOWED_HOSTS=.up.railway.app,.railway.app</code> فلا يستجيب التطبيق لغيره؛ النطاقُ القديم في سكربت الخادم المستقلّ (<code>setup-server.sh</code>، آخر تعديل 2026-05-08: <code>schoolos.edu.qa</code>) لا يُحلّ (NXDOMAIN عبر 8.8.8.8) ولا يستجيب؛ مراقبُ Sentry والكناري يستهدفان النطاق نفسه؛ وحركةُ أيّام الدوام تصل إلى هذه الخدمة بعينها.</td><td class="verdict">مرفوضة</td></tr>
+<tr><td>لا حسابات مهيّأة</td><td class="ev">دخولٌ ناجحٌ متكرّر (POST /auth/login/ يتبعه GET /dashboard/ وصفحاتُ أدوار) بعشراتٍ يوميّاً؛ الدخول بالرقم الوظيفيّ أو الشخصيّ (<code>core/auth_identity.py</code>)؛ تجميدُ أولياء الأمور (<code>PARENTS_FROZEN</code> افتراضيّاً) يحجب بياناتِ التواصل لا الدخول. <b>العدُّ الدقيق للحسابات الفعّالة بالدور وآخر دخول لم يُقَس</b> (§7).</td><td class="verdict">مرفوضة عمليّاً</td></tr>
+<tr class="lo"><td><b>السبب الفعليّ: التقويم</b></td><td class="ev">الجمعة والسبت عطلةُ نهاية الأسبوع؛ وإجازةُ منتصف الفصل الأوّل 25–29 أكتوبر 2026 (الشرق 28/07/2026 نقلاً عن الوزارة؛ وتتّفق معها مواعيدُ المدارس الخاصّة في Qatar Living)؛ العودة الأحد 1 نوفمبر. نافذةُ سواط 017 (24 18:52 → 27 12:19) داخلَ هذه الأيّام كلِّها.</td><td class="verdict">مؤكَّد</td></tr>
+</tbody></table>
+
+<h2>3) الجدول اليوميّ (نشرةٌ لكلّ يوم؛ ثلاثٌ لأيّام 18–23 أكتوبر)</h2>
+<p class="meta">الأعمدة: الأسطر كلُّها؛ المجسّات (/health/ /ready/ /status/ /metrics /health/worker/)؛ GET / و/auth/login/ (مراقبُ Sentry كلَّ دقيقة ومجسُّ GitHub كلَّ ربع ساعة يختلطان فيها بالبشر فتُستبعد)؛ دخول = POST /auth/login/؛ طلباتٌ مصادَقة = مساراتُ التطبيق غيرُ الثابتة وغيرُ الضجيج؛ الساعاتُ المغطّاة = ساعاتُ اليوم التي ظهر فيها سطرٌ (العيّنة جزئيّة بسقف 5,000 سطر لكلّ نشرة). أخضر = دوام، أصفر = عطلةُ نهاية الأسبوع، أحمر = إجازةُ منتصف الفصل.</p>
+<table>
+<thead><tr><th>التاريخ</th><th>اليوم</th><th>نوعه</th><th>الساعات المغطّاة</th><th>الأسطر</th><th>مجسّات</th><th>GET / و/auth/login/</th><th>دخول POST</th><th>طلبات مصادَقة</th><th>منها كتابة</th><th>5xx</th><th>أبرز الأقسام (عدد الطلبات)</th></tr></thead>
+<tbody>
+<tr class="mid"><td class="num">10-03</td><td>السبت</td><td>عطلة نهاية الأسبوع</td><td class="num">02–07 (6 س)</td><td class="num">690</td><td class="num">150</td><td class="num">536</td><td class="num"><b>0</b></td><td class="num"><b>0</b></td><td class="num">0</td><td class="num">0</td><td class="ev">—</td></tr>
+<tr class="lo"><td class="num">10-04</td><td>الأحد</td><td>دوام</td><td class="num">00–23 (21 س)</td><td class="num">4،105</td><td class="num">214</td><td class="num">2،738</td><td class="num"><b>17</b></td><td class="num"><b>887</b></td><td class="num">37</td><td class="num">3</td><td class="ev">الإشعارات 543، السلوك 47، لوحة الدور 46، شؤون الطلبة 39</td></tr>
+<tr class="lo"><td class="num">10-05</td><td>الاثنين</td><td>دوام</td><td class="num">00–04 (5 س)</td><td class="num">645</td><td class="num">70</td><td class="num">547</td><td class="num"><b>1</b></td><td class="num"><b>14</b></td><td class="num">0</td><td class="num">0</td><td class="ev">معلومات الطالب 7، شؤون الطلبة 4، لوحة الدور 2، الإشعارات 1</td></tr>
+<tr class="lo"><td class="num">10-06</td><td>الثلاثاء</td><td>دوام</td><td class="num">11–23 (13 س)</td><td class="num">5،149</td><td class="num">21</td><td class="num">2،503</td><td class="num"><b>59</b></td><td class="num"><b>2،035</b></td><td class="num">156</td><td class="num">0</td><td class="ev">الإشعارات 1198، المعلّم 320، لوحة الدور 145، أخرى 83</td></tr>
+<tr class="lo"><td class="num">10-07</td><td>الأربعاء</td><td>دوام</td><td class="num">00–23 (20 س)</td><td class="num">4،762</td><td class="num">16</td><td class="num">2،883</td><td class="num"><b>45</b></td><td class="num"><b>1،403</b></td><td class="num">263</td><td class="num">0</td><td class="ev">الإشعارات 622، المعلّم 430، لوحة الدور 119، السلوك 66</td></tr>
+<tr class="lo"><td class="num">10-08</td><td>الخميس</td><td>دوام</td><td class="num">00–23 (12 س)</td><td class="num">1،755</td><td class="num">44</td><td class="num">1،390</td><td class="num"><b>11</b></td><td class="num"><b>180</b></td><td class="num">7</td><td class="num">0</td><td class="ev">الإشعارات 79، لوحة الدور 45، المعلّم 14، أخرى 9</td></tr>
+<tr class="mid"><td class="num">10-09</td><td>الجمعة</td><td>عطلة نهاية الأسبوع</td><td class="num">00–14 (14 س)</td><td class="num">1،965</td><td class="num">34</td><td class="num">1،660</td><td class="num"><b>9</b></td><td class="num"><b>176</b></td><td class="num">6</td><td class="num">0</td><td class="ev">الإشعارات 101، لوحة الدور 26، الأجنحة 18، المعلّم 11</td></tr>
+<tr class="mid"><td class="num">10-10</td><td>السبت</td><td>عطلة نهاية الأسبوع</td><td class="num">23–23 (1 س)</td><td class="num">9</td><td class="num">2</td><td class="num">7</td><td class="num"><b>0</b></td><td class="num"><b>0</b></td><td class="num">0</td><td class="num">0</td><td class="ev">—</td></tr>
+<tr class="lo"><td class="num">10-11</td><td>الأحد</td><td>دوام</td><td class="num">00–14 (13 س)</td><td class="num">5،407</td><td class="num">46</td><td class="num">2،151</td><td class="num"><b>100</b></td><td class="num"><b>2،443</b></td><td class="num">194</td><td class="num">0</td><td class="ev">المعلّم 1071، الإشعارات 915، لوحة الدور 221، الأجنحة 75</td></tr>
+<tr class="lo"><td class="num">10-12</td><td>الاثنين</td><td>دوام</td><td class="num">23–23 (1 س)</td><td class="num">119</td><td class="num">2</td><td class="num">117</td><td class="num"><b>0</b></td><td class="num"><b>0</b></td><td class="num">0</td><td class="num">0</td><td class="ev">—</td></tr>
+<tr class="lo"><td class="num">10-13</td><td>الثلاثاء</td><td>دوام</td><td class="num">00–13 (13 س)</td><td class="num">5،481</td><td class="num">44</td><td class="num">2،135</td><td class="num"><b>79</b></td><td class="num"><b>2،627</b></td><td class="num">161</td><td class="num">0</td><td class="ev">المعلّم 780، الإشعارات 763، الجدول الذكيّ 400، الأجنحة 391</td></tr>
+<tr class="lo"><td class="num">10-14</td><td>الأربعاء</td><td>دوام</td><td class="num">08–15 (8 س)</td><td class="num">2،221</td><td class="num">130</td><td class="num">872</td><td class="num"><b>17</b></td><td class="num"><b>1،016</b></td><td class="num">94</td><td class="num">0</td><td class="ev">الإشعارات 390، المعلّم 198، الأجنحة 197، نبض الجلسة 131</td></tr>
+<tr class="lo"><td class="num">10-15</td><td>الخميس</td><td>دوام</td><td class="num">23–23 (1 س)</td><td class="num">90</td><td class="num">71</td><td class="num">19</td><td class="num"><b>0</b></td><td class="num"><b>0</b></td><td class="num">0</td><td class="num">0</td><td class="ev">—</td></tr>
+<tr class="mid"><td class="num">10-16</td><td>الجمعة</td><td>عطلة نهاية الأسبوع</td><td class="num">00–10 (11 س)</td><td class="num">4،825</td><td class="num">3،353</td><td class="num">1،304</td><td class="num"><b>6</b></td><td class="num"><b>96</b></td><td class="num">4</td><td class="num">0</td><td class="ev">الإشعارات 33، نبض الجلسة 25، لوحة الدور 16، التحليلات 14</td></tr>
+<tr class="mid"><td class="num">10-17</td><td>السبت</td><td>عطلة نهاية الأسبوع</td><td class="num">00–13 (12 س)</td><td class="num">1،457</td><td class="num">127</td><td class="num">1،209</td><td class="num"><b>3</b></td><td class="num"><b>54</b></td><td class="num">0</td><td class="num">0</td><td class="ev">نبض الجلسة 19، لوحة الدور 16، الإشعارات 12، أخرى 4</td></tr>
+<tr class="lo"><td class="num">10-18</td><td>الأحد</td><td>دوام</td><td class="num">07–23 (14 س)</td><td class="num">4،168</td><td class="num">84</td><td class="num">1،621</td><td class="num"><b>37</b></td><td class="num"><b>1،970</b></td><td class="num">168</td><td class="num">0</td><td class="ev">المعلّم 623، الإشعارات 440، الأجنحة 347، نبض الجلسة 215</td></tr>
+<tr class="lo"><td class="num">10-19</td><td>الاثنين</td><td>دوام</td><td class="num">00–23 (14 س)</td><td class="num">3،978</td><td class="num">188</td><td class="num">1،712</td><td class="num"><b>36</b></td><td class="num"><b>1،495</b></td><td class="num">169</td><td class="num">0</td><td class="ev">المعلّم 444، نبض الجلسة 304، الإشعارات 229، الأجنحة 221</td></tr>
+<tr class="lo"><td class="num">10-20</td><td>الثلاثاء</td><td>دوام</td><td class="num">00–23 (20 س)</td><td class="num">4،504</td><td class="num">392</td><td class="num">2،214</td><td class="num"><b>38</b></td><td class="num"><b>1،421</b></td><td class="num">169</td><td class="num">0</td><td class="ev">المعلّم 448، الأجنحة 321، نبض الجلسة 215، الإشعارات 208</td></tr>
+<tr class="lo"><td class="num">10-21</td><td>الأربعاء</td><td>دوام</td><td class="num">00–08 (9 س)</td><td class="num">2،501</td><td class="num">149</td><td class="num">1،051</td><td class="num"><b>38</b></td><td class="num"><b>920</b></td><td class="num">108</td><td class="num">0</td><td class="ev">المعلّم 382، الأجنحة 161، نبض الجلسة 138، لوحة الدور 130</td></tr>
+<tr class="lo"><td class="num">10-22</td><td>الخميس</td><td>دوام</td><td class="num">15–23 (6 س)</td><td class="num">1،440</td><td class="num">623</td><td class="num">555</td><td class="num"><b>4</b></td><td class="num"><b>200</b></td><td class="num">8</td><td class="num">76</td><td class="ev">الجدول الذكيّ 135، نبض الجلسة 18، لوحة الدور 12، المعلّم 11</td></tr>
+<tr class="mid"><td class="num">10-23</td><td>الجمعة</td><td>عطلة نهاية الأسبوع</td><td class="num">00–20 (17 س)</td><td class="num">2،494</td><td class="num">593</td><td class="num">1،722</td><td class="num"><b>5</b></td><td class="num"><b>85</b></td><td class="num">3</td><td class="num">0</td><td class="ev">لوحة الدور 21، المعلّم 16، نبض الجلسة 13، التحليلات 8</td></tr>
+<tr class="mid"><td class="num">10-24</td><td>السبت</td><td>عطلة نهاية الأسبوع</td><td class="num">02–23 (11 س)</td><td class="num">1،204</td><td class="num">194</td><td class="num">997</td><td class="num"><b>0</b></td><td class="num"><b>1</b></td><td class="num">0</td><td class="num">0</td><td class="ev">لوحة الدور 1</td></tr>
+<tr class="hi"><td class="num">10-25</td><td>الأحد</td><td>إجازة منتصف الفصل</td><td class="num">00–23 (19 س)</td><td class="num">2،271</td><td class="num">323</td><td class="num">1،912</td><td class="num"><b>0</b></td><td class="num"><b>9</b></td><td class="num">0</td><td class="num">0</td><td class="ev">لوحة الدور 5، أخرى 4</td></tr>
+<tr class="hi"><td class="num">10-26</td><td>الاثنين</td><td>إجازة منتصف الفصل</td><td class="num">00–23 (18 س)</td><td class="num">2،276</td><td class="num">198</td><td class="num">2،036</td><td class="num"><b>0</b></td><td class="num"><b>11</b></td><td class="num">0</td><td class="num">0</td><td class="ev">لوحة الدور 7، أخرى 4</td></tr>
+<tr class="hi"><td class="num">10-27</td><td>الثلاثاء</td><td>إجازة منتصف الفصل</td><td class="num">00–14 (10 س)</td><td class="num">1،334</td><td class="num">210</td><td class="num">1،075</td><td class="num"><b>0</b></td><td class="num"><b>19</b></td><td class="num">0</td><td class="num">0</td><td class="ev">أخرى 16، لوحة الدور 2، الخارطة 1</td></tr>
+</tbody></table>
+<p class="meta">ملاحظة 22 أكتوبر: العيّنةُ تغطّي 15:00–23:00 فقط وفيها 76 سطرَ 5xx من حادثة السقوط (13:26–18:29) بعد نهاية يوم الدراسة؛ والنشرةُ المرشَّحة ليوم 21 لم يبقَ من سجلّها إلا ذيلُه.</p>
+
+<h2>4) توزيع الساعات في أيّام الدوام (4–22 أكتوبر)</h2>
+<table>
+<thead><tr><th>الساعة</th><th>طلبات مصادَقة</th><th>دخول</th><th>النسبة إلى الذروة</th></tr></thead>
+<tbody>
+<tr><td class="num">00:00</td><td class="num">115</td><td class="num">3</td><td><span style="display:inline-block;height:.8rem;width:3%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">01:00</td><td class="num">75</td><td class="num">3</td><td><span style="display:inline-block;height:.8rem;width:2%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">02:00</td><td class="num">33</td><td class="num">1</td><td><span style="display:inline-block;height:.8rem;width:1%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">03:00</td><td class="num">3</td><td class="num">1</td><td><span style="display:inline-block;height:.8rem;width:0%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">04:00</td><td class="num">12</td><td class="num">1</td><td><span style="display:inline-block;height:.8rem;width:0%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">05:00</td><td class="num">471</td><td class="num">3</td><td><span style="display:inline-block;height:.8rem;width:14%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">06:00</td><td class="num">123</td><td class="num">6</td><td><span style="display:inline-block;height:.8rem;width:3%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">07:00</td><td class="num">1،682</td><td class="num">76</td><td><span style="display:inline-block;height:.8rem;width:51%;background:#8fb996"></span></td></tr>
+<tr><td class="num">08:00</td><td class="num">3،255</td><td class="num">75</td><td><span style="display:inline-block;height:.8rem;width:100%;background:#8fb996"></span></td></tr>
+<tr><td class="num">09:00</td><td class="num">2،496</td><td class="num">63</td><td><span style="display:inline-block;height:.8rem;width:76%;background:#8fb996"></span></td></tr>
+<tr><td class="num">10:00</td><td class="num">1،882</td><td class="num">54</td><td><span style="display:inline-block;height:.8rem;width:57%;background:#8fb996"></span></td></tr>
+<tr><td class="num">11:00</td><td class="num">1،838</td><td class="num">50</td><td><span style="display:inline-block;height:.8rem;width:56%;background:#8fb996"></span></td></tr>
+<tr><td class="num">12:00</td><td class="num">1،705</td><td class="num">53</td><td><span style="display:inline-block;height:.8rem;width:52%;background:#8fb996"></span></td></tr>
+<tr><td class="num">13:00</td><td class="num">990</td><td class="num">30</td><td><span style="display:inline-block;height:.8rem;width:30%;background:#8fb996"></span></td></tr>
+<tr><td class="num">14:00</td><td class="num">242</td><td class="num">8</td><td><span style="display:inline-block;height:.8rem;width:7%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">15:00</td><td class="num">124</td><td class="num">4</td><td><span style="display:inline-block;height:.8rem;width:3%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">16:00</td><td class="num">21</td><td class="num">2</td><td><span style="display:inline-block;height:.8rem;width:0%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">17:00</td><td class="num">293</td><td class="num">7</td><td><span style="display:inline-block;height:.8rem;width:9%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">18:00</td><td class="num">95</td><td class="num">2</td><td><span style="display:inline-block;height:.8rem;width:2%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">19:00</td><td class="num">253</td><td class="num">12</td><td><span style="display:inline-block;height:.8rem;width:7%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">20:00</td><td class="num">325</td><td class="num">7</td><td><span style="display:inline-block;height:.8rem;width:9%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">21:00</td><td class="num">133</td><td class="num">3</td><td><span style="display:inline-block;height:.8rem;width:4%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">22:00</td><td class="num">177</td><td class="num">10</td><td><span style="display:inline-block;height:.8rem;width:5%;background:#c9c9c9"></span></td></tr>
+<tr><td class="num">23:00</td><td class="num">268</td><td class="num">8</td><td><span style="display:inline-block;height:.8rem;width:8%;background:#c9c9c9"></span></td></tr>
+</tbody></table>
+<p class="meta">الذروة عند 08:00 (3،255 طلباً) والدخولُ يبلغ أقصاه عند 07:00؛ 83% من طلبات التطبيق بين 07:00 و13:59 — وهي نافذةُ رصد الغياب (07:10–14:00، D-237م). الحركةُ خارجَها إداريّةٌ متفرّقة.</p>
+
+<h2>5) الرابط ومسار الدخول</h2>
+<table>
+<thead><tr><th>البند</th><th>القياس</th></tr></thead>
+<tbody>
+<tr><td>نطاقات الخدمة (railway status --json)</td><td class="ev">shschool_mvp: <code>shschoolmvp-production.up.railway.app</code> (منفذ 8080)؛ نطاقات مخصّصة: 0؛ العامل والمجدوِل وPostgres وRedis: بلا نطاق.</td></tr>
+<tr><td>المضيفون المسموحون</td><td class="ev"><code>ALLOWED_HOSTS=.up.railway.app,.railway.app</code>؛ <code>CSRF_TRUSTED_ORIGINS</code> و<code>PRODUCTION_URL</code> غيرُ مضبوطَين.</td></tr>
+<tr><td>النطاق القديم</td><td class="ev"><code>schoolos.edu.qa</code> (افتراضُ setup-server.sh لخادمٍ مستقلّ على Oracle Cloud، آخر تعديل 2026-05-08): NXDOMAIN، لا استجابة على 80/443.</td></tr>
+<tr><td>مسار الدخول من الخارج</td><td class="ev"><code>/</code> → 302 → <code>/auth/login/</code> 200 (5.6KB)؛ نموذجٌ واحد: الرقم الوظيفيّ أو الشخصيّ + كلمة المرور؛ لا إشعارَ صيانةٍ أو تجريب.</td></tr>
+<tr><td>أعلامٌ مؤثّرة في الإنتاج</td><td class="ev"><code>TWO_FACTOR_REQUIRED_FOR_STAFF=false</code> (قرار المالك R5: يبقى مطفأً)؛ <code>PROVISIONAL_SESSIONS_ENABLED=1</code>؛ <code>PARENTS_FROZEN</code> غيرُ مضبوط = مجمَّد افتراضاً (يحجب التواصل لا الدخول)؛ لا <code>MAINTENANCE_MODE</code> ولا قيدَ أدوارٍ على الدخول.</td></tr>
+<tr><td>سجلّ HTTP الطرفيّ في Railway</td><td class="ev">يحتفظ بنحو 10 دقائق فقط (--since لأيّ نافذةٍ أقدم يعيد 0 سطراً) فلا يصلح للتاريخ؛ وفي عيّنته: Sentry Uptime وcurl وpython فقط ولا متصفّحَ بشريّاً في الإجازة.</td></tr>
+</tbody></table>
+
+<h2>6) المنهج</h2>
+<ul>
+<li><b>المصدر الرئيس:</b> سجلُّ النشر (daphne access log) لـ38 نشرةً من خدمة الويب عبر <code>railway logs &lt;id&gt; --lines 5000</code> قراءةً: أطولُ نشرةٍ عمراً في كلّ يومٍ من 2 إلى 27 أكتوبر، وأطولُ ثلاثٍ لأيّام 18–23. التكرارُ بين النشرات المتداخلة أُسقط بمفتاح (الوقت، الطريقة، المسار، الحالة).</li>
+<li><b>التصنيف:</b> مجسّات = مساراتُ الصحّة؛ GET / و/auth/login/ مستبعَدان لاختلاط المراقِب بالبشر؛ دخول = POST /auth/login/؛ طلباتٌ مصادَقة = ما عداها من مسارات التطبيق بعد استبعاد <code>/static/</code> والضجيج (assetlinks، robots، admin/login GET، sw.js، manifest، مجسّات 0111).</li>
+<li><b>التوقيت:</b> تحقّقتُ أنّ السجلّ بتوقيت الدوحة: نشرةُ 27 أكتوبر أُنشئت 03:05Z وأوّلُ سطرٍ فيها 06:08؛ ومجسّي أنا ظهر 11:51 (قبل حفظ الملفّ 12:19). لا إزاحةَ مطبَّقة.</li>
+<li><b>مصادر أخرى:</b> <code>railway status --json</code> (النطاقات)، <code>railway variables</code> (أعلامٌ غيرُ سرّيّة)، DNS عامّ، curl على المسار العامّ، قراراتُ المالك (decisions.md، owner_confirmations.md)، ذاكرةُ 0111 (قراءةُ صندوق المطوّر 25 سبتمبر)، والتقويم المدرسيّ المنشور.</li>
+<li><b>القيود:</b> العيّنةُ جزئيّة (نشرةٌ أو ثلاث في اليوم وسقفُ 5,000 سطر) فالأعدادُ حدٌّ أدنى لا إجماليّ؛ لا تمييزَ مستخدمين متمايزين (لا كوكيز ولا عناوين تُقرأ)؛ لا قراءةَ لقاعدة الإنتاج.</li>
+</ul>
+
+<h2>7) ما لم يُقَس ولماذا</h2>
+<table>
+<thead><tr><th>البند</th><th>السبب</th><th>البديل</th></tr></thead>
+<tbody>
+<tr><td>عددُ الحسابات الفعّالة بالدور وتاريخُ آخر دخول</td><td class="ev">استعلامٌ مجمَّعٌ للقراءة فقط عبر <code>railway run</code> حجبه مصنّفُ أذونات الجلسة (قراءةُ الإنتاج) ولم يُعَد؛ لا أمرَ إدارة Django ولا كتابة. يحتاج إذنَ المالك الصريح على سابقة D-235م أو تنفيذَ 0601.</td><td>سجلُّ الدخول يثبت الاستعمال؛ العدُّ الدقيق يُقرأ لاحقاً بإذن.</td></tr>
+<tr><td>إجماليُّ الطلبات في اليوم ومستخدمون متمايزون</td><td class="ev">عيّنةٌ بسقف الأسطر وبلا هويّات.</td><td>مؤشّرٌ أسبوعيّ من سجلّ النشرات كلِّها (التوصية).</td></tr>
+<tr><td>الحركة قبل 2 أكتوبر</td><td class="ev">قائمةُ النشرات بحدّ 400 تبدأ 2 أكتوبر؛ لم تُطلب أقدم.</td><td>غيرُ لازمٍ للتشخيص.</td></tr>
+</tbody></table>
+
+<h2>8) التصويب في سواط 017</h2>
+<p>في الفرع نفسه (<code>claude/w0111-swot-017</code>) صُوِّبت أربعةُ مواضع: بندُ الخلاصة التنفيذيّة، صفُّ الخطر R1 (منتفٍ)، التوصيةُ 2 (مؤشّرُ حركةٍ بدل قرار تشغيل)، وسطرُ «جديد في 10-27». التقديرُ 63/100 والمحاورُ الأخرى لم تُمَسّ.</p>
+
+<h2>9) المصادر</h2>
+<ul>
+<li>الشرق، 28/07/2026: «قبل بدء العام الدراسي الجديد تعرف على الإجازات المقررة للطلبة والموظفين بالمدارس» (إجازةُ منتصف الفصل الأوّل 25–29 أكتوبر 2026، العودة 1 نوفمبر) — <a href="https://al-sharq.com/article/28/07/2026/">al-sharq.com</a>.</li>
+<li>الراية، 24/08/2026: «التربية تنشر التقويم السنوي للمدارس 2026-2027» — <a href="https://www.raya.com/2026/08/24/">raya.com</a>.</li>
+<li>Qatar Living (المدارس الخاصّة، المواعيدُ نفسُها) — <a href="https://www.qatarliving.com/ar/article/back-to-school-qatar-autumn-term-dates-holidays">qatarliving.com</a>.</li>
+<li>Railway CLI قراءةً: <code>deployment list --limit 400 --json</code>، <code>logs &lt;id&gt; --lines 5000</code>، <code>logs --http --json --since …</code>، <code>status --json</code>، <code>variables --json</code> (بلا أسرار).</li>
+<li>الدفتر: D-235م، D-236م، D-237م، D-186م؛ سواط 017 <code>docs/platform_swot_2026-10-27.html</code>.</li>
+</ul>
+</body>
+</html>

@@ -1069,9 +1069,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
         extra["held_by"] = "" if held_by == "-" else held_by
     if state == "ready_for_review" and head_now and HEAD_RE.match(head_now):
         extra["ready_head"] = head_now[:8]  # D-452م: الرأسُ المعلَن حقلٌ مهيكلٌ تقرؤه المضخّة، لا «head» الذي يُقرأ اعتماداً
+    note_text = check_text("note", note) if note else None  # W-20261027-008: الملاحظةُ تُفحص قبل أيّ كتابة، فلا تُكتب الحالةُ ثم تُرفض الملاحظة
     append_event("state", item_id, {"state": state, "by": by or "غير مُعلَن", **({"head": head} if head else {}), **extra}, path)
-    if note:
-        append_event("note", item_id, {"text": check_text("note", note)}, path)
+    if note_text:
+        append_event("note", item_id, {"text": note_text}, path)
 
 
 FALSE_ALARM_NOTE = "إنذارٌ كاذب"  # النصُّ الثابتُ عند إغلاق إنذارٍ كاذب (D-150م) — يقيسه intake_kpis

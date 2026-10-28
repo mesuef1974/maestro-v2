@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,7 @@ import publish_sync as ps
 # (slug, بحثٌ عن الإنتاج): الإنتاجُ المنفصل لـshschool_mvp وحدَه
 REPOS = (("sh-school/shschool_mvp", True), ("mesuef1974/maestro-v2", False))
 ORPHAN_AFTER = timedelta(hours=2)
+ROOT_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent  # مجلّد الجذر الحيّ الذي تعمل منه الجلسات
 CHAIN = ps.CHAIN
 ORDER = ("approved", *CHAIN)
 
@@ -59,14 +61,27 @@ def fetch_prs(slug: str, state: str, limit: int, gh=ps._gh) -> dict[str, dict]:
     }
 
 
+def root_live(merge_oid: str, root: str | None = None, run=None) -> bool:
+    """(W-20261027-003) دمجُ طلبٍ في maestro-v2 «حيٌّ» فقط إن كان سلفاً لرأس الجذر الذي تعمل منه الجلسات؛ commit مجهولٌ محلّياً = غير حيّ."""
+    if not merge_oid:
+        return False
+    cmd = ["git", "merge-base", "--is-ancestor", merge_oid, "HEAD"]
+    if run is not None:
+        return run(cmd, root or str(ROOT_DIR)) == 0
+    try:
+        return subprocess.run(cmd, cwd=root or str(ROOT_DIR), capture_output=True, timeout=30, check=False).returncode == 0  # noqa: S603
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def target_for(
-    slug_prod: bool, pr: dict, prod: str | None, check=ps.in_production
+    slug_prod: bool, pr: dict, prod: str | None, check=ps.in_production, live=None
 ) -> str | None:
-    """الحالةُ الهدف: published إن بلا إنتاجٍ منفصل أو دمجُه داخل الإنتاج؛ merged إن دُمج ولم يصل؛ وإلا None."""
+    """الحالةُ الهدف: published إن دمجُه داخل الإنتاج (shschool) أو حيٌّ في الجذر (maestro-v2، `live`)؛ merged إن دُمج ولم يصل؛ وإلا None."""
     if not pr:
         return None
     if not slug_prod:
-        return "published"
+        return "published" if live and live(pr["merge"]) else "merged"
     return "published" if prod and check(pr["merge"], prod) else "merged"
 
 
@@ -75,6 +90,7 @@ def plan(
     merged: dict[str, dict[str, dict]],
     prod: str | None,
     check=ps.in_production,
+    live=None,
 ) -> list[dict]:
     """صفوفُ النقل: {id, state, target, head, pr, slug, merge} لما حالتُه أدنى من هدفه، بلا قفز (النقلُ بالسلسلة)."""
     rows = []
@@ -86,7 +102,7 @@ def plan(
             continue
         for slug, has_prod in REPOS:
             pr = merged.get(slug, {}).get(head)
-            target = target_for(has_prod, pr, prod, check)
+            target = target_for(has_prod, pr, prod, check, live)
             if target and ORDER.index(st["state"]) < ORDER.index(target):
                 rows.append(
                     {
@@ -235,7 +251,7 @@ def cycle(apply: bool, limit: int, commit: str | None = None) -> int:
     except ps.SyncError as exc:
         print(f"✘ غير مقيس: {exc} — لا نقل", file=sys.stderr)
         return 2
-    rows = plan(states, merged, prod)
+    rows = plan(states, merged, prod, live=root_live)
     orph = orphans(
         states, events, open_prs, merged, datetime.now(timezone(timedelta(hours=3)))
     )
