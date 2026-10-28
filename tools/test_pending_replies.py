@@ -58,3 +58,52 @@ def test_report_regex_accepts_windows_and_posix_paths():
     for text in (f"C:{bs}x{bs}handover_notes{bs}a.json", f"handover_notes{bs}r.md", "x/handover_notes/b.md"):
         assert pr.REPORT_RE.search(text), text
     assert pr.REPORT_RE.search("بلا مسار") is None
+
+
+def test_strict_add_requires_card_or_pr_code(tmp_path):
+    import pytest
+    p = tmp_path / "p.jsonl"
+    with pytest.raises(ValueError):
+        pr.add("0501", "قرارٌ بلا رمز", path=p, strict=True)
+    assert pr.add("0501", "ردٌّ على W-20261028-031", path=p, strict=True) == 1
+    assert pr.add("0601", "دمج #1290", path=p, strict=True) == 2
+    assert pr.add("0601", "قديم بلا رمز", path=p) == 3          # الإحالاتُ القديمة وغيرُ الصارمة تبقى
+
+
+def test_autoclose_by_state_closes_merged_card_and_pr_with_evidence(tmp_path):
+    p = tmp_path / "p.jsonl"
+    a = pr.add("0501", "تسليم W-20261028-031", path=p)
+    b = pr.add("0601", "دمج #1290", path=p)
+    c = pr.add("0601", "W-20261028-032 و#1291", path=p)        # أحدُ الرمزين غير منتهٍ
+    d = pr.add("0101", "قديم بلا رمز", path=p)
+    e = pr.add("0101", "W-20261028-099", path=p)                 # بطاقةٌ مجهولة
+    cards = {"W-20261028-031": "published", "W-20261028-032": "merged"}
+    prs = {"1290": "MERGED (maestro-v2)", "1291": "OPEN (maestro-v2)"}
+    closed = pr.close_by_state(p, card_state=cards.get, pr_state=prs.get)
+    assert closed == [a, b]
+    assert sorted(r["n"] for r in pr.open_items(p)) == [c, d, e]
+    notes = [r["note"] for r in pr._rows(p) if r["kind"] == "done"]
+    assert "W-20261028-031" in notes[0] and "published" in notes[0]
+    assert "#1290" in notes[1] and "MERGED" in notes[1]
+
+
+def test_autoclose_closed_pr_and_idempotent(tmp_path):
+    p = tmp_path / "p.jsonl"
+    n = pr.add("0601", "طلب #77", path=p)
+    assert pr.close_by_state(p, card_state=lambda _: None, pr_state={"77": "CLOSED (x)"}.get) == [n]
+    assert pr.close_by_state(p, card_state=lambda _: None, pr_state={"77": "CLOSED (x)"}.get) == []
+
+
+def test_bare_pr_means_platform_and_maestro_prefix_means_admin_repo(tmp_path):
+    p = tmp_path / "p.jsonl"
+    a = pr.add("0601", "دمج #216", path=p, strict=True)                    # المنصّة
+    b = pr.add("0601", "دمج maestro-v2#216", path=p, strict=True)          # مستودع الإدارة
+    seen = []
+
+    def pr_state(ref):
+        seen.append(ref)
+        return {"216": "MERGED (shschool_mvp)", "maestro-v2#216": "OPEN (maestro-v2)"}.get(ref)
+
+    assert pr.close_by_state(p, card_state=lambda _: None, pr_state=pr_state) == [a]
+    assert sorted(seen) == ["216", "maestro-v2#216"]
+    assert [r["n"] for r in pr.open_items(p)] == [b]

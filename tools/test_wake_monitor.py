@@ -590,6 +590,49 @@ def test_bells_only_flag_drops_card_wakes(monkeypatch):
     assert wm.make_plan(a, ev, "", DIR).wakes == {"0201": [(wm.INBOX_ID, "inbox")]}
 
 
+# ---- W-20261028-010: الصندوقُ المدمَج والحاملُ الميّت ----
+def test_merged_inbox_bell_goes_to_receiver_with_merged_wording():
+    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, inbox={"0203": 2}, aliases={"0203": "0701"})
+    assert p.wakes == {"0701": [(wm.INBOX_ID, "merged:0203")]}
+    msg = wm.message_for("0701", p.wakes["0701"])
+    assert "صندوق 0203 المدمَج في رقمك 0701" in msg and "inbox.py read 0203" in msg
+
+
+def test_unmerged_number_never_resolved_by_alias_to_other_session():
+    # 0111 أُعيد استعمالُه حيّاً (ليس في aliases): جرسُه لنفسه بالصيغة العاديّة وحدَها، لا لـ0701
+    d = {**DIR, "0111": "local_x"}
+    p = wm.stale_plan([], d, set(), _NOW, verify=ok, inbox={"0111": 3}, aliases={"0203": "0701"})
+    assert p.wakes == {"0111": [(wm.INBOX_ID, "inbox")]}
+    assert all("0111" not in wm.message_for(n, r) or n == "0111" for n, r in p.wakes.items())
+
+
+def test_dead_holder_cards_rereferred_by_stage_not_woken():
+    ev = []
+    for i, st, h in [("W-20261028-101", "pushed", "0403"), ("W-20261028-102", "routed", "0420"), ("W-20261028-103", "in_progress", "0423")]:
+        ev += [created(i), state(i, st, "2026-10-25T01:00:00+03:00", held_by=h)]
+    p = wm.stale_plan(ev, DIR, set(), _NOW, verify=ok)
+    assert p.dead == [("W-20261028-101", "pushed", "0403", "0601"), ("W-20261028-102", "routed", "0420", "0101"),
+                      ("W-20261028-103", "in_progress", "0423", "0101")]
+    assert "0403" not in p.wakes and "0420" not in p.wakes and "0423" not in p.wakes
+
+
+def test_live_or_directory_holder_is_not_dead():
+    ev = [created("W-20261028-104"), state("W-20261028-104", "routed", "2026-10-25T01:00:00+03:00", held_by="0201")]
+    assert wm.stale_plan(ev, DIR, set(), _NOW, verify=ok).dead == []
+    ev2 = [created("W-20261028-105"), state("W-20261028-105", "routed", "2026-10-25T01:00:00+03:00", held_by="0999")]
+    assert wm.stale_plan(ev2, DIR, {"0999"}, _NOW, verify=ok).dead == []
+
+
+def test_apply_dead_holders_is_idempotent_and_notes():
+    items = {"W-1": {"state": "routed", "held_by": "0420"}}
+    calls, notes = [], []
+    dead = [("W-1", "routed", "0420", "0101")]
+    done = wm.apply_dead_holders(dead, "0701", items, append=lambda *a: calls.append(a), note=lambda *a: notes.append(a))
+    assert done == ["W-1"] and calls == [("state", "W-1", {"state": "routed", "by": "0701", "held_by": "0101"})] and len(notes) == 1
+    items["W-1"]["held_by"] = "0101"  # بعد التطبيق: لا إعادةَ ثانية
+    assert wm.apply_dead_holders(dead, "0701", items, append=lambda *a: calls.append(a), note=lambda *a: notes.append(a)) == []
+
+
 # ===== طلبُ المسح: العلامةُ المعلّقة والمسحُ الذاتيّ كلاهما يوقظان (W-20261028-027) =====
 def test_w20261028_027_auto_clear_alone_wakes_idle_session(tmp_path):
     """W-20261028-027 (R-B): مسحٌ ذاتيٌّ بلا علامةٍ معلّقة يجب أن يوقظ الجلسةَ الخاملة بنصّ «بعد المسح الذاتي»."""
