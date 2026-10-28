@@ -654,7 +654,7 @@ class TestAutoClear:
     def test_wake_message_differs_when_auto_clear_requested(self):
         import wake_monitor as wm
 
-        assert "175 ألفاً" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108") and "COMMON" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108")
+        assert "180 ألفاً" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108") and "COMMON" in wm.payload(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE, "0108")
         assert wm.payload(wm.CLEAR_ID, "pending_clear", "0108").startswith("بعد المسح")
 
 
