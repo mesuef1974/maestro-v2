@@ -60,7 +60,8 @@ def _newest_first(base: Path) -> list[Path]:
 
 
 #: التطبيقُ يكتب cliSessionId الجديد في ملفّ الجلسة بعد SessionStart لا قبله (مقيس 2026-10-26 بعد مسح 0101 الذاتيّ، W-20261026-006)
-ID_WAIT_S = 3.0
+#: W-20261028-011: 3 ثوانٍ لم تكفِ (0101 عُرّفت 0104 يوم 10-28)؛ نصبر حتى 15 ثانيةً ثمّ نقول «لا أعرف» ولا نخمّن
+ID_WAIT_S = 15.0
 ID_POLL_S = 0.5
 #: عمرُ علامة المسح الذاتيّ السارية (يطابق PENDING_TTL_S في session_state)
 AUTO_CLEAR_TTL_S = 900
@@ -153,6 +154,14 @@ def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, 
 def _num_of(title: str | None) -> str | None:
     m = re.match(r"\s*(\d{4})\b", title or "")
     return m.group(1) if m else None
+
+
+def ambiguous_message(where: str, candidates: list[str]) -> str:
+    """الالتباسُ بين جلستين: لا تخمين (لا بآخر تركيزٍ ولا بغيره)؛ تتحقّق الجلسةُ من عنوانها الحيّ قبل أيّ كتابةٍ باسم رقم (W-20261028-011)."""
+    return (f"[هويّة الجلسة] تشترك في {where} جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
+            + " — لا أعرف أيَّها أنت. قبل أيّ كتابةٍ باسم رقمٍ (حالة أو ملاحظة بطاقة أو أمر أو رسالة صندوق أو عدّاد) "
+            "شغّل أداة get_session بالمعرّف self (mcp__ccd_session_mgmt__get_session) فيعيد عنوانَك الحيّ وفيه رقمُك؛ "
+            "وإن تعذّر فاسأل 0101 ولا تفترض.")
 
 
 def message(title: str | None, tree: str | None) -> str:
@@ -272,8 +281,7 @@ def main() -> int:
         if live is not None:
             print(message(live, None))
         elif candidates:
-            print("[هويّة الجلسة] تشترك في هذا المجلّد جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
-                  + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
+            print(ambiguous_message("هذا المجلّد", candidates))
         else:
             return 0
         for line in directory_lines(_num_of(live)):
@@ -295,8 +303,7 @@ def main() -> int:
         live, candidates = None, []
     if live is None and len(candidates) > 1:
         mark_pending(session_id, cwd)
-        print("[هويّة الجلسة] تشترك في هذه الشجرة (" + tree + ") جلساتٌ حيّةٌ: " + "؛ ".join(candidates)
-              + " — لا أعرف أيَّها أنت: اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض.")
+        print(ambiguous_message(f"هذه الشجرة ({tree})", candidates))
     else:
         print(message(live or lookup(cwd, names), tree))
     for line in directory_lines(_num_of(live or lookup(cwd, names))):
