@@ -118,3 +118,10 @@ def test_preflight_exit_codes_and_no_writes(repo, monkeypatch, capsys):
     assert prep.preflight(str(repo), "origin/main") == 6
     assert "2.1.0" in capsys.readouterr().out
     assert git(repo, "status", "--porcelain") == before
+
+
+def test_a_governance_repo_without_a_mypy_gate_is_not_a_preflight_failure(tmp_path):
+    """(10-29) maestro-v2 بلا requirements-mypy.txt ولا بوّابة mypy: كان الفحصُ المسبق يفشل فيُعفى يدويّاً بطاقةً بطاقة."""
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "ledger.py").write_text("", encoding="utf-8")
+    assert prep.check_mypy_version(str(tmp_path), installed=lambda n: None) == []
