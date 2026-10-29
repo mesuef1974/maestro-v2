@@ -65,7 +65,8 @@ def test_directory_trees_normalise_paths_and_skip_meta(tmp_path, monkeypatch):
 
 
 def test_real_registry_binds_light_0101_to_its_folder_only():
-    assert sa.directory_trees() == {"c:/users/mesue/delivery_manager_work": {"0101"}}
+    assert sa.directory_trees() == {"c:/users/mesue/delivery_manager_work": {"0101"},
+                                    "c:/users/mesue/delivery_manager_work/.claude/worktrees/*": {"0109", "0110"}}
 
 
 def test_canonical_follows_chain_and_stops_on_cycle():
