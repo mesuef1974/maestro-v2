@@ -1064,7 +1064,10 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     extra: dict = {}
     if state == "pushed":
         if waive_remote_check:
-            note = f"{note + ' — ' if note else ''}استثناءُ فحص البعيد: {waive_remote_check}"
+            waive_part = f"استثناءُ فحص البعيد: {waive_remote_check}"
+            if note and len(f"{note} — {waive_part}") > FIELD_MAX:
+                note = None  # إنذاراتُ الظلّ تُطبع على stderr أصلاً؛ لا يُفشل طولُها نقلاً آلياً (W-20261029-001)
+            note = f"{note + ' — ' if note else ''}{waive_part}"
         else:
             extra["branch"] = check_remote_push(branch or items[item_id].get("branch"), push_head, remote_lookup)
     if branch and state != "pushed":
