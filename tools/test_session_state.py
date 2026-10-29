@@ -217,23 +217,11 @@ def test_guard_skips_session_without_held_card(tree):
     assert ss.focus_guard("0999", tree) == []
 
 
-def test_prepare_clear_blocked_by_guard_unless_owner_override(tree, monkeypatch, capsys):
+def test_prepare_clear_removed(tree, monkeypatch):
     monkeypatch.setattr(ss, "ROOT", tree)
-    monkeypatch.setattr(ss, "check_owner_quote", lambda q: "سطر 1" if q in ("مسح", "تجاوز") else (_ for _ in ()).throw(ValueError("لا")))
-    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح"]) == 5
-    assert not ss.state_path("0108", tree).exists()  # الرفضُ قبل أي كتابة
-    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح", "--skip-guard-quote", "مزيّف"]) == 3
-    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح", "--skip-guard-quote", "تجاوز"]) == 7  # الواجباتُ غيرُ مسجَّلة
-    assert not ss.state_path("0108", tree).exists()
-    ss.set_duties("0108", none=True, root=tree, now=NOW)
-    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح", "--skip-guard-quote", "تجاوز"]) == 0
-    assert ss.state_path("0108", tree).exists()
-    ss.set_focus("0108", "W-1", 1, root=tree)
-    assert ss.main(["prepare-clear", "0108", "--owner-quote", "مسح"]) == 0
-    assert ss.main(["guard", "0108"]) == 0
+    with pytest.raises(SystemExit):
+        ss.main(["prepare-clear", "0108", "--owner-quote", "مسح"])
 
-
-# ---- W-20261024-005: علامةُ المسح المعلَّق لكلّ شجرة ----
 TREE = "D:/shschool_mvp/.claude/worktrees/abc"
 HOOK = json.dumps({"source": "clear", "cwd": TREE, "session_id": "new"})
 

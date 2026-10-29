@@ -6,16 +6,14 @@
 
     session_state.py generate NNNN        # يكتب handover_notes/state_NNNN.json (idempotent: لا يعيد الكتابة إن لم يتغيّر المحتوى)
     session_state.py verify NNNN          # يتحقّق من الملف: المخطّط، الحجم، غياب كلمات الاعتماد، تطابق الاشتقاق
-    session_state.py prepare-clear NNNN --owner-quote "<نصّ أمر المالك>"
-                                          # يطابق الأمرَ بـowner_confirmations.md ثمّ يولّد ويتحقّق ويطبع تعليمة المسح لـ0101
     session_state.py restore NNNN         # يطبع الحالةَ موسومةً «بيانات» لا أوامر
     session_state.py focus NNNN --card ID --step N   # يعلن تركيزَ الجلسة (بطاقةٌ في الدفتر وخطوة)
     session_state.py guard NNNN           # حارسُ المسح (هو نفسُ فحص خطّاف Stop): focus ثمّ الواجبات ثمّ تطابقُ ملفّ الحالة مع الدفتر
     session_state.py hook < hook.json     # SessionStart: يحقن الحالةَ بعد المسح (source=startup|clear) إن وُجدت وكانت حديثة
     session_state.py duties NNNN --none | --add ID --every N --what "<وصفٌ قصير>" --owner-quote "<نصّ الأمر>" | --clear
-                                          # الواجباتُ الدائمة/الدورات؛ prepare-clear يرفض إن لم تُسجَّل أو يُصرَّح بخلوّها (W-20261024-006)
+                                          # الواجباتُ الدائمة/الدورات؛ تُسجَّل أو يُصرَّح بخلوّها (W-20261024-006)
 
-المسحُ نفسُه (`clear_session`) أداةُ التطبيق ويصدرها 0101 بأمر المالك؛ لا تمسح جلسةٌ نفسَها ولا يمسح السكربتُ شيئاً.
+لا مسحَ ذاتيّ: الضغطُ التلقائيّ (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=9) يحلّ محلَّه (W-20261029-002).
 """
 
 from __future__ import annotations
@@ -936,17 +934,14 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("generate", "verify", "restore", "prepare-clear"):
+    for name in ("generate", "verify", "restore"):
         sp = sub.add_parser(name)
         sp.add_argument("num")
         if name == "restore":
             sp.add_argument("--sid", default="", help="معرّفُ جلسة CLI؛ بلا مطابقةٍ لجلسةٍ حيّةٍ لا تُحذف علامةُ المسح (W-20261028-027)")
-        if name in ("generate", "prepare-clear"):
+        if name == "generate":
             sp.add_argument("--label", default="")
             sp.add_argument("--cwd", default="", help="شجرةُ عمل الجلسة لالتقاط فرعها وملفّاتها المعدَّلة")
-        if name == "prepare-clear":
-            sp.add_argument("--owner-quote", required=True)
-            sp.add_argument("--skip-guard-quote", default="", help="نصُّ أمر المالك الصريح بتجاوز حارس focus (يُطابَق بـowner_confirmations.md)")
     sub.add_parser("hook")
     sub.add_parser("stop-hook")
     gp = sub.add_parser("guard", help="يفحص حارسَ المسح دون كتابة")
@@ -1022,38 +1017,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"رُفض: {e}", file=sys.stderr)
             return 3
         return 0
-    if a.cmd in ("generate", "prepare-clear"):
-        if a.cmd == "prepare-clear":
-            try:
-                found = check_owner_quote(a.owner_quote)
-            except Exception as e:  # noqa: BLE001
-                print(f"رُفض: أمرُ المالك غيرُ موثَّق في owner_confirmations.md ({e})", file=sys.stderr)
-                return 3
-            print(f"أمرُ المالك موثَّق: {found}")
-            gerrs = focus_guard(a.num)
-            if gerrs and a.skip_guard_quote:
-                try:
-                    print(f"تجاوزُ الحارس بأمر المالك: {check_owner_quote(a.skip_guard_quote)}")
-                    gerrs = []
-                except Exception as e:  # noqa: BLE001
-                    print(f"رُفض: أمرُ تجاوز الحارس غيرُ موثَّق في owner_confirmations.md ({e})", file=sys.stderr)
-                    return 3
-            if gerrs:
-                print("رُفض المسح (الحارس): " + "؛ ".join(gerrs), file=sys.stderr)
-                return 5
-            derrs = duties_guard(a.num)
-            if derrs:
-                print("رُفض المسح (الواجبات): " + "؛ ".join(derrs), file=sys.stderr)
-                return 7
+    if a.cmd == "generate":
         label = a.label or (load_state(a.num) or {}).get("session_label", "")
         p, wrote = write_state(a.num, derive(a.num, label, cwd=a.cwd or None))
         print(f"{'كُتب' if wrote else 'بلا تغيير'}: {p}")
-        if a.cmd == "prepare-clear":
-            errs = verify(a.num)
-            if errs:
-                print("فشل التحقّق: " + "؛ ".join(errs), file=sys.stderr)
-                return 4
-            print(f"جاهزٌ للمسح: على 0101 تنفيذُ clear_session للجلسة {a.num} بأمر المالك المذكور، ثم يُتحقَّق من ظهور الحالة في أوّل دورٍ بعد المسح.")
         return 0
     if a.cmd == "verify":
         errs = verify(a.num)
