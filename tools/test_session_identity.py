@@ -266,3 +266,11 @@ def test_owner_requests_go_through_0101_in_injection_and_common():
     assert "D-495م" in line and "0101" in line and "ask" in line
     assert "[ما يُراد من المالك — D-495م]" in render_role_cards.COMMON_EXTRA
     assert "بأداة ask" in render_role_cards.COMMON_EXTRA and "إذنُ المالك المباشر" in render_role_cards.COMMON_EXTRA
+
+
+def test_W20261028_024_root_cwd_unmatched_id_is_not_counted_as_a_number(tmp_path):
+    """W-20261028-024 (R8): كنّاسٌ في جذر المجلّد المشترك بمعرّفٍ غير مطابق لا يُحسب رقماً بالشجرة؛ ولا يُسقط إليها."""
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", ROOT_CWD, cli="live-0101")
+    title, _ = si.app_title(ROOT_CWD, "wake-sweeper-unknown", tmp_path, wait_s=0)
+    assert title is None
+    assert si.app_title(ROOT_CWD, "live-0101", tmp_path, wait_s=0) == ("0101 · خفيفة", [])
