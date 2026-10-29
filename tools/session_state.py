@@ -6,18 +6,14 @@
 
     session_state.py generate NNNN        # يكتب handover_notes/state_NNNN.json (idempotent: لا يعيد الكتابة إن لم يتغيّر المحتوى)
     session_state.py verify NNNN          # يتحقّق من الملف: المخطّط، الحجم، غياب كلمات الاعتماد، تطابق الاشتقاق
-    session_state.py prepare-clear NNNN --owner-quote "<نصّ أمر المالك>"
-                                          # يطابق الأمرَ بـowner_confirmations.md ثمّ يولّد ويتحقّق ويطبع تعليمة المسح لـ0101
     session_state.py restore NNNN         # يطبع الحالةَ موسومةً «بيانات» لا أوامر
     session_state.py focus NNNN --card ID --step N   # يعلن تركيزَ الجلسة (بطاقةٌ في الدفتر وخطوة)
     session_state.py guard NNNN           # حارسُ المسح (هو نفسُ فحص خطّاف Stop): focus ثمّ الواجبات ثمّ تطابقُ ملفّ الحالة مع الدفتر
     session_state.py hook < hook.json     # SessionStart: يحقن الحالةَ بعد المسح (source=startup|clear) إن وُجدت وكانت حديثة
     session_state.py duties NNNN --none | --add ID --every N --what "<وصفٌ قصير>" --owner-quote "<نصّ الأمر>" | --clear
-                                          # الواجباتُ الدائمة/الدورات؛ prepare-clear يرفض إن لم تُسجَّل أو يُصرَّح بخلوّها (W-20261024-006)
-    session_state.py clear_all --owner-quote "<نصّ أمر المالك>" [--only NNNN ...] [--exclude NNNN ...]
-                                          # يُعدّ كلَّ الجلسات الحيّة (guard+duties+generate+verify+علامة مسحٍ معلَّق) ويطبع قائمةً جاهزة
+                                          # الواجباتُ الدائمة/الدورات؛ تُسجَّل أو يُصرَّح بخلوّها (W-20261024-006)
 
-المسحُ نفسُه (`clear_session`) أداةُ التطبيق ويصدرها 0101 بأمر المالك؛ لا تمسح جلسةٌ نفسَها ولا يمسح السكربتُ شيئاً.
+لا مسحَ ذاتيّ: الضغطُ التلقائيّ (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=9) يحلّ محلَّه (W-20261029-002).
 """
 
 from __future__ import annotations
@@ -58,11 +54,6 @@ RULES = (  # قواعدُ حكمٍ ثابتة تُحمَل مع الحالة و�
     "استأنِف من work: focus ثمّ recent ثمّ git.dirty؛ وما غاب عنها فاقرأه من الدفتر",
 )
 TOP_KEYS = {"role", "session_label", "generated_at", "source", "last_action", "queue", "held_cards", "last_measure", "work", "duties", "waiting", "next_due", "rules"}
-PENDING_TTL_S = 900  # مهلةُ علامة «مسح قيد الانتظار» لحسم الشجرة في خطّاف SessionStart (find_pending): 15 دقيقةً (W-20261024-005)
-MARKER_MAX_AGE_S = 86_400  # علامتا المسح (pending_clear وauto_clear) تبقيان حتى الاستعادة بسقفٍ 24 ساعةً للعلامة اليتيمة (W-20261026-007)
-POST_TOOL_EVERY = 15  # قياسُ السياق داخل الدور كلَّ N أداة (W-20261027-018)
-CLEAR_AT_TOKENS = 180_000  # عتبةُ المسح الذاتي: سياقُ آخر رسالةٍ في transcript (W-20261025-015)؛ رُفعت من 175 ألفاً باختيار المالك 2026-10-28 بعد النصيحة الرقميّة (D-501م)، والضغطُ الإجباريّ 200 ألفاً (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=20 من نافذة المليون في ~/.claude/settings.json)
-TRANSCRIPT_TAIL = 400_000  # يُقرأ ذيلُ الملفّ فقط: الاستهلاكُ في آخر رسالة مساعد
 DUTIES_MAX = 6
 WAITING_MAX = 8  # الإحالاتُ الصادرة المنتظَرة في الحالة
 INJECT_MARK = "حُقنت الحالةُ بعد المسح"
@@ -557,136 +548,6 @@ def clear_guard(num: str, root: Path | None = None, now: datetime | None = None,
     return focus_guard(num, root, ledger_path) + duties_guard(num, root) + verify(num, root, now, ledger_path)
 
 
-def _norm_tree(p: str) -> str:
-    return str(p).replace("\\", "/").rstrip("/").lower()
-
-
-def pending_path(num: str, tree: str, root: Path | None = None) -> Path:
-    import hashlib
-
-    h = hashlib.sha1(_norm_tree(tree).encode("utf-8")).hexdigest()[:12]  # noqa: S324
-    return state_path(num, root).with_name(f"pending_clear_{h}_{num}.json")
-
-
-def write_pending(num: str, tree: str, root: Path | None = None, now: datetime | None = None, ttl_s: int = PENDING_TTL_S) -> Path:
-    """علامةُ «مسح قيد الانتظار» لكلّ شجرة: يقرؤها خطّافُ SessionStart حين لا يُحسم الرقمُ بعنوان التطبيق."""
-    if not tree:
-        raise ValueError("لا شجرةَ للجلسة؛ لا علامةَ تُكتب")
-    p = pending_path(num, tree, root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"num": num, "cwd": _norm_tree(tree), "created_at": _fmt(now or _now()), "ttl_s": ttl_s}, ensure_ascii=False) + "\n", encoding="utf-8")
-    return p
-
-
-def find_pending(cwd: str, root: Path | None = None, now: datetime | None = None) -> tuple[str | None, list[Path]]:
-    """(الرقمُ الوحيد الصالح أو None، ملفّاتُ العلامات المطابقة للشجرة). تعدّدُ العلامات الصالحة أو انتهاؤها أو فسادُ الحالة = None."""
-    now = now or _now()
-    here = _norm_tree(cwd)
-    files: list[Path] = []
-    valid: set[str] = set()
-    for f in sorted(state_path("0000", root).parent.glob("pending_clear_*.json")):
-        try:
-            d = json.loads(f.read_text(encoding="utf-8"))
-            if not (isinstance(d, dict) and set(d) == {"num", "cwd", "created_at", "ttl_s"} and SESSION_RE.match(str(d["num"])) and isinstance(d["ttl_s"], int)):
-                continue
-            if not (here == d["cwd"] or here.startswith(d["cwd"] + "/")):
-                continue
-            files.append(f)
-            if now - datetime.fromisoformat(d["created_at"]) > timedelta(seconds=d["ttl_s"]):
-                continue
-            st = load_state(d["num"], root)
-            if st is None or validate(st) or now - datetime.fromisoformat(st["generated_at"]) > STALE_AFTER:
-                continue
-            valid.add(d["num"])
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return (next(iter(valid)) if len(valid) == 1 else None), files
-
-
-def pending_markers(root: Path | None = None, now: datetime | None = None) -> dict[str, Path]:
-    """{الرقم: ملفُّ علامة المسح المعلَّق} للعلامات الصالحة غيرِ المنتهية (يستعملها wake_monitor لإيقاظ الجلسة الخاملة بعد المسح).
-    تبقى العلامةُ حتى تُحذف عند الاستعادة (clear_markers) بسقف MARKER_MAX_AGE_S، لا بمهلة ttl_s التي يفوتها الكنّاسُ الساعيّ."""
-    now = now or _now()
-    out: dict[str, Path] = {}
-    for f in sorted(state_path("0000", root).parent.glob("pending_clear_*.json")):
-        try:
-            d = json.loads(f.read_text(encoding="utf-8"))
-            if not (isinstance(d, dict) and set(d) == {"num", "cwd", "created_at", "ttl_s"} and SESSION_RE.match(str(d["num"])) and isinstance(d["ttl_s"], int)):
-                continue
-            if now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=MARKER_MAX_AGE_S):
-                out[d["num"]] = f
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return out
-
-
-def clear_markers_for_sid(num: str, sid: str, root: Path | None = None) -> int:
-    """W-20261028-027: لا تُحذف العلامةُ إلا بمعرّفٍ يطابق جلسةً حيّة؛ بلا معرّفٍ أو بمعرّفٍ غير مطابق = قراءةٌ فقط (0)."""
-    if not sid or not local_session_id(sid).startswith("local_"):
-        return 0
-    return clear_markers(num, root)
-
-
-def clear_markers(num: str, root: Path | None = None) -> int:
-    """يحذف علامتَي المسح لرقمٍ بعد أن استعادت الجلسةُ حالتَها (my_state أو restore)؛ يعيد عددَ الملفّات المحذوفة. لا يرفع استثناءً."""
-    if not SESSION_RE.match(num):
-        return 0
-    notes = state_path(num, root).parent
-    removed = 0
-    for f in [auto_clear_path(num, root), *notes.glob(f"pending_clear_*_{num}.json")]:
-        try:
-            f.unlink()
-            removed += 1
-        except OSError:
-            continue
-    return removed
-
-
-def context_tokens(transcript: str | Path) -> int | None:
-    """سياقُ الجلسة الآن = مدخلات آخر رسالة مساعدٍ في الجلسة الرئيسة (input + cache_read + cache_creation). None إن تعذّر القياس."""
-    try:
-        path = Path(transcript)
-        with path.open("rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - TRANSCRIPT_TAIL))
-            raw = f.read().decode("utf-8", errors="ignore")
-    except OSError:
-        return None
-    for line in reversed(raw.splitlines()):
-        if '"usage"' not in line:
-            continue
-        try:
-            d = json.loads(line)
-        except ValueError:
-            continue  # أوّلُ سطرٍ في الذيل قد يكون مبتوراً
-        usage = (d.get("message") or {}).get("usage") if isinstance(d, dict) else None
-        if not isinstance(usage, dict) or d.get("isSidechain") or d.get("type") != "assistant":
-            continue
-        parts = [usage.get(k) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")]
-        if all(isinstance(x, int) and x >= 0 for x in parts if x is not None):
-            return sum(x or 0 for x in parts)
-    return None
-
-
-def auto_clear_path(num: str, root: Path | None = None) -> Path:
-    return state_path(num, root).with_name(f"auto_clear_{num}.json")
-
-
-def auto_clear_nums(root: Path | None = None, now: datetime | None = None) -> set[str]:
-    """أرقامُ الجلسات التي طلب الخطّافُ مسحَها الذاتيّ وطلبُها غيرُ منتهٍ: يبقى حتى الاستعادة بسقف MARKER_MAX_AGE_S (يقرؤها wake_monitor ليغيّر نصَّ الإيقاظ)."""
-    now = now or _now()
-    out: set[str] = set()
-    for f in sorted(state_path("0000", root).parent.glob("auto_clear_*.json")):
-        try:
-            d = json.loads(f.read_text(encoding="utf-8"))
-            if SESSION_RE.match(str(d["num"])) and now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=MARKER_MAX_AGE_S):
-                out.add(d["num"])
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return out
-
-
 NUM_CACHE_MAX = 300  # أكثرُ ما تحفظه ذاكرةُ session_id→رقم؛ الأقدمُ يسقط
 
 
@@ -724,70 +585,7 @@ def cached_num(sid: str, root: Path | None = None) -> str | None:
         return None
 
 
-def alert_guard_failure(num: str, tokens: int, reasons: list[str], root: Path | None = None, now: datetime | None = None) -> bool:
-    """فشلُ حارس المسح فوق العتبة لا يسقط بصمتاً (W-20261027-007): صفٌّ واحدٌ في صندوق 0101 لكلّ جلسةٍ في اليوم. يعيد هل أُرسل."""
-    now = now or _now()
-    try:
-        marker = state_path(num, root).with_name(f"clear_guard_alert_{num}.json")
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        today = _fmt(now)[:10]
-        if marker.exists() and json.loads(marker.read_text(encoding="utf-8")).get("day") == today:
-            return False
-        import inbox
-
-        inbox.send("0101", "0000", f"[حارس المسح] الجلسة {num} بلغت {tokens} رمزاً ولم تُمسح لأن الحارس رفض: {'؛ '.join(reasons)[:300]}. تحتاج إصلاحَ ما ذُكر (focus/واجبات/verify) أو مسحاً يدويّاً.", main_root(root))
-        marker.write_text(json.dumps({"day": today, "tokens": tokens}, ensure_ascii=False) + chr(10), encoding="utf-8")
-        return True
-    except Exception:  # noqa: BLE001 — التصعيدُ لا يُسقط الخطّاف
-        return False
-
-
-def session_identity_ttl() -> int:
-    import session_identity
-
-    return session_identity.AUTO_CLEAR_TTL_S
-
-
-def _auto_clear_fresh(num: str, root: Path | None, now: datetime) -> bool:
-    """W-20261028-027 (5): طلبٌ أقدمُ من مهلة المسح الذاتيّ والسياقُ ما زال فوق العتبة = علامةٌ قديمةٌ لا تمنع طلباً جديداً."""
-    import session_identity
-
-    try:
-        d = json.loads(auto_clear_path(num, root).read_text(encoding="utf-8"))
-        return now - datetime.fromisoformat(d["created_at"]) <= timedelta(seconds=session_identity.AUTO_CLEAR_TTL_S)
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-
-
-def maybe_auto_clear(num: str, cwd: str, transcript: str | Path, root: Path | None = None, now: datetime | None = None) -> str:
-    """عند بلوغ العتبة يكتب علامةَ «مسح معلّق» وطلبَ المسح الذاتيّ بصمت؛ ويسقط بصمت إن فشل الحارس (focus/duties/verify).
-    idempotent: لا يكتب ثانيةً ما دام الطلب قائماً. يعيد وصفاً قصيراً للسجلّ ولا يرفع استثناءً."""
-    now = now or _now()
-    tokens = context_tokens(transcript)
-    if tokens is None:
-        return "سياق: غيرُ مقيس"
-    if tokens < CLEAR_AT_TOKENS:
-        return f"سياق: {tokens}"
-    if not cwd:
-        return f"سياق: {tokens}، بلا شجرة"
-    if num in auto_clear_nums(root, now) and _auto_clear_fresh(num, root, now):
-        return f"سياق: {tokens}، الطلبُ قائم"
-    if renew_focus(num, root) or derive_focus(num, root):  # W-20261027-018: بلا focus معلَن يُشتقّ من أحدث بطاقة محجوزة؛ W-20261025-024: تقدّمُ الدفتر لا يُسقط جلسةً أعلنت تركيزَها؛ ثمّ تُولَّد الحالةُ ليطابقها verify
-        try:
-            write_state(num, derive(num, (load_state(num, root) or {}).get("session_label", ""), now, root, cwd=cwd), root)
-        except Exception:  # noqa: BLE001, S110  # W-20261027-037: فشلُ توليد الحالة لا يمنع قياسَ السياق؛ الحارسُ يحكم بعدها
-            pass
-    reasons = clear_guard(num, root, now)
-    if reasons:
-        alerted = alert_guard_failure(num, tokens, reasons, root, now)
-        return f"سياق: {tokens}، سقط الحارسُ: {'؛ '.join(reasons)[:120]}" + ("؛ صُعِّد إلى 0101" if alerted else "")
-    write_pending(num, cwd, root, now)
-    auto_clear_path(num, root).write_text(
-        json.dumps({"num": num, "tokens": tokens, "created_at": _fmt(now)}, ensure_ascii=False) + "\n", encoding="utf-8")
-    return f"سياق: {tokens}، كُتب طلبُ المسح الذاتيّ"
-
-
-def _log_injection(num: str, root: Path | None, via_pending: bool, verdict: str = "", issues: list[str] | None = None) -> None:
+def _log_injection(num: str, root: Path | None, verdict: str = "", issues: list[str] | None = None) -> None:
     """حدثٌ في الدفتر على بطاقة تركيز الجلسة (أو أوّل بطاقةٍ تحجزها)؛ لا يُسقط الحقنَ إن فشل."""
     try:
         import ledger
@@ -795,7 +593,7 @@ def _log_injection(num: str, root: Path | None, via_pending: bool, verdict: str 
         st = load_state(num, root) or {}
         card = ((st.get("work") or {}).get("focus") or {}).get("card") or next((h["id"] for h in st.get("held_cards", [])), None)
         if card:
-            ledger.add_note(card, (INJECT_MARK + (" بعلامة مسحٍ معلَّقة للشجرة" if via_pending else "") + (f"؛ {verdict}" if verdict else "") + (": " + "؛ ".join(issues or [])[:90] if issues else ""))[:230], num, main_root(root) / "ledger" / "events.jsonl")
+            ledger.add_note(card, (INJECT_MARK + (f"؛ {verdict}" if verdict else "") + (": " + "؛ ".join(issues or [])[:90] if issues else ""))[:230], num, main_root(root) / "ledger" / "events.jsonl")
     except Exception:  # noqa: BLE001, S110
         pass
 
@@ -825,38 +623,6 @@ def live_sessions(base: Path | None = None) -> list[dict]:
 def _label_of(title: str, num: str) -> str:
     lab = re.sub(r"[^\w ·\-]", "", title)[:60].strip()
     return lab if LABEL_RE.match(lab) and not FORBIDDEN.search(lab) else num
-
-
-def clear_all(sessions: list[dict], skip_guard: bool = False, root: Path | None = None, now: datetime | None = None) -> list[dict]:
-    """يُعدّ كلَّ جلسةٍ للمسح: guard وduties وgenerate وverify ثمّ علامةٌ معلَّقة (واحدةٌ لكلّ شجرةٍ في الدفعة).
-    يعيد صفّاً لكلّ جلسة: {num, ok, reasons, pending}. لا يمسح شيئاً."""
-    rows: list[dict] = []
-    seen_trees: set[str] = set()
-    for s in sessions:
-        num, tree = s["num"], s.get("tree", "")
-        reasons: list[str] = []
-        try:
-            if not skip_guard:
-                reasons += focus_guard(num, root)
-            reasons += duties_guard(num, root)
-            if not reasons:
-                write_state(num, derive(num, _label_of(s.get("title", ""), num), now, root, cwd=tree or None), root)
-                reasons += verify(num, root, now)
-        except Exception as e:  # noqa: BLE001
-            reasons.append(f"خطأ: {e}")
-        pending = False
-        if not reasons:
-            key = _norm_tree(tree)
-            if not key:
-                reasons.append("لا شجرةَ معروفةً للجلسة")
-            elif key in seen_trees:
-                reasons.append("شجرتُها مشتركةٌ مع جلسةٍ سبقتها في الدفعة؛ امسحها بعد عودة السابقة ثمّ أعد clear_all")
-            else:
-                seen_trees.add(key)
-                write_pending(num, tree, root, now)
-                pending = True
-        rows.append({"num": num, "ok": not reasons, "reasons": reasons, "pending": pending})
-    return rows
 
 
 def _stable(state: dict, with_git: bool = True) -> dict:
@@ -1072,12 +838,8 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
             return ""
         # المعرّفُ الجديد لا يُكتب في ملف الجلسة قبل إطلاق الخطاف (جُرّب 2026-10-23): فإن اشترك المرشّحون في رقمٍ واحدٍ حُسم به
         nums = {m.group(1) for m in (re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", c) for c in ([title] if title else cands)) if m}
-        via_pending = False
-        only, pend_files = find_pending(cwd, root, now) if cwd else (None, [])
-        if len(nums) != 1:  # شجرةٌ مشتركة: يُحسم بعلامة «مسح قيد الانتظار» لا بالمعرّف الجديد المجهول (W-20261024-005)
-            if only is None:
-                return ""
-            nums, via_pending = {only}, True
+        if len(nums) != 1:
+            return ""
         num = nums.pop()
         state = load_state(num, root)
         if state is None or validate(state):
@@ -1091,15 +853,7 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         verdict, issues = reconcile(state, derive(num, state.get("session_label", ""), now, root, cwd=cwd or None))
         verdict_line = f"[مطابقة العودة مع الدفتر وgit] {verdict}" + ("؛ " + "؛ ".join(issues[:5]) if issues else "")
         text = "\n".join([resume_head(state), ident, render(state, compact=True), verdict_line])  # أسطرُ قاعدة المالك والإحالة والعناوين يطبعها session_identity وحدَه (W-20261025-029)
-        if via_pending:
-            text = "[مستنتج من ملف معلَّق: الجلسةُ مجهولةُ العنوان فحُسمت بعلامة مسحٍ معلَّقةٍ لهذه الشجرة]\n" + text
-        for f in pend_files:  # استعمالٌ واحد
-            try:
-                if json.loads(f.read_text(encoding="utf-8")).get("num") == num:
-                    f.unlink(missing_ok=True)
-            except (OSError, ValueError):
-                pass
-        _log_injection(num, root, via_pending, verdict, issues)
+        _log_injection(num, root, verdict, issues)
         log_return(num, verdict, issues, root, now)
         return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}, ensure_ascii=False)
     except Exception:  # noqa: BLE001
@@ -1113,58 +867,6 @@ def _log_stop_call(root: Path | None, cwd: str, sid: str, outcome: str) -> None:
             f.write(f"{_fmt(_now())} cwd={cwd} session_id={sid} {outcome}\n")
     except OSError:
         pass
-
-
-def self_clear_reason(num: str, cleared: str, local_sid: str) -> str:
-    """نصُّ أمر المسح الذاتيّ (يستعمله Stop في قرار المنع وPostToolUse في السياق الإضافيّ)."""
-    m = re.search(r"(\d+)", cleared)
-    reason = (f"[مسحٌ ذاتيّ] سياقُك بلغ {m.group(1) if m else '180 ألف'} توكناً (العتبة {CLEAR_AT_TOKENS}) وحارسُ المسح ناجح؛ نفِّذ الآن بلا سؤال: "
-              "1) أنهِ ما بيدك وسجّل ما يلزم (ledger.py، session_state.py focus وwaiting للإحالات المعلّقة). "
-              f"2) شغّل `python C:/Users/mesue/delivery_manager_work/tools/session_state.py guard {num}` (وصفٌ عربيّ للأداة) فإن رفض فأصلح ولا تتجاوز. "
-              f"3) امسح جلستك بأداة clear_session لمعرّفك `{local_sid}`. "
-              f"4) بعد المسح اقرأ بطاقتك `role_cards/{num}.md` ثمّ شغّل `python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` واستأنف من work: focus.")
-    return reason
-
-
-def self_clear_block(num: str, cleared: str, local_sid: str) -> str:
-    """قرارُ Stop بالمنع (decision=block) فيُكمل Claude دورَه بهذا النصّ: أمرُ المسح الذاتيّ فور كتابة الطلب (COMMON: المسح الذاتيّ).
-
-    السببُ (W-20261026-001): الطلبُ كان لا يُنفَّذ إلا بإيقاظ الكنّاس، والكنّاسُ كلَّ ساعةٍ وصلاحيّةُ الطلب 15 دقيقة، وقد توقّف الكنّاس."""
-    return json.dumps({"decision": "block", "reason": self_clear_reason(num, cleared, local_sid)}, ensure_ascii=False)
-
-
-def cmd_post_tool_hook(stdin_text: str, root: Path | None = None, titles=None) -> str:
-    """PostToolUse (W-20261027-018): يقيس السياقَ داخل الدور كلَّ POST_TOOL_EVERY أداةً ويحقن أمرَ المسح الذاتيّ فور كتابة الطلب.
-
-    السببُ: Stop لا يعمل إلا عند نهاية الدور، فجلسةٌ دورُها طويل تتجاوز العتبة بلا قياس (230 و435 ألفاً).
-    idempotent: maybe_auto_clear لا يكتب والطلبُ قائم، فلا يتكرّر الحقنُ في الدور نفسه ولا بعده. لا يسقط الجلسةَ أبداً."""
-    try:
-        hook = json.loads(stdin_text or "{}")
-        import session_identity
-
-        cwd, sid, tpath = hook.get("cwd", ""), str(hook.get("session_id", "")), hook.get("transcript_path")
-        if not tpath:
-            return ""
-        title, cands = (titles or session_identity.app_title)(cwd, sid)
-        nums = {m.group(1) for m in (re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", c) for c in ([title] if title else cands)) if m}
-        if len(nums) != 1:
-            return ""
-        num = nums.pop()
-        counter = state_path(num, root).with_name(f"post_tool_count_{num}.txt")
-        try:
-            n = int(counter.read_text(encoding="utf-8").strip() or 0) + 1
-        except (OSError, ValueError):
-            n = 1
-        counter.write_text(str(n), encoding="utf-8")
-        if n % POST_TOOL_EVERY:
-            return ""
-        cleared = maybe_auto_clear(num, cwd, tpath, root)
-        if "كُتب طلبُ المسح" not in cleared:
-            return ""
-        return json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                                   "additionalContext": self_clear_reason(num, cleared, local_session_id(sid))}}, ensure_ascii=False)
-    except Exception:  # noqa: BLE001
-        return ""
 
 
 def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str:
@@ -1202,14 +904,6 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
             outcome = f"{num}: جُدِّد" + (" (من ذاكرة session_id)" if from_cache else "")
         except Exception as exc:  # noqa: BLE001  # W-20261027-037: فشلُ التجديد لا يُسقط قياسَ السياق وطلبَ المسح
             outcome = f"{num}: تعذّر التجديد ({str(exc)[:60]})" + (" (من ذاكرة session_id)" if from_cache else "")
-        if tpath:
-            try:
-                cleared = maybe_auto_clear(num, cwd, tpath, root)
-                outcome += f" | {cleared}"
-                if "كُتب طلبُ المسح" in cleared and not hook.get("stop_hook_active"):  # W-20261026-001: الجلسةُ تُنبَّه في دورها نفسِه لا بكنّاسٍ قد يتوقّف
-                    block = self_clear_block(num, cleared, local_session_id(sid))
-            except Exception as exc:  # noqa: BLE001  # يسقط بصمت: التجديدُ نجح ولا يُفسَد بالمسح
-                outcome += f" | مسحٌ ذاتيّ: {type(exc).__name__}"
         if not block and not hook.get("stop_hook_active"):  # W-20261026-015: واردٌ غيرُ مسلَّم يمنع الإنهاءَ مرّةً لكلّ دفعة، والمحتوى في سبب المنع
             try:
                 import inbox
@@ -1240,20 +934,16 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("generate", "verify", "restore", "prepare-clear"):
+    for name in ("generate", "verify", "restore"):
         sp = sub.add_parser(name)
         sp.add_argument("num")
         if name == "restore":
             sp.add_argument("--sid", default="", help="معرّفُ جلسة CLI؛ بلا مطابقةٍ لجلسةٍ حيّةٍ لا تُحذف علامةُ المسح (W-20261028-027)")
-        if name in ("generate", "prepare-clear"):
+        if name == "generate":
             sp.add_argument("--label", default="")
             sp.add_argument("--cwd", default="", help="شجرةُ عمل الجلسة لالتقاط فرعها وملفّاتها المعدَّلة")
-        if name == "prepare-clear":
-            sp.add_argument("--owner-quote", required=True)
-            sp.add_argument("--skip-guard-quote", default="", help="نصُّ أمر المالك الصريح بتجاوز حارس focus (يُطابَق بـowner_confirmations.md)")
     sub.add_parser("hook")
     sub.add_parser("stop-hook")
-    sub.add_parser("post-tool-hook")
     gp = sub.add_parser("guard", help="يفحص حارسَ المسح دون كتابة")
     gp.add_argument("num")
     fp = sub.add_parser("focus", help="يحفظ تركيزَ الجلسة: بطاقةٌ وخطوة")
@@ -1275,11 +965,6 @@ def main(argv: list[str] | None = None) -> int:
     wp.add_argument("--add", action="store_true", required=True)
     wp.add_argument("--to", required=True)
     wp.add_argument("--about", required=True)
-    ca = sub.add_parser("clear_all", help="يُعدّ كلَّ الجلسات الحيّة للمسح ويطبع قائمةً جاهزة")
-    ca.add_argument("--owner-quote", required=True)
-    ca.add_argument("--skip-guard-quote", default="")
-    ca.add_argument("--only", nargs="*", default=[])
-    ca.add_argument("--exclude", nargs="*", default=[])
     a = ap.parse_args(argv)
 
     if a.cmd == "stop-hook":
@@ -1290,33 +975,11 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 pass
         return 0
-    if a.cmd == "post-tool-hook":
-        out = cmd_post_tool_hook(sys.stdin.read())
-        if out:
-            try:
-                sys.stdout.write(out) if sys.stdout else os.write(1, out.encode("utf-8"))
-            except OSError:
-                pass
-        return 0
     if a.cmd == "hook":
         out = cmd_hook(sys.stdin.read())
         if out:
             print(out)
         return 0
-    if a.cmd == "clear_all":
-        try:
-            print(f"أمرُ المالك موثَّق: {check_owner_quote(a.owner_quote)}")
-            skip = bool(a.skip_guard_quote) and bool(print(f"تجاوزُ الحارس بأمر المالك: {check_owner_quote(a.skip_guard_quote)}") or True)
-        except Exception as e:  # noqa: BLE001
-            print(f"رُفض: أمرُ المالك غيرُ موثَّق في owner_confirmations.md ({e})", file=sys.stderr)
-            return 3
-        sessions = [s for s in live_sessions() if (not a.only or s["num"] in a.only) and s["num"] not in a.exclude]
-        rows = clear_all(sessions, skip_guard=skip)
-        ready = [r for r in rows if r["ok"]]
-        for r in rows:
-            print(f"{'جاهزة' if r['ok'] else 'مرفوضة'} {r['num']}" + ("" if r["ok"] else ": " + "؛ ".join(r["reasons"])))
-        print(f"القائمةُ الجاهزة للمسح ({len(ready)}/{len(rows)}): " + " ".join(r["num"] for r in ready))
-        return 0 if len(ready) == len(rows) else 6
     if a.cmd == "waiting" and SESSION_RE.match(a.num):
         if not SESSION_RE.match(a.to) or a.to == a.num or FORBIDDEN.search(a.about):
             print("رُفض: وجهةٌ غيرُ صالحة أو وصفٌ بكلماتِ اعتمادٍ", file=sys.stderr)
@@ -1354,40 +1017,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"رُفض: {e}", file=sys.stderr)
             return 3
         return 0
-    if a.cmd in ("generate", "prepare-clear"):
-        if a.cmd == "prepare-clear":
-            try:
-                found = check_owner_quote(a.owner_quote)
-            except Exception as e:  # noqa: BLE001
-                print(f"رُفض: أمرُ المالك غيرُ موثَّق في owner_confirmations.md ({e})", file=sys.stderr)
-                return 3
-            print(f"أمرُ المالك موثَّق: {found}")
-            gerrs = focus_guard(a.num)
-            if gerrs and a.skip_guard_quote:
-                try:
-                    print(f"تجاوزُ الحارس بأمر المالك: {check_owner_quote(a.skip_guard_quote)}")
-                    gerrs = []
-                except Exception as e:  # noqa: BLE001
-                    print(f"رُفض: أمرُ تجاوز الحارس غيرُ موثَّق في owner_confirmations.md ({e})", file=sys.stderr)
-                    return 3
-            if gerrs:
-                print("رُفض المسح (الحارس): " + "؛ ".join(gerrs), file=sys.stderr)
-                return 5
-            derrs = duties_guard(a.num)
-            if derrs:
-                print("رُفض المسح (الواجبات): " + "؛ ".join(derrs), file=sys.stderr)
-                return 7
+    if a.cmd == "generate":
         label = a.label or (load_state(a.num) or {}).get("session_label", "")
         p, wrote = write_state(a.num, derive(a.num, label, cwd=a.cwd or None))
         print(f"{'كُتب' if wrote else 'بلا تغيير'}: {p}")
-        if a.cmd == "prepare-clear":
-            errs = verify(a.num)
-            if errs:
-                print("فشل التحقّق: " + "؛ ".join(errs), file=sys.stderr)
-                return 4
-            if a.cwd:
-                print(f"علامةُ مسحٍ معلَّق: {write_pending(a.num, a.cwd)}")
-            print(f"جاهزٌ للمسح: على 0101 تنفيذُ clear_session للجلسة {a.num} بأمر المالك المذكور، ثم يُتحقَّق من ظهور الحالة في أوّل دورٍ بعد المسح.")
         return 0
     if a.cmd == "verify":
         errs = verify(a.num)
@@ -1405,7 +1038,6 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001 — تُطبع المحفوظةُ مع تنبيه
             print(f"تنبيه: تعذّرت إعادة الاشتقاق ({e}); المطبوع هو المحفوظ", file=sys.stderr)
         print(render(st))
-        clear_markers_for_sid(a.num, getattr(a, "sid", ""))  # الاستعادةُ تمّت: لا إيقاظَ «بعد المسح» بعدها (W-20261026-007)
         return 0
     return 2
 

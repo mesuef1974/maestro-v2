@@ -468,18 +468,6 @@ def test_pending_wakes_reader_filters_old_bad_and_unnamed(tmp_path):
     assert wm.pending_wakes(now, tmp_path / "none.jsonl") == []
 
 
-def test_clear_wakes_are_outside_the_live_cap_while_ordinary_wakes_stay_capped(monkeypatch):
-    monkeypatch.setattr(wm, "MAX_LIVE", 6)  # آليّةُ السقف بقيمةٍ مثبَّتة؛ والقيمةُ الفعليّة 15 (W-20261027-006)
-    """W-20261025-025: رسالةُ المسح/ما بعده لا تُؤجَّل بسقف التزامن؛ والإيقاظُ العاديّ الزائدُ يُؤجَّل كما كان."""
-    live = {f"{n:04d}" for n in (201, 301, 501, 601, 701, 801)}
-    p = wm.WakePlan()
-    p.wakes = {
-        "0901": [(wm.CLEAR_ID, "pending_clear")],
-        "0902": [("W-20261016-001", "routed")],
-    }
-    wm.cap_live(p, live)
-    assert list(p.wakes) == ["0901"] and p.deferred and not p.halted
-    assert any(i == "W-20261016-001" for i, _ in p.skipped)
 
 
 # ===== إيقاظ ما بعد المسح (W-20261025-001) =====
@@ -488,61 +476,18 @@ from datetime import datetime, timezone  # noqa: E402
 _NOW = datetime(2026, 10, 25, 12, 0, tzinfo=timezone(timedelta(hours=3)))
 
 
-def test_after_clear_wakes_idle_session_with_card_reading_message():
-    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, cleared={"0201": "x"})
-    assert p.wakes == {"0201": [(wm.CLEAR_ID, "pending_clear")]}
-    msg = wm.message_for("0201", p.wakes["0201"])
-    assert "role_cards/0201.md" in msg and "my_state.py 0201" in msg
 
 
-def test_after_clear_wakes_are_not_cut_by_the_per_run_session_limit():
-    """W-20261025-028: أكثر من خمس جلساتٍ ممسوحةٍ معاً تُوقَظ كلُّها في الدورة نفسها (وإلا انقضت علامةُ المسح المعلّق)."""
-    nums = [f"0{n}01" for n in range(2, 9)]
-    directory = {n: f"local_{n}" for n in nums}
-    p = wm.stale_plan([], directory, set(), _NOW, verify=ok, cleared={n: "x" for n in nums})
-    assert sorted(p.wakes) == nums and len(nums) > wm.MAX_SESSIONS_PER_RUN
 
 
-def test_after_clear_skips_live_or_outside_channel_or_unknown():
-    assert wm.stale_plan([], DIR, {"0201"}, _NOW, verify=ok, cleared={"0201": "x"}).wakes == {}
-    assert wm.stale_plan([], DIR, set(), _NOW, verify=ok, channel={"0301"}, cleared={"0201": "x"}).wakes == {}
-    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, cleared={"0999": "x"})
-    assert p.wakes == {} and p.skipped
 
 
-def test_after_clear_payload_needs_valid_number():
-    with pytest.raises(ValueError):
-        wm.payload(wm.CLEAR_ID, "pending_clear", "")
-    with pytest.raises(ValueError):
-        wm.payload(wm.CLEAR_ID, "pending_clear", "rm -rf")
 
 
-def test_after_clear_watch_lines_use_session_number():
-    p = wm.stale_plan([], DIR, set(), _NOW, verify=ok, cleared={"0201": "x"})
-    out = wm.watch_lines(p, DIR, set())
-    assert len(out) == 1 and "role_cards/0201.md" in out[0]
 
 
-def test_cleared_session_not_live_by_window_but_running_wins():
-    """W-20261025-001: علامةُ مسحٍ معلَّقةٌ تُسقط الحياةَ المقدَّرةَ بالنافذة؛ و`--running` الفعليُّ يحكم وحدَه."""
-    assert wm.live_minus_cleared({"0301", "0501"}, {"0301": "x"}, None) == {"0501"}
-    assert wm.live_minus_cleared({"0301"}, {"0301": "x"}, {"0301"}) == {"0301"}
-    p = wm.stale_plan([], DIR, wm.live_minus_cleared({"0201"}, {"0201": "x"}, None), _NOW, verify=lambda *_: True, cleared={"0201": "x"})
-    assert "0201" in p.wakes
 
 
-def test_two_hour_old_marker_wakes_idle_session_under_stale(tmp_path):
-    """W-20261026-007: علامةٌ عمرها ساعتان ولم تُستعد الجلسةُ يُخرجها --stale رسالةَ «بعد المسح»؛ وبعد حذفها لا إيقاظ."""
-    import session_state as ss
-
-    now = datetime(2026, 10, 26, 12, 0, tzinfo=timezone(timedelta(hours=3)))
-    ss.write_pending("0201", "D:/a", tmp_path, now - timedelta(hours=2))
-    cleared = ss.pending_markers(tmp_path, now)
-    assert set(cleared) == {"0201"}
-    p = wm.stale_plan([], DIR, set(), now, verify=ok, cleared=cleared)
-    assert p.wakes == {"0201": [(wm.CLEAR_ID, "pending_clear")]}
-    ss.clear_markers("0201", tmp_path)
-    assert wm.stale_plan([], DIR, set(), now, verify=ok, cleared=ss.pending_markers(tmp_path, now)).wakes == {}
 
 
 # ===== جرس الوارد للخاملة (W-20261026-015) =====
@@ -634,55 +579,23 @@ def test_apply_dead_holders_is_idempotent_and_notes():
 
 
 # ===== طلبُ المسح: العلامةُ المعلّقة والمسحُ الذاتيّ كلاهما يوقظان (W-20261028-027) =====
-def test_w20261028_027_auto_clear_alone_wakes_idle_session(tmp_path):
-    """W-20261028-027 (R-B): مسحٌ ذاتيٌّ بلا علامةٍ معلّقة يجب أن يوقظ الجلسةَ الخاملة بنصّ «بعد المسح الذاتي»."""
-    import json
-
-    import session_state as ss
-
-    now = datetime(2026, 10, 28, 14, 30, tzinfo=timezone(timedelta(hours=3)))
-    path = ss.auto_clear_path("0201", tmp_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"num": "0201", "created_at": now.isoformat()}), encoding="utf-8")
-    cleared, auto = wm.clear_requests(tmp_path, now)
-    assert set(cleared) == {"0201"} and auto == {"0201"}
-    p = wm.stale_plan([], DIR, set(), now, verify=ok, cleared=cleared, auto=auto)
-    assert p.wakes == {"0201": [(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE)]}
-
-
 NOW = wm.datetime.fromisoformat("2026-10-29T12:00:00+03:00")
-
-
-def test_w20261028_008_cleared_merged_number_wakes_receiver():
-    p = wm.stale_plan([], DIR, set(), NOW, cleared={"0502": ""}, aliases={"0502": "0501"})
-    assert p.wakes == {"0501": [(wm.CLEAR_ID, "pending_clear")]}
-    assert not any("0502" in why for _, why in p.skipped)
-
-
-def test_w20261028_008_cleared_merged_number_with_live_receiver_not_woken():
-    p = wm.stale_plan([], DIR, {"0501"}, NOW, cleared={"0502": ""}, aliases={"0502": "0501"})
-    assert p.wakes == {}
-
-
-def test_w20261028_008_auto_clear_state_kept_for_merged_number():
-    p = wm.stale_plan([], DIR, set(), NOW, cleared={"0502": ""}, auto=frozenset({"0502"}), aliases={"0502": "0501"})
-    assert p.wakes == {"0501": [(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE)]}
 
 
 def test_w20261028_009_core_session_without_id_raises_one_alarm_per_day():
     d = {k: v for k, v in DIR.items() if k != "0401"}
     core = frozenset({"0401"})
-    assert wm.stale_plan([], d, set(), NOW, cleared={"0401": ""}, core=core).alarms == ["0401"]
+    assert wm.stale_plan([], d, set(), NOW, inbox=["0401"], core=core).alarms == ["0401"]
     recent = [{"ts": "2026-10-29T06:00:00+03:00", "alarms": ["0401"]}]
-    assert wm.stale_plan([], d, set(), NOW, log=recent, cleared={"0401": ""}, core=core).alarms == []
+    assert wm.stale_plan([], d, set(), NOW, log=recent, inbox=["0401"], core=core).alarms == []
     old = [{"ts": "2026-10-28T06:00:00+03:00", "alarms": ["0401"]}]
-    assert wm.stale_plan([], d, set(), NOW, log=old, cleared={"0401": ""}, core=core).alarms == ["0401"]
+    assert wm.stale_plan([], d, set(), NOW, log=old, inbox=["0401"], core=core).alarms == ["0401"]
 
 
 def test_w20261028_009_non_core_or_known_session_raises_no_alarm():
     d = {k: v for k, v in DIR.items() if k != "0401"}
-    assert wm.stale_plan([], d, set(), NOW, cleared={"0401": ""}, core=frozenset()).alarms == []
-    assert wm.stale_plan([], DIR, set(), NOW, cleared={"0401": ""}, core=frozenset({"0401"})).alarms == []
+    assert wm.stale_plan([], d, set(), NOW, inbox=["0401"], core=frozenset()).alarms == []
+    assert wm.stale_plan([], DIR, set(), NOW, inbox=["0401"], core=frozenset({"0401"})).alarms == []
 
 
 def test_w20261028_009_send_alarms_sends_one_line_to_0101():

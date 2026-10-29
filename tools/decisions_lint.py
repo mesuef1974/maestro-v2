@@ -15,6 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ENTRY = re.compile(r"^- D-(\d+)م(-[ء-ي])? \| ([^|]*)\| (.*)$")
+# تكراراتٌ تاريخيّةٌ (كتلتان من جلستين في 10-22 و10-23) لا تُعاد ترقيمها لأنّ إحالاتِ القرارات اللاحقة إليها ملتبسة؛ كلُّ تكرارٍ جديدٍ خارجَها يُرفض (W-20261028-023، D-499م R7)
+LEGACY_DUPLICATES = frozenset(range(476, 485)) | {486}
 STAMP = re.compile(r"(\d{2})-(\d{2})(?:\s+(?:~|≈)?(\d{1,2}):(\d{2}))?")
 
 
@@ -43,7 +45,7 @@ def lint(entries: list[dict], since: int = 0) -> list[str]:
         if e["num"] < since:
             prev = e if e["stamp"] else prev
             continue
-        if e["num"] in seen_nums and not e["suffix"]:
+        if e["num"] in seen_nums and not e["suffix"] and e["num"] not in LEGACY_DUPLICATES:
             notes.append(f"D-{e['num']}م: رقمٌ مكرَّر (السطر {seen_nums[e['num']]} و{e['line']})")
         seen_nums.setdefault(e["num"], e["line"])
         if e["key"] and e["key"] in seen_keys:

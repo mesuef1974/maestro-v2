@@ -63,28 +63,10 @@ def _newest_first(base: Path) -> list[Path]:
 #: W-20261028-011: 3 ثوانٍ لم تكفِ (0101 عُرّفت 0104 يوم 10-28)؛ نصبر حتى 15 ثانيةً ثمّ نقول «لا أعرف» ولا نخمّن
 ID_WAIT_S = 15.0
 ID_POLL_S = 0.5
-#: عمرُ علامة المسح الذاتيّ السارية (يطابق PENDING_TTL_S في session_state)
-AUTO_CLEAR_TTL_S = 900
-
-
-def auto_clear_nums(root: Path | None = None) -> set[str]:
-    """أرقامُ الجلسات صاحبة علامة مسحٍ ذاتيّ سارية (handover_notes/auto_clear_<رقم>.json)؛ تتجاهل التالف والمنتهي."""
-    out: set[str] = set()
-    for f in ((root or ROOT) / "handover_notes").glob("auto_clear_*.json"):
-        try:
-            d = json.loads(f.read_text(encoding="utf-8"))
-            created = datetime.fromisoformat(d["created_at"])
-            if (datetime.now(created.tzinfo) - created).total_seconds() <= AUTO_CLEAR_TTL_S:
-                out.add(str(d["num"]))
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return out
-
-
 def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: float = ID_WAIT_S,
-              pending: set[str] | None = None, sleep=time.sleep) -> tuple[str | None, list[str]]:
+              sleep=time.sleep) -> tuple[str | None, list[str]]:
     """(العنوانُ الحيّ، المرشَّحون) كما في `_resolve`؛ مع معرّفِ جلسةٍ لم يُطابَق بعدُ نعيد قراءةَ الملفّات حتى `wait_s` ثانيةً
-    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook). وعند الالتباس تُختار صاحبةُ علامة المسح السارية إن كانت وحيدة."""
+    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook)."""
     waited = 0.0
     while True:
         title, candidates, by_id = _resolve(cwd, session_id, base)
@@ -92,11 +74,6 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: 
             break
         sleep(ID_POLL_S)
         waited += ID_POLL_S
-    if title is None and len(candidates) > 1:
-        marked = auto_clear_nums() if pending is None else pending
-        owners = [c for c in candidates if _num_of(c) in marked]
-        if len(owners) == 1:
-            return owners[0], []
     return title, candidates
 
 
@@ -186,7 +163,7 @@ def message(title: str | None, tree: str | None, sid: str = "") -> str:
             else "role_cards/04.md (المرنة) ثمّ ledger.py show <رمز بطاقتك>") if flexible else f"role_cards/{num}.md"
     return (f"[هويّة الجلسة] أنت «{title}» — رقمُك {num}. "
             f"اقرأ بطاقتك `C:/Users/mesue/delivery_manager_work/{card}` ثمّ شغّل "
-            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}{f' --sid {sid}' if sid else ''}` قبل أيّ ردّ (اكتب وصفَ أداة Bash بالعربيّة، مثل «قراءة حالة جلستي»، وإلا رفضه lang_guard). "
+            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ (اكتب وصفَ أداة Bash بالعربيّة، مثل «قراءة حالة جلستي»، وإلا رفضه lang_guard). "
             + ("" if flexible else "لا تفترض أنّك مرنة 04SS. ")
             + "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل.")
 

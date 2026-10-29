@@ -39,3 +39,17 @@ def test_suffix_allows_same_number_and_event_time_marks_late_stamp():
     assert "رقمٌ مكرَّر" in "\n".join(dl.lint(dl.parse(dup)))
 
 
+
+
+def _log(*nums):
+    return "".join(f"- D-{n}م | 10-01 1{i}:00 | نصٌّ رقم {n} {i} | أثر | مصدر\n" for i, n in enumerate(nums))
+
+
+def test_new_duplicate_number_is_rejected_but_legacy_baseline_passes():
+    assert any("D-490م: رقمٌ مكرَّر" in n for n in dl.lint(dl.parse(_log(489, 490, 490))))
+    assert not any("رقمٌ مكرَّر" in n for n in dl.lint(dl.parse(_log(476, 476))))  # تكرارٌ تاريخيّ مسموح
+
+
+def test_real_log_has_no_new_duplicate_number():
+    text = (dl.ROOT / "decisions.md").read_text(encoding="utf-8")
+    assert [n for n in dl.lint(dl.parse(text)) if "رقمٌ مكرَّر" in n] == []
