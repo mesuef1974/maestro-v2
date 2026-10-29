@@ -161,6 +161,28 @@ def test_cli_wait_once_exits_at_first_message(tmp_path, monkeypatch, capsys):
     assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["س"]  # W-20261027-001: --once لا يقرّ؛ read يجده بعد الإيقاظ
 
 
+def test_w20261028_024_beat_with_unmatched_sid_is_ignored_and_matched_is_written(tmp_path, monkeypatch):
+    """W-20261028-024 (4): نبضٌ بمعرّفٍ لا يطابق جلسةً حيّةً يُهمَل فلا يُحيي مراقباً وهمياً."""
+    import session_state
+
+    monkeypatch.setattr(session_state, "local_session_id", lambda s, base=None: "local_1" if s == "live" else s)
+    inbox.beat("0101", tmp_path, "unknown")
+    assert not inbox.watcher_alive("0101", tmp_path)
+    inbox.beat("0101", tmp_path, "live")
+    assert inbox.watcher_alive("0101", tmp_path)
+
+
+def test_w20261028_024_root_sweeper_hook_does_not_ack_0101_inbox(tmp_path, monkeypatch):
+    """W-20261028-024 (5): كنّاسٌ في الجذر بمعرّفٍ غير مطابق لا يقرّ واردَ 0101 ولا يقرؤه."""
+    import session_identity
+
+    monkeypatch.setattr(session_identity, "app_title", lambda cwd, sid="", *a, **k: (None, ["0101 · خفيفة"]))
+    inbox.send("0101", "0702", "تقرير", tmp_path)
+    raw = json.dumps({"cwd": "C:/Users/mesue/delivery_manager_work", "session_id": "wake-sweeper-unknown"})
+    assert inbox.hook(raw, tmp_path) == ""
+    assert len(inbox.pending("0101", tmp_path)) == 1
+
+
 # ===== W-20261028-033: بصمة الشيفرة ومراقبٌ واحد وreap =====
 def test_watcher_exits_with_note_when_code_fingerprint_changes(tmp_path):
     """مراقبٌ بدأ ثمّ تغيّر inbox.py على القرص: يخرج بسطر شرحٍ ويحذف نبضَه ولا يقرّ شيئاً."""

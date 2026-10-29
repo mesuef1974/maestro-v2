@@ -63,28 +63,10 @@ def _newest_first(base: Path) -> list[Path]:
 #: W-20261028-011: 3 ثوانٍ لم تكفِ (0101 عُرّفت 0104 يوم 10-28)؛ نصبر حتى 15 ثانيةً ثمّ نقول «لا أعرف» ولا نخمّن
 ID_WAIT_S = 15.0
 ID_POLL_S = 0.5
-#: عمرُ علامة المسح الذاتيّ السارية (يطابق PENDING_TTL_S في session_state)
-AUTO_CLEAR_TTL_S = 900
-
-
-def auto_clear_nums(root: Path | None = None) -> set[str]:
-    """أرقامُ الجلسات صاحبة علامة مسحٍ ذاتيّ سارية (handover_notes/auto_clear_<رقم>.json)؛ تتجاهل التالف والمنتهي."""
-    out: set[str] = set()
-    for f in ((root or ROOT) / "handover_notes").glob("auto_clear_*.json"):
-        try:
-            d = json.loads(f.read_text(encoding="utf-8"))
-            created = datetime.fromisoformat(d["created_at"])
-            if (datetime.now(created.tzinfo) - created).total_seconds() <= AUTO_CLEAR_TTL_S:
-                out.add(str(d["num"]))
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return out
-
-
 def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: float = ID_WAIT_S,
-              pending: set[str] | None = None, sleep=time.sleep) -> tuple[str | None, list[str]]:
+              sleep=time.sleep) -> tuple[str | None, list[str]]:
     """(العنوانُ الحيّ، المرشَّحون) كما في `_resolve`؛ مع معرّفِ جلسةٍ لم يُطابَق بعدُ نعيد قراءةَ الملفّات حتى `wait_s` ثانيةً
-    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook). وعند الالتباس تُختار صاحبةُ علامة المسح السارية إن كانت وحيدة."""
+    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook)."""
     waited = 0.0
     while True:
         title, candidates, by_id = _resolve(cwd, session_id, base)
@@ -92,12 +74,12 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: 
             break
         sleep(ID_POLL_S)
         waited += ID_POLL_S
-    if title is None and len(candidates) > 1:
-        marked = auto_clear_nums() if pending is None else pending
-        owners = [c for c in candidates if _num_of(c) in marked]
-        if len(owners) == 1:
-            return owners[0], []
     return title, candidates
+
+
+def _in_root(cwd: str) -> bool:
+    """جذرُ المجلّد المشترك (أو شجرةٌ داخله غير المنصّة): جلساتُه تُعرَف بالمعرّف لا بالشجرة."""
+    return bool(cwd) and ROOT_NAME in cwd.replace("\\", "/").lower() and PLATFORM not in cwd.replace("\\", "/")
 
 
 def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, list[str], bool]:
@@ -146,7 +128,7 @@ def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, 
     if len(by_tree) > 1:  # الأخصّ يغلب: شجرةٌ داخل مجلّد جلسةٍ أخرى لا تلتبس بها
         longest = max(len(t) for t in by_tree.values())
         by_tree = {k: v for k, v in by_tree.items() if len(v) == longest}
-    if len(by_tree) == 1:
+    if len(by_tree) == 1 and not (session_id and _in_root(cwd)):  # W-20261028-024: معرّفٌ غير مطابق في الجذر لا يُحسب رقماً بالشجرة
         return next(iter(by_tree)), [], False
     return None, sorted(by_tree), False
 
@@ -164,7 +146,7 @@ def ambiguous_message(where: str, candidates: list[str]) -> str:
             "وإن تعذّر فاسأل 0101 ولا تفترض.")
 
 
-def message(title: str | None, tree: str | None) -> str:
+def message(title: str | None, tree: str | None, sid: str = "") -> str:
     if title is None:
         return ("[هويّة الجلسة] لم أجد اسمَ هذه الشجرة (" + str(tree) + ") في session_names.json — "
                 "اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض أنّك مرنة 04SS.")
@@ -279,7 +261,7 @@ def main() -> int:
         if live is None:
             mark_pending(session_id, cwd)
         if live is not None:
-            print(message(live, None))
+            print(message(live, None, session_id))
         elif candidates:
             print(ambiguous_message("هذا المجلّد", candidates))
         else:
@@ -305,7 +287,7 @@ def main() -> int:
         mark_pending(session_id, cwd)
         print(ambiguous_message(f"هذه الشجرة ({tree})", candidates))
     else:
-        print(message(live or lookup(cwd, names), tree))
+        print(message(live or lookup(cwd, names), tree, session_id))
     for line in directory_lines(_num_of(live or lookup(cwd, names))):
         print(line)
     try:  # تحذيرٌ فقط (لا حجب): شجرةٌ بلا ترقية مهارة الهويّة البصريّة (#897) تعمل بنسخةٍ قديمةٍ منها
