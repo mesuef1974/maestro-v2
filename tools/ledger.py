@@ -901,6 +901,8 @@ def _merge_conflicts(repo: str) -> list[str] | None:
 def check_prepush_receipt(repo: str, git=None, conflicts=None) -> str | None:
     """قائمةُ ما قبل «جاهز» (W-20261017-014، قرار المالك 10-17): (1) إيصالُ `make prepush` الناجح لرأس الشجرة الحاليّ يكتبه prepush_check
     في مجلّد git للشجرة؛ (2) الرأسُ لا يتأخّر عن origin/main بأكثر من MAIN_LAG_MAX إيداعاً. الظلُّ أوّلاً: إنذارٌ، ورفضٌ مع PREPUSH_RECEIPT_ENFORCE=1."""
+    if (Path(repo) / "tools" / "ledger.py").is_file() and not (Path(repo) / "scripts" / "prepush_check.py").is_file():
+        return None  # مستودع الحوكمة: لا منتِج للإيصال (prepush للمنصّة)؛ بوّابته CI «tools»
     import json as _json
     g = git or (lambda *a: _git_out(repo, *a))
     problems: list[str] = []
