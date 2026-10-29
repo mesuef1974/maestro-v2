@@ -182,3 +182,29 @@ class WriteCandidatesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_write_candidates_accepts_ancestor_head_with_evidence():
+    items = {"W-20261028-030": {"state": "approved", "approved_head": "aaaaaaaa11"}}
+    prs = [{"number": 7, "state": "MERGED", "title": "W-20261028-030: x", "headRefName": "b", "headRefOid": "bbbbbbbb22"}]
+    assert lr.write_candidates(items, prs) == []  # بلا فحص أبوّة يبقى عرضاً
+    assert lr.write_candidates(items, prs, lambda pr, a: None) == []
+    assert lr.write_candidates(items, prs, lambda pr, a: False) == []
+    got = lr.write_candidates(items, prs, lambda pr, a: True)
+    assert got and got[0]["ancestor"] is True and got[0]["pr"] == 7
+
+
+def test_apply_candidates_passes_through_pushed_and_reports_failures():
+    calls = []
+
+    def fake(card, state, **kw):
+        calls.append((card, state))
+        if card == "W-2":
+            raise RuntimeError("ترفض البوّابة")
+
+    cands = [{"card": "W-1", "from": "approved", "pr": 1, "approved_head": "aaaaaaaa"},
+             {"card": "W-2", "from": "pushed", "pr": 2},
+             {"card": "W-3", "from": "pushed", "pr": 3}]
+    res = lr.apply_candidates(cands, fake)
+    assert res["written"] == ["W-1", "W-3"] and res["failed"][0]["card"] == "W-2"
+    assert calls[:2] == [("W-1", "pushed"), ("W-1", "merged")]
