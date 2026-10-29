@@ -94,3 +94,9 @@ def test_governance_repo_has_no_receipt_producer_so_no_receipt_is_required(tmp_p
     (tmp_path / "tools").mkdir()
     (tmp_path / "tools" / "ledger.py").write_text("", encoding="utf-8")
     assert ledger.check_prepush_receipt(str(tmp_path)) is None
+
+
+def test_governance_repo_needs_no_premerge_fingerprint(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "ledger.py").write_text("", encoding="utf-8")
+    assert ledger.check_premerge_fingerprint({"type": "feature"}, "ready_for_review", None, "abcd1234", None, str(tmp_path)) is None

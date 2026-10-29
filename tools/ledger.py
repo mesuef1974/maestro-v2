@@ -945,12 +945,14 @@ def check_ready_head(item: dict, state: str, head_now: str | None) -> str | None
     return "«جاهزٌ للمعاينة» بلا رأسٍ معلَن: استعمل ready_mark.py <بطاقة> --head <sha8> --by <رقمك> (أو --head-now <sha8>)"
 
 
-def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, head_now: str | None = None, waived: str | None = None) -> str | None:
+def check_premerge_fingerprint(item: dict, state: str, fingerprint: str | None, head_now: str | None = None, waived: str | None = None, repo: str | None = None) -> str | None:
     """بصمةُ `make premerge` قبل «جاهزٌ للمعاينة» (W-20261016-021، المكوّن B): `--premerge-sha <head8>:<sha16>` (أو سطر البصمة كما يطبعه الفحص).
     بلا بصمة أو برأسٍ مخالفٍ لرأس الفرع الحاليّ: إنذارٌ في الظلّ، ورفضٌ مع PREMERGE_GATE_ENFORCE=1. نوع docs مستثنىً بنوعه المعلن.
     البصمة تُدوَّن في ملاحظة الحدث؛ وباقي الانتقالات لا تتأثّر."""
     if state != "ready_for_review" or item.get("type") == "docs":
         return None
+    if repo and (Path(repo) / "tools" / "ledger.py").is_file() and not (Path(repo) / "scripts" / "prepush_check.py").is_file():
+        return None  # مستودع الحوكمة: لا make premerge له؛ بوّابته CI «tools»
     if waived and not fingerprint:  # مستودعٌ بلا make premerge (أدوات الدفتر): الاستثناءُ المسجَّل للفحص المسبق يشمله
         return f"استثناءُ بصمة premerge مع استثناء الفحص المسبق: {waived}"
     problem = None
@@ -1051,7 +1053,7 @@ def move(item_id: str, state: str, path=None, note: str | None = None, by: str |
     ready_head_problem = check_ready_head(items[item_id], state, head_now)
     if ready_head_problem:
         raise LedgerError(ready_head_problem)
-    fp_note = check_premerge_fingerprint(items[item_id], state, premerge_sha, head_now, waive_preflight)
+    fp_note = check_premerge_fingerprint(items[item_id], state, premerge_sha, head_now, waive_preflight, preflight_repo)
     if fp_note:
         print(fp_note, file=sys.stderr)
         note = f"{note + ' — ' if note else ''}{fp_note}"
