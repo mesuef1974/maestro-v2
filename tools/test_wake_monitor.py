@@ -631,3 +631,20 @@ def test_apply_dead_holders_is_idempotent_and_notes():
     assert done == ["W-1"] and calls == [("state", "W-1", {"state": "routed", "by": "0701", "held_by": "0101"})] and len(notes) == 1
     items["W-1"]["held_by"] = "0101"  # بعد التطبيق: لا إعادةَ ثانية
     assert wm.apply_dead_holders(dead, "0701", items, append=lambda *a: calls.append(a), note=lambda *a: notes.append(a)) == []
+
+
+# ===== طلبُ المسح: العلامةُ المعلّقة والمسحُ الذاتيّ كلاهما يوقظان (W-20261028-027) =====
+def test_w20261028_027_auto_clear_alone_wakes_idle_session(tmp_path):
+    """W-20261028-027 (R-B): مسحٌ ذاتيٌّ بلا علامةٍ معلّقة يجب أن يوقظ الجلسةَ الخاملة بنصّ «بعد المسح الذاتي»."""
+    import json
+
+    import session_state as ss
+
+    now = datetime(2026, 10, 28, 14, 30, tzinfo=timezone(timedelta(hours=3)))
+    path = ss.auto_clear_path("0201", tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"num": "0201", "created_at": now.isoformat()}), encoding="utf-8")
+    cleared, auto = wm.clear_requests(tmp_path, now)
+    assert set(cleared) == {"0201"} and auto == {"0201"}
+    p = wm.stale_plan([], DIR, set(), now, verify=ok, cleared=cleared, auto=auto)
+    assert p.wakes == {"0201": [(wm.CLEAR_ID, wm.AUTO_CLEAR_STATE)]}
