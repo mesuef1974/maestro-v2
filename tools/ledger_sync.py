@@ -203,7 +203,10 @@ def apply_rows(rows: list[dict], prod: str | None, move=None) -> list[str]:
                 else ""
             )
         )
-        why = why if len(why) <= ledger.FIELD_MAX else why[: ledger.FIELD_MAX - 1] + "…"
+        # حدُّ الدفتر للحقل 240، ويُضاف لـwaive_remote_check نصٌّ بادئ (~25 حرفاً): اختصارٌ لا فشل (W-20261029-001)
+        why_max = ledger.FIELD_MAX - 40
+        if len(why) > why_max:
+            why = why[: why_max - 1] + "…"
         try:
             for step in steps(r):
                 kw = {"waive_remote_check": why} if step == "pushed" else {}
