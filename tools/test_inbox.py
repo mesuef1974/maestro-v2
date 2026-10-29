@@ -9,6 +9,11 @@ import pytest
 import inbox
 
 
+@pytest.fixture(autouse=True)
+def _receiver_known(monkeypatch):
+    monkeypatch.setattr(inbox, "receiver_known", lambda num: True)  # الدليلُ الحقيقيّ يُختبر في اختبارات receiver_known وحدَها
+
+
 def test_send_read_acks_and_is_idempotent(tmp_path):
     a = inbox.send("0301", "0101", "مهمّة أولى", tmp_path)
     b = inbox.send("0301", "0101", "مهمّة ثانية", tmp_path)
@@ -246,3 +251,22 @@ def test_send_to_a_merged_number_lands_in_its_receivers_inbox(tmp_path, monkeypa
     inbox.send("0420", "0101", "x", root=tmp_path)
     assert len(inbox.pending("0409", root=tmp_path)) == 1
     assert inbox.pending("0420", root=tmp_path) == []
+
+
+def test_receiver_known_checks_directory(monkeypatch):
+    import session_directory
+
+    monkeypatch.undo()
+    monkeypatch.setattr(session_directory, "entries", lambda: {"0301": {"id": "x"}})
+    assert inbox.receiver_known("0301") and inbox.receiver_known("0000")
+    assert not inbox.receiver_known("0999")
+    monkeypatch.setattr(session_directory, "entries", lambda: {})
+    assert inbox.receiver_known("0999")  # دليلٌ خالٍ: يفتح ولا يغلق
+
+
+def test_cli_send_rejects_unknown_receiver_unless_forced(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(inbox, "main_root", lambda root=None: tmp_path)
+    monkeypatch.setattr(inbox, "receiver_known", lambda num: False)
+    assert inbox.main(["send", "--to", "0999", "--from", "0101", "--text", "س"]) == 4
+    assert inbox.pending("0999", tmp_path) == []
+    assert inbox.main(["send", "--to", "0999", "--from", "0101", "--text", "س", "--force"]) == 0

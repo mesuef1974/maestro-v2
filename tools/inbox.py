@@ -210,6 +210,23 @@ def send(to: str, frm: str, text: str, root: Path | None = None, ts: str | None 
     return n
 
 
+SYSTEM_RECEIVERS = {"0000"}  # المضخّة/النظام: لا جلسةَ لها في الدليل ولها مراقبٌ خاصّ
+
+
+def receiver_known(num: str) -> bool:
+    """هل لرقم المستقبِل (بعد الإحالة إلى خليفته) جلسةٌ حيّة في الدليل؟ عطلُ الدليل أو خلوُّه لا يمنع الإرسال (يفتح ولا يغلق)."""
+    num = _successor(num)
+    if num in SYSTEM_RECEIVERS:
+        return True
+    try:
+        import session_directory  # noqa: PLC0415
+
+        known = session_directory.entries()
+    except Exception:  # noqa: BLE001
+        return True
+    return not known or num in known
+
+
 def _successor(num: str) -> str:
     """رقمٌ قديمٌ أو مدمَجٌ (0420 ← 0409، 0502 ← 0501…) يُكتب إلى صندوق مستقبِلته الحيّة: صندوقٌ بلا جلسةٍ لا يقرؤه أحد (10-29)."""
     try:
@@ -296,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("send")
     s.add_argument("--to", required=True)
     s.add_argument("--from", dest="frm", required=True)
+    s.add_argument("--force", action="store_true", help="يرسل لرقمٍ بلا جلسةٍ حيّة في الدليل (يُقبل صامتاً بلا قارئ)")
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--text")
     g.add_argument("--file")
@@ -313,6 +331,9 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     if a.cmd == "send":
         text = a.text if a.text is not None else Path(a.file).read_text(encoding="utf-8")
+        if not a.force and not receiver_known(a.to):
+            print(f"رُفض: لا جلسةَ حيّةً للرقم {a.to} في الدليل فلن يقرأ أحدٌ صندوقه. تحقّق من الرقم (session_directory.py) أو أعد الإرسال بـ--force.", file=sys.stderr)
+            return 4
         try:
             print(f"أُلحقت #{send(a.to, a.frm, text)} بصندوق {a.to}")
             if not watcher_alive(a.to):
