@@ -155,3 +155,12 @@ def test_fetch_prs_parses_gh_json():
     assert got == {
         "abcdef12": {"number": 9, "merge": "f00", "at": "2026-10-19T01:00:00Z"}
     }
+
+
+def test_the_auto_note_never_exceeds_the_ledger_field_limit():
+    """ملاحظةٌ تتجاوز 240 حرفاً ترفضها الدفتر فتبقى البطاقة pushed ولا تُنقل إلى merged (واقعة 10-29)."""
+    calls = []
+    rows = ls.plan({"W-1": st("pushed")}, {MV2: {"aaaaaaaa": pr()}}, None)
+    rows[0]["at"] = "2026-10-19T10:00:00Z" + "x" * 400
+    ls.apply_rows(rows, None, move=lambda cid, step, **kw: calls.append((step, kw)))
+    assert all(len(v) <= 240 for _, kw in calls for v in kw.values() if isinstance(v, str))
