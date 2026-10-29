@@ -54,17 +54,17 @@ def test_cards_on_disk_equal_a_fresh_generator_run(tmp_path, monkeypatch):
 
 def test_round2_texts_live_in_the_source():
     """نصوصٌ كانت يدويّةً أو أُمر بها في الجولة 2 تُولَّد من المصدر."""
-    text = {n: (CARDS / n).read_text(encoding="utf-8") for n in ("details/0301.md", "details/0601.md", "details/0701.md", "COMMON.md", "INDEX.md")}
+    text = {n: (CARDS / n).read_text(encoding="utf-8") for n in ("details/0301.md", "details/0601.md", "details/0701.md", "COMMON.md", "INDEX.md", "PROCEDURES.md", "ROLES.md")}
     text.update({k[8:]: v for k, v in list(text.items()) if k.startswith("details/")})
     assert "## ختم مصدر الحقيقة (W-20261020-003، ظلّ)" in text["0301.md"]
-    assert "بعد 14:30 وبعد 19:00 (D-429م)" in text["0601.md"] and "(D-429م)" in text["INDEX.md"]
-    assert "## إذا توقّف إرسالُك بين الجلسات (قرارُ المالك 2026-10-18)" in text["COMMON.md"]
-    assert "## جدولُ السلطة — المرجعُ الوحيد (D-490م" in text["COMMON.md"] and "## المسح الذاتيّ عند 180 ألف توكن (W-20261025-015" in text["COMMON.md"]  # 019 نقل قسم اعتماد الرأس إلى الجدول؛ و015 أضاف المسح
+    assert "بعد 14:30 وبعد 19:00 (D-429م)" in text["0601.md"] and "(D-429م)" in text["ROLES.md"]
+    assert "## إذا توقّف إرسالُك بين الجلسات (قرارُ المالك 2026-10-18)" in text["PROCEDURES.md"]
+    assert "## جدولُ السلطة — المرجعُ الوحيد (D-490م" in text["COMMON.md"] and "## الضغطُ التلقائيّ بدل المسح الذاتيّ (W-20261029-002" in text["PROCEDURES.md"]  # 019 نقل قسم اعتماد الرأس إلى الجدول؛ و015 أضاف المسح
     assert "0702 (معاونُها، جلسةٌ مستقلّة)" in (CARDS / "details" / "0701.md").read_text(encoding="utf-8") and "مدمَجان فيها (D-485م)" not in text["0701.md"]
     assert (CARDS / "0702.md").exists()  # 0702 جلسةٌ مستقلّةٌ بأمر المالك 2026-10-24 (W-20261024-012) بعد دمجها في 0701 (D-485م)
     assert "«القراءة لـ0701»" in text["0701.md"] and "brainstorm_log.py due" in text["0701.md"]
     assert "ولا تقيّم أثرَ عصفٍ كتبته" in text["0301.md"]
-    assert "حدُّ الرسائل لكلّ جلسة: 600 رسالة" in text["COMMON.md"] and "حدُّ الرسائل 600" in r.COMMON_DIGEST and "150 لكلّ جلسة" not in r.COMMON_DIGEST + r.GOVERNING
+    assert "حدُّ الرسائل لكلّ جلسة: 600 رسالة" in text["PROCEDURES.md"] and "حدُّ الرسائل 600" in r.COMMON_DIGEST and "150 لكلّ جلسة" not in r.COMMON_DIGEST + r.GOVERNING
 
 
 def test_gate_and_advisor_charters_split_out_of_0101_into_0106_and_0107():
@@ -79,3 +79,19 @@ def test_gate_and_advisor_charters_split_out_of_0101_into_0106_and_0107():
     advisor = (CARDS / "details" / "0107.md").read_text(encoding="utf-8")
     assert "البلاغات" in gate and "تسليمُ رأسه إلى 0107" in gate
     assert "بوّابةَ المواصفة الكاملة" in advisor and "الفاصل مع 0301 الحوكمة" in advisor
+
+
+def test_lazy_loading_split_is_small_lossless_and_indexed():
+    """W-20261027-012: COMMON.md نواةٌ ≤6 KB (جدولُ السلطة + فهرس)، وPROCEDURES.md فيه كلُّ باقي الأقسام حرفياً، وINDEX.md دليلٌ ≤2 KB."""
+    core = (CARDS / "COMMON.md").read_text(encoding="utf-8")
+    proc = (CARDS / "PROCEDURES.md").read_text(encoding="utf-8")
+    index = (CARDS / "INDEX.md").read_text(encoding="utf-8")
+    assert len(core.encode()) <= r.CORE_MAX_BYTES and len(index.encode()) <= r.INDEX_MAX_BYTES
+    full = r.COMMON + chr(10) + r.common_tools(__import__("json").loads((Path(r.__file__).resolve().parent.parent / "projects" / "schoolos" / "tabs.json").read_text(encoding="utf-8"))) + r.COMMON_EXTRA
+    heads = [x.splitlines()[0] for x in __import__("re").split(r"(?m)^(?=## )", full) if x.startswith("## ")]
+    assert heads and all(h in core + proc for h in heads)  # لا قسمَ يسقط
+    for h in heads:
+        if not h.startswith(r.CORE_HEADS):
+            assert h in proc and h.lstrip("# ").strip() in core  # القسمُ في الإجراءات وعنوانُه في فهرس النواة
+    assert "PROCEDURES.md" in core and "ROLES.md" in index
+    assert (CARDS / "ROLES.md").read_text(encoding="utf-8").count("| `role_cards/") >= 10  # الخريطة الكاملة انتقلت لا سقطت

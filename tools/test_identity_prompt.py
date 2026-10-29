@@ -30,7 +30,7 @@ def test_two_sessions_same_folder_late_cli_id_gets_correct_identity_once(tmp_pat
     si.mark_pending("new-1", ROOT_CWD, tmp_path)
     assert (tmp_path / "handover_notes").is_dir()
 
-    resolver = lambda cwd, sid: si.app_title(cwd, sid, sessions, wait_s=0, pending=set())  # noqa: E731
+    resolver = lambda cwd, sid: si.app_title(cwd, sid, sessions, wait_s=0)  # noqa: E731
     assert si.prompt_identity(_hook("new-1"), tmp_path, resolver) == []  # ما زال ملتبساً: تبقى العلامة، لا حقن
     _session(sessions, "1", "local_1", "0101 · خفيفة", cli="new-1")  # كُتب cliSessionId بعد الخطّاف
     lines = si.prompt_identity(_hook("new-1"), tmp_path, resolver)

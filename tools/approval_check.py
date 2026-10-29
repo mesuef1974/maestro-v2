@@ -48,6 +48,16 @@ HEAD_IN_LINE = re.compile(r"(?:الرأس|@)\s*([0-9a-f]{7,40})")
 COLUMN_HEAD_FROM = date(2026, 11, 1)
 
 
+MIN_HEAD_LEN = 7  # أقصر بادئةٍ تُقبل في مطابقة الرأس (git يختصر إلى 7 افتراضياً؛ W-20261029-007)
+
+
+def heads_match(a: str, b: str) -> bool:
+    """رأسان متطابقان إن تطابقت بادئتاهما المشتركة وكانت 7 خانات فأكثر؛ فاعتمادٌ بـ782d679 يطابق الرأس 782d679f."""
+    a, b = a.lower(), b.lower()
+    n = min(len(a), len(b), 8)
+    return n >= MIN_HEAD_LEN and a[:n] == b[:n]
+
+
 def head_status(approved: str | None, pr_head: str | None, today: date | None = None) -> str:
     """ok: متطابقان أو لا رأسَ للمقارنة؛ stale: اختلفا؛ legacy: اعتمادٌ بلا رأس؛ expired: بلا رأسٍ وبعد المهلة.
 
@@ -55,7 +65,7 @@ def head_status(approved: str | None, pr_head: str | None, today: date | None = 
     today = today or date.today()
     if not approved:
         return "legacy" if today <= LEGACY_DEADLINE else "expired"
-    if pr_head and approved[:8] != pr_head[:8]:
+    if pr_head and not heads_match(approved, pr_head):
         return "stale"
     return "ok"
 

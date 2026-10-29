@@ -1161,6 +1161,14 @@ class CiLimitPush(PushPass):
                                           ready=lambda cid, tree: cid == "W-2")
         self.assertEqual((sorted(keep), lines), (["W-1", "W-2"], []))
 
+    def test_the_18_32_incident_two_refused_cards_before_a_ready_one_push_it(self):
+        """(10-28 18:32، W-20261028-029) بطاقتان بلا إيصال أو بلا approval_check قبل سليمة لا تحجزان خانة؛ السليمةُ تُدفع."""
+        items = {"W-1": {"approved_head": "aaaaaaaa"}, "W-2": {"approved_head": "aaaaaaaa"}, "W-3": {"approved_head": "aaaaaaaa"}}
+        with mock.patch("push_watch.find_tree", return_value=({"path": "C:/repo/wt1", "branch": "w1"}, "")):
+            keep, lines = fp.defer_for_ci(items, ["C:/repo"], lambda *a: (0, "git@github.com:x/shschool_mvp.git"), lambda: 1,
+                                          ready=lambda cid, tree: cid == "W-3")
+        self.assertEqual((sorted(keep), lines), (["W-1", "W-2", "W-3"], []))
+
     def test_the_default_readiness_is_the_push_guard_itself(self):
         (self.gitdir / fp.ledger.RECEIPT_NAME).write_text(json.dumps({"head": "aaaaaaaa", "ok": True}), encoding="utf-8")
         states = fp.ledger.reduce_state(fp.ledger.load_events(self.path))
@@ -1637,3 +1645,37 @@ class HandOff(unittest.TestCase):
         self.assertFalse((self.path / "ledger" / "pending_wakes.jsonl").exists())
         fp.hand_off("W-1", "migrations", self.item, True, self.path, t0 + timedelta(hours=7))
         self.assertEqual(len(self._rows("0601")), 2)
+
+
+class DisarmPass(unittest.TestCase):
+    """W-20261028-032 (واقعة #1285): الدمجُ الآليّ يتحقّق من الرأس عند التفعيل فقط؛ رأسٌ تغيّر بعده بلا اعتمادٍ يُعطَّل التفعيلُ."""
+
+    NEW = "99999999" + "0" * 32
+
+    def run_pass(self, pr, ok=False, apply=True):
+        sh = FakeSh()
+        with (
+            mock.patch.object(fp, "approval_ok", return_value=ok),
+            mock.patch.object(fp.ledger, "add_note") as note,
+            mock.patch("inbox.send") as send,
+        ):
+            lines = fp.disarm_pass(_states(), [pr], apply, sh)
+        return lines, sh, note, send
+
+    def test_armed_pr_with_unapproved_new_head_is_disarmed_and_reported(self):
+        lines, sh, note, send = self.run_pass(_pr(head=self.NEW, autoMergeRequest={"mergeMethod": "SQUASH"}))
+        self.assertIn(["gh", "pr", "merge", "7", "--disable-auto"], sh.calls)
+        note.assert_called_once()
+        self.assertEqual(send.call_args[0][0], "0601")
+        self.assertIn("#7", lines[0])
+
+    def test_approved_head_or_unarmed_pr_is_left_alone(self):
+        for pr, ok in ((_pr(head=self.NEW, autoMergeRequest={"mergeMethod": "SQUASH"}), True), (_pr(head=self.NEW), False)):
+            lines, sh, note, send = self.run_pass(pr, ok=ok)
+            self.assertEqual((lines, sh.calls), ([], []))
+            note.assert_not_called()
+
+    def test_dry_run_disarms_nothing(self):
+        lines, sh, note, send = self.run_pass(_pr(head=self.NEW, autoMergeRequest={"mergeMethod": "SQUASH"}), apply=False)
+        self.assertEqual(sh.calls, [])
+        self.assertIn("(عرض)", lines[0])

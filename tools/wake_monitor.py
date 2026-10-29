@@ -65,10 +65,10 @@ REPEAT_HOURS = 24  # بطاقةٌ لم تتغيّر بصمتُها (id، الح�
 MAX_SESSIONS_PER_RUN = 5  # لا انفجارَ رسائل: أقدمُ خمسِ جلساتٍ في الدورة والباقي في الساعة التالية
 STALE_PER_MSG = 5  # أقدمُ خمس بطاقاتٍ لكلّ رسالة
 PAYLOAD = "{id} {state} — اقرأ: python tools/ledger.py show {id}"
-CLEAR_ID = "after_clear"  # معرّفٌ خاصٌّ لإيقاظ ما بعد المسح: لا بطاقةَ له
-CLEAR_MSG = "بعد المسح — اقرأ بطاقتك role_cards/{num}.md ثمّ شغّل: python tools/my_state.py {num}"
-AUTO_CLEAR_STATE = "auto_clear"  # الطلبُ صادرٌ عن خطّاف Stop عند 180 ألفاً لا عن مسحٍ جرى (W-20261025-015)
-AUTO_CLEAR_MSG = "سياقك بلغ 180 ألفاً — نفّذ المسح الذاتيّ كما في role_cards/COMMON.md ثمّ اقرأ بطاقتك role_cards/{num}.md وشغّل: python tools/my_state.py {num}"
+ALARM_HOURS = 24  # إنذارُ تخطّي جلسةٍ أساسيّةٍ بلا معرّف لا يتكرّر لنفس الرقم قبل هذه المدّة (W-20261028-009)
+ALARM_TO = "0101"
+ALARM_MSG = "إنذار الإيقاظ: الجلسة الأساسيّة {num} تُتخطّى بلا معرّف ({times} مرّة في الدورة الأخيرة) فلا تُوقَظ؛ تحقّق من session_directory.py {num} (W-20261028-009)"
+NO_ID = re.compile(r"^لا معرّفَ للجلسة (\d{4})$")
 INBOX_ID = "inbox_bell"  # جرسُ الوارد للخاملة: رسالةٌ واحدةٌ لكلّ جلسة، والمحتوى في ledger/inbox لا في الرسالة (W-20261026-015)
 INBOX_MERGED_MSG = "وصل واردٌ في صندوق {src} المدمَج في رقمك {num} — شغّل (اكتب وصفَ أداة Bash بالعربيّة): python tools/inbox.py read {src}"
 INBOX_MSG = "وصلك واردٌ في صندوقك — شغّل (اكتب وصفَ أداة Bash بالعربيّة): python tools/inbox.py read {num}"
@@ -82,6 +82,7 @@ class WakePlan:
         self.halted: str = ""
         self.cursor: str = ""
         self.dead: list[tuple[str, str, str, str]] = []  # (بطاقة، حالة، حاملٌ ميّت، مالكُ المرحلة الجديد) — W-20261028-010
+        self.alarms: list[str] = []  # جلساتٌ أساسيّةٌ تخطّاها الإيقاظُ بلا معرّف: إنذارٌ واحدٌ لـ0101 كلَّ 24 ساعة (W-20261028-009)
         self.deferred = False  # أُجّل بعضُها: لا يتقدّم المؤشّر فيعاد في الدورة التالية (والمُوقَظ منها لا يتكرّر بـ already)
 
 
@@ -100,10 +101,6 @@ def read_events(path: Path) -> list[dict]:
 
 
 def payload(item_id: str, state: str, num: str = "") -> str:
-    if item_id == CLEAR_ID:
-        if not SESSION_NUM.match(num):
-            raise ValueError("إيقاظُ ما بعد المسح بلا رقم جلسة")
-        return (AUTO_CLEAR_MSG if state == AUTO_CLEAR_STATE else CLEAR_MSG).format(num=num)
     if item_id == INBOX_ID:
         if not SESSION_NUM.match(num):
             raise ValueError("جرسُ الوارد بلا رقم جلسة")
@@ -145,8 +142,8 @@ def sender_count(sender: str, path: Path = COUNTER) -> int:
 def cap_live(p: "WakePlan", live) -> None:
     """سقفُ التزامن MAX_LIVE: الموقَظةُ الحيّةُ أصلاً لا تزيد العدّ؛ الجديدةُ تُقبل بقدر ما بقي من السقف بترتيب الخطّة، والباقي يُؤجَّل
     (p.deferred فلا يتقدّم المؤشّر فيعاد في الدورة التالية). إن امتلأ السقفُ فلا إيقاظ وتُسجَّل halted."""
-    # رسالتا المسح وما بعده (CLEAR_ID) خارج السقف (W-20261025-025): جلسةٌ ممسوحةٌ خاملةٌ لا يوقظها غيرُ هذه الرسالة فيبقى تأجيلُها تعطيلاً لها
-    fresh = [h for h in p.wakes if h not in live and not any(i in (CLEAR_ID, INBOX_ID) for i, _ in p.wakes[h])]
+    # جرسُ الوارد (INBOX_ID) خارج السقف: جلسةٌ خاملةٌ لا يوقظها غيرُه فيبقى تأجيلُه تعطيلاً لها
+    fresh = [h for h in p.wakes if h not in live and not any(i == INBOX_ID for i, _ in p.wakes[h])]
     room = max(0, MAX_LIVE - len(set(live)))
     if len(fresh) <= room:
         return
@@ -306,9 +303,10 @@ def apply_dead_holders(dead, by: str, items: dict, append=None, note=None) -> li
     return done
 
 
-def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, cleared=(), auto=frozenset(), pending=(), inbox=()) -> WakePlan:
+def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, channel=None, sent=0, aliases=None, pending=(), inbox=(), core=frozenset()) -> WakePlan:
     """يوقظ مسؤولَ كلّ بطاقةٍ بقيت في حالةٍ منتظِرةٍ فوق حدّها، مرّةً في الساعة لكلّ جلسة، بسقفٍ يوميّ.
     aliases كما في plan: الحاملُ المدمَج يُحلّ إلى مستقبِلته قبل القناة والدليل.
+    core: أرقامُ الجلسات الأساسيّة؛ تخطّي واحدةٍ منها بلا معرّف يُسجَّل في p.alarms مرّةً كلَّ ALARM_HOURS (من log).
     دالّةٌ نقيّةٌ إلّا ما يفعله verify. الحالةُ هي المُطلِق لا الحدث."""
     p = WakePlan()
     p.cursor = ""
@@ -373,18 +371,6 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
                 p.wakes.setdefault(num, []).append((item_id, st))
             else:
                 p.skipped.append((item_id, "فشل ground_truth: لا إرسال"))
-    for num in sorted(set(cleared)):  # جلسةٌ عليها علامةُ «مسح معلّق» ورُصدت خاملةً: تُوقَظ لتقرأ بطاقتها (W-20261025-001)
-        if num in live:
-            p.skipped.append((num, "علامةُ مسحٍ لجلسةٍ حيّةٍ تعمل: لا إيقاظ"))
-        elif channel is not None and num not in channel:
-            p.skipped.append((num, "خارج القناة"))
-        elif num not in directory:
-            p.skipped.append((num, f"لا معرّفَ للجلسة {num}"))
-        elif num in last_wake and now - last_wake[num] < timedelta(minutes=REWAKE_MIN):
-            p.skipped.append((num, f"أُوقظت قبل أقلّ من {REWAKE_MIN} دقيقة"))
-        else:
-            p.wakes.setdefault(num, []).append((CLEAR_ID, AUTO_CLEAR_STATE if num in auto else "pending_clear"))
-            since[CLEAR_ID + num] = now
     merged_map = {k: v for k, v in (aliases or {}).items() if k in set(inbox)}
     for src, num in sorted(merged_map.items()):  # صندوقُ رقمٍ مدمَجٍ حقّاً: جرسٌ لمستقبِلته بصيغة «المدمَج في رقمك»؛ لا حلَّ صامتاً بالاسم المستعار (W-20261028-010)
         row = (INBOX_ID, f"merged:{src}")
@@ -411,8 +397,14 @@ def stale_plan(events, directory, live, now, log=(), verify=ground_truth_ok, cha
         else:
             p.wakes.setdefault(num, []).append((INBOX_ID, "inbox"))
             since[INBOX_ID + num] = now
-    # رسائل المسح وما بعده (CLEAR_ID) وجرسُ الوارد (INBOX_ID، W-20261026-015) خارج قطع الخمس كما هي خارج cap_live: تأجيلُها دورةً قد يُنهي صلاحيةَ علامة المسح المعلّق (W-20261025-028)
-    ordinary = [n for n in p.wakes if not any(i in (CLEAR_ID, INBOX_ID) for i, _ in p.wakes[n])]
+    recent_alarm = {n for row in log for n in (row.get("alarms") or [])
+                    if now - _dt(row["ts"]) < timedelta(hours=ALARM_HOURS)}
+    for key, why in p.skipped:
+        m = NO_ID.match(why)
+        if m and m.group(1) in core and m.group(1) not in directory and m.group(1) not in recent_alarm and m.group(1) not in p.alarms:
+            p.alarms.append(m.group(1))
+    # جرسُ الوارد (INBOX_ID، W-20261026-015) خارج قطع الخمس كما هي خارج cap_live: تأجيلُها دورةً قد يُنهي صلاحيةَ علامة المسح المعلّق (W-20261025-028)
+    ordinary = [n for n in p.wakes if not any(i == INBOX_ID for i, _ in p.wakes[n])]
     if len(ordinary) > MAX_SESSIONS_PER_RUN:
         oldest = sorted(ordinary, key=lambda n: min(since[i] for i, _ in p.wakes[n]))[:MAX_SESSIONS_PER_RUN]
         for num in [n for n in ordinary if n not in oldest]:
@@ -492,6 +484,24 @@ def read_pr_state(path: str | None) -> str:
         return ""
 
 
+def core_nums(tabs: dict | None = None) -> frozenset[str]:
+    """أرقامُ الجلسات الأساسيّة (أوّل أربع خانات من عناوين core_sessions)؛ ملفٌّ مفقودٌ يُرجع فارغاً."""
+    try:
+        tabs = sa._load(tabs)
+    except (OSError, ValueError):
+        return frozenset()
+    return frozenset(s[:4] for s in tabs.get("session_policy", {}).get("core_sessions", []) if SESSION_NUM.match(s))
+
+
+def send_alarms(p: WakePlan, run=None) -> None:
+    """إنذارٌ واحدٌ لـ0101 لكلّ جلسةٍ أساسيّةٍ مُتخطّاة بلا معرّف (يُسجَّل في wake_log فلا يتكرّر قبل ALARM_HOURS)."""
+    run = run or subprocess.run
+    for num in p.alarms:
+        times = sum(1 for _, why in p.skipped if why == f"لا معرّفَ للجلسة {num}")
+        run([sys.executable, str(HERE / "inbox.py"), "send", "--to", ALARM_TO, "--from", "0000",  # noqa: S603
+             "--text", ALARM_MSG.format(num=num, times=times)], check=False)
+
+
 def live_sessions() -> set[str]:
     import session_directory as sd
 
@@ -505,12 +515,6 @@ def running_from_arg(text: str | None) -> set[str] | None:
     if not text:
         return None
     return {t for t in re.split(r"[,\s]+", text.strip()) if SESSION_NUM.match(t) and len(t) == 4}
-
-
-def live_minus_cleared(live: set[str], cleared, running: set[str] | None) -> set[str]:
-    """جلسةٌ عليها علامةُ مسحٍ معلَّقةٍ لم تُستهلك لا تُعدّ حيّةً بنافذة النشاط: المسحُ نفسُه يجدّد ختمَ نشاطها فتبدو عاملةً وهي خاملة
-    (تجربة 0101 على 0301: تُخطّيَت «حيّةً تعمل»). أمّا إن قُدِّم `--running` الفعليُّ فيُحكَم به وحدَه."""
-    return set(live) if running is not None else set(live) - set(cleared)
 
 
 def live_for(a) -> set[str]:
@@ -553,19 +557,13 @@ def make_plan(a, events, cursor, directory) -> WakePlan:
     aliases = sa.number_map()
     if a.stale:
         now = datetime.now().astimezone()
-        import session_state
-
-        cleared = session_state.pending_markers(ROOT, now)
-        auto = session_state.auto_clear_nums(ROOT, now)
         import inbox
 
         if getattr(a, "commit", False) or getattr(a, "watch", False):  # العرضُ الجافّ لا يرسل شيئاً
             run_periodic(now)
         waiting_inbox = inbox.pending_nums(ROOT)
-        if getattr(a, "bells_only", False):  # جرسُ الوارد وحدَه: لا علاماتِ مسحٍ ولا بطاقات
-            cleared, auto = {}, frozenset()
-        return stale_plan([] if getattr(a, "bells_only", False) else events, directory, live_minus_cleared(live_for(a), cleared, running_from_arg(getattr(a, "running", None))), now,
-                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, cleared=cleared, auto=auto, pending=() if getattr(a, "bells_only", False) else pending_wakes(now), inbox=waiting_inbox)
+        return stale_plan([] if getattr(a, "bells_only", False) else events, directory, live_for(a), now,
+                          log=read_log(), channel=channel, sent=sender_count(a.sender), aliases=aliases, pending=() if getattr(a, "bells_only", False) else pending_wakes(now), inbox=waiting_inbox, core=core_nums())
     hist = woken_history()
     return plan(events, cursor, directory, live_for(a), channel=channel, sent=sender_count(a.sender), already=hist[0], recent=hist[1],
                 aliases=aliases)
@@ -656,7 +654,8 @@ def main(argv=None) -> int:
             fh.write(json.dumps(
                 {"ts": ledger.now_doha(), "wakes": {k: [i for i, _ in v] for k, v in p.wakes.items()},
                  "pairs": [[i, st] for v in p.wakes.values() for i, st in v],
-                 "fps": [[i, st, n] for n, v in p.wakes.items() for i, st in v], "skipped": p.skipped, "halted": p.halted}, ensure_ascii=False) + "\n")
+                 "fps": [[i, st, n] for n, v in p.wakes.items() for i, st in v], "skipped": p.skipped, "halted": p.halted, "alarms": p.alarms}, ensure_ascii=False) + "\n")
+        send_alarms(p)
         if p.wakes:
             subprocess.run([sys.executable, str(HERE / "msg_counter.py"), "add", a.sender, str(len(p.wakes))], check=False)  # noqa: S603
         if not p.halted and not p.deferred and not a.stale:

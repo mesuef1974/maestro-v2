@@ -248,3 +248,16 @@ class TestHeadFromTargetColumn:
         monkeypatch.setattr(ac, "COLUMN_HEAD_FROM", date(2000, 1, 1))
         assert ac._confirmation_rows("W-20261025-097", "22222222", False, f)[0][1] == "ok"
         assert ac._confirmation_rows("W-20261025-097", "11111111", False, f)[0][1] == "stale"
+
+
+def test_seven_char_approval_matches_eight_char_head():
+    """W-20261029-007: اعتمادٌ مسجَّل بسبع خانات يطابق الرأس بثمانٍ."""
+    assert ac.head_status("782d679", "782d679f") == "ok"
+    assert ac.head_status("782d679f", "782d679") == "ok"
+    assert ac.head_status("782d679", "782d679fabcdef") == "ok"
+
+
+def test_short_or_different_prefix_is_still_stale():
+    assert ac.head_status("782d67", "782d679f") == "stale"  # أقصر من 7
+    assert ac.head_status("782d679", "782d680f") == "stale"
+    assert ac.head_status("782d6791", "782d679f") == "stale"  # ثماني خانات مختلفة

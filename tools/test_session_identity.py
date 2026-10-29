@@ -36,7 +36,7 @@ def test_handoff_rule_text_covers_three_states(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["session_identity.py", "--cwd", r"D:\shschool_mvp\.claude\worktrees\amazing-x-1"])
     si.main()
     injected = capsys.readouterr().out
-    assert "COMMON.md" in injected and "delivered" not in injected  # W-20261027-002: النصُّ الكامل صار في COMMON.md والحقنُ سطرُ إحالة
+    assert "PROCEDURES.md" in injected and "delivered" not in injected  # W-20261027-002: النصُّ الكامل صار في COMMON.md والحقنُ سطرُ إحالة
     import render_role_cards
 
     msg = render_role_cards.COMMON_EXTRA
@@ -152,7 +152,7 @@ def test_late_cli_session_id_is_found_by_rereading_within_wait(tmp_path):
         sleeps.append(s)
         _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE, cli="new-1")  # يصل المعرّف الجديد أثناء الانتظار
 
-    assert si.app_title(TREE, "new-1", tmp_path, wait_s=3.0, pending=set(), sleep=sleep) == ("0101 · خفيفة", [])
+    assert si.app_title(TREE, "new-1", tmp_path, wait_s=3.0, sleep=sleep) == ("0101 · خفيفة", [])
     assert len(sleeps) == 1
 
 
@@ -168,7 +168,7 @@ def test_default_wait_is_15_seconds_and_finds_id_written_after_14(tmp_path):
         if clock["t"] >= 14.0:
             _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE, cli="new-1")
 
-    assert si.app_title(TREE, "new-1", tmp_path, pending=set(), sleep=sleep) == ("0101 · خفيفة", [])
+    assert si.app_title(TREE, "new-1", tmp_path, sleep=sleep) == ("0101 · خفيفة", [])
 
 
 def test_ambiguity_never_guesses_by_last_focus(tmp_path):
@@ -178,7 +178,7 @@ def test_ambiguity_never_guesses_by_last_focus(tmp_path):
         d.mkdir(parents=True, exist_ok=True)
         (d / f"local_{n}.json").write_text(json.dumps({"sessionId": f"local_{n}", "cliSessionId": f"cli-{n}", "title": title,
                                                      "worktreePath": TREE, "lastFocusedAt": focus}), encoding="utf-8")
-    assert si.app_title(TREE, "unknown", tmp_path, wait_s=0, pending=set()) == (None, ["0101 · خفيفة", "0104 · عاملة"])
+    assert si.app_title(TREE, "unknown", tmp_path, wait_s=0) == (None, ["0101 · خفيفة", "0104 · عاملة"])
 
 
 def test_ambiguous_message_asks_for_get_session_self_before_any_write():
@@ -190,29 +190,12 @@ def test_ambiguous_message_asks_for_get_session_self_before_any_write():
 def test_unmatched_id_falls_back_after_wait_and_stops_polling(tmp_path):
     _session(tmp_path, "1", "local_1", "0105 · وحيدة", TREE)
     sleeps = []
-    assert si.app_title(TREE, "never", tmp_path, wait_s=1.0, pending=set(), sleep=sleeps.append) == ("0105 · وحيدة", [])
+    assert si.app_title(TREE, "never", tmp_path, wait_s=1.0, sleep=sleeps.append) == ("0105 · وحيدة", [])
     assert len(sleeps) == 2
 
 
-def test_ambiguity_picks_the_session_with_live_auto_clear_marker(tmp_path):
-    """التباس 0101/0104 بعلامة مسحٍ ذاتيّ سارية لـ0101 يطبع هويّة 0101."""
-    _session(tmp_path, "1", "local_1", "0101 · خفيفة", TREE)
-    _session(tmp_path, "2", "local_2", "0104 · عاملة", TREE)
-    assert si.app_title(TREE, "", tmp_path, pending={"0101"}) == ("0101 · خفيفة", [])
-    assert si.app_title(TREE, "", tmp_path, pending={"0101", "0104"}) == (None, ["0101 · خفيفة", "0104 · عاملة"])
-    assert si.app_title(TREE, "", tmp_path, pending=set()) == (None, ["0101 · خفيفة", "0104 · عاملة"])
 
 
-def test_auto_clear_nums_ignores_expired_and_corrupt_markers(tmp_path):
-    from datetime import datetime, timedelta, timezone
-
-    notes = tmp_path / "handover_notes"
-    notes.mkdir()
-    now = datetime.now(timezone.utc)
-    (notes / "auto_clear_0101.json").write_text(json.dumps({"num": "0101", "created_at": now.isoformat()}), encoding="utf-8")
-    (notes / "auto_clear_0104.json").write_text(json.dumps({"num": "0104", "created_at": (now - timedelta(hours=1)).isoformat()}), encoding="utf-8")
-    (notes / "auto_clear_0108.json").write_text("{", encoding="utf-8")
-    assert si.auto_clear_nums(tmp_path) == {"0101"}
 
 
 # ===== فرع المجلّد الجذر والأرقام الفرعيّة (منقولةٌ من ec1116d) =====
@@ -266,3 +249,11 @@ def test_owner_requests_go_through_0101_in_injection_and_common():
     assert "D-495م" in line and "0101" in line and "ask" in line
     assert "[ما يُراد من المالك — D-495م]" in render_role_cards.COMMON_EXTRA
     assert "بأداة ask" in render_role_cards.COMMON_EXTRA and "إذنُ المالك المباشر" in render_role_cards.COMMON_EXTRA
+
+
+def test_W20261028_024_root_cwd_unmatched_id_is_not_counted_as_a_number(tmp_path):
+    """W-20261028-024 (R8): كنّاسٌ في جذر المجلّد المشترك بمعرّفٍ غير مطابق لا يُحسب رقماً بالشجرة؛ ولا يُسقط إليها."""
+    _session(tmp_path, "1", "local_1", "0101 · خفيفة", ROOT_CWD, cli="live-0101")
+    title, _ = si.app_title(ROOT_CWD, "wake-sweeper-unknown", tmp_path, wait_s=0)
+    assert title is None
+    assert si.app_title(ROOT_CWD, "live-0101", tmp_path, wait_s=0) == ("0101 · خفيفة", [])
