@@ -645,7 +645,7 @@ class TestAutoClear:
     def test_w20261028_027_stale_request_does_not_block_new_one(self, tree, tmp_path):
         """W-20261028-027 (5): علامةٌ أقدمُ من مهلة المسح الذاتيّ والسياقُ ما زال فوق العتبة لا تمنع طلباً جديداً."""
         self._ready(tree)
-        t = self._tx(tmp_path, self._asst(0, 175_000, 0))
+        t = self._tx(tmp_path, self._asst(0, 181_000, 0))
         assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", t, tree, NOW)
         later = NOW + timedelta(seconds=ss.session_identity_ttl() + 60)
         assert "كُتب طلبُ المسح" in ss.maybe_auto_clear("0108", "D:/w", t, tree, later)
