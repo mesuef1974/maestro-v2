@@ -52,6 +52,30 @@ def codes_of(pr: dict) -> list[tuple[str, str]]:
     return list(out.items())
 
 
+def _head_matches(approved: str | None, head_oid: str | None) -> bool:
+    """الرأسُ المعتمَدُ بادئةٌ لرأس الطلب المدموج (8 أحرف على الأقل)، لا تطابقٌ جزئيٌّ عشوائيّ."""
+    a, h = (approved or "").strip().lower(), (head_oid or "").strip().lower()
+    return len(a) >= 8 and bool(h) and h.startswith(a)
+
+
+def write_candidates(items: dict[str, dict], prs: list[dict]) -> list[dict]:
+    """(W-20261028-030) بطاقاتٌ يُكتب لها merged: approved أو pushed، ورمزُها في **العنوان أو الفرع** (لا متنُ الوصف)،
+    وطلبُها MERGED، ورأسُ الطلب المدموج يطابق الرأسَ المعتمَد. الأبوّةُ لا تُفحص هنا فيبقى ما عداه عرضاً."""
+    out = []
+    for pr in sorted(prs, key=lambda p: p["number"]):
+        if pr.get("state") != "MERGED":
+            continue
+        marks = [m.group(0) for m in CODE.finditer(pr.get("title") or "")]
+        marks += [f"W-{m.group(1)}-{m.group(2)}" for m in BRANCH_CODE.finditer(pr.get("headRefName") or "")]
+        for code in dict.fromkeys(marks):
+            item = items.get(code)
+            if not item or item.get("state") not in ("approved", "pushed"):
+                continue
+            if _head_matches(item.get("approved_head"), pr.get("headRefOid")):
+                out.append({"card": code, "from": item["state"], "pr": pr["number"]})
+    return out
+
+
 def reconcile(
     items: dict[str, dict],
     prs: list[dict],
@@ -158,7 +182,7 @@ def fetch_prs(repo: str, limit: int) -> list[dict] | None:
                 "--limit",
                 str(limit),
                 "--json",
-                "number,title,headRefName,state,body,mergeCommit",
+                "number,title,headRefName,headRefOid,state,body,mergeCommit",
             ],
             capture_output=True,
             text=True,

@@ -148,5 +148,37 @@ class PublishedAndBranchTest(unittest.TestCase):
         w.assert_not_called()
 
 
+class WriteCandidatesTest(unittest.TestCase):
+    """(W-20261028-030) الكتابة إلى merged بدليلٍ: الرمزُ في العنوان أو الفرع، والرأسُ المعتمَدُ = رأسُ الطلب المدموج."""
+
+    def merged(self, n, head, title="", branch=""):
+        return {**pr(n, "MERGED", title=title, branch=branch), "headRefOid": head}
+
+    def test_title_code_and_matching_head_is_a_candidate(self):
+        items = {"W-20261028-006": {"state": "approved", "approved_head": "aaaa1111"}}
+        out = lr.write_candidates(items, [self.merged(1292, "aaaa1111bbbb", title="fix (W-20261028-006)")])
+        self.assertEqual([(c["card"], c["pr"]) for c in out], [("W-20261028-006", 1292)])
+
+    def test_branch_code_and_matching_head_is_a_candidate(self):
+        items = {"W-20261027-017": {"state": "pushed", "approved_head": "cccc3333"}}
+        out = lr.write_candidates(items, [self.merged(1290, "cccc3333dddd", branch="claude/w20261027-017-x")])
+        self.assertEqual([c["card"] for c in out], ["W-20261027-017"])
+
+    def test_head_mismatch_writes_nothing(self):
+        items = {"W-20261028-006": {"state": "approved", "approved_head": "aaaa1111"}}
+        out = lr.write_candidates(items, [self.merged(1292, "eeee5555ffff", title="fix (W-20261028-006)")])
+        self.assertEqual(out, [])
+
+    def test_code_only_in_body_writes_nothing(self):
+        items = {"W-20261028-006": {"state": "approved", "approved_head": "aaaa1111"}}
+        p = {**self.merged(1292, "aaaa1111bbbb", title="fix"), "body": "مستقلّة عنه W-20261028-006"}
+        self.assertEqual(lr.write_candidates(items, [p]), [])
+
+    def test_open_pr_writes_nothing(self):
+        items = {"W-20261028-006": {"state": "approved", "approved_head": "aaaa1111"}}
+        p = {**pr(1292, "OPEN", title="fix (W-20261028-006)"), "headRefOid": "aaaa1111bbbb"}
+        self.assertEqual(lr.write_candidates(items, [p]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
