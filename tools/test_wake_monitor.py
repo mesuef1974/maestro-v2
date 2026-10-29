@@ -579,3 +579,34 @@ def test_apply_dead_holders_is_idempotent_and_notes():
 
 
 # ===== طلبُ المسح: العلامةُ المعلّقة والمسحُ الذاتيّ كلاهما يوقظان (W-20261028-027) =====
+NOW = wm.datetime.fromisoformat("2026-10-29T12:00:00+03:00")
+
+
+def test_w20261028_009_core_session_without_id_raises_one_alarm_per_day():
+    d = {k: v for k, v in DIR.items() if k != "0401"}
+    core = frozenset({"0401"})
+    assert wm.stale_plan([], d, set(), NOW, inbox=["0401"], core=core).alarms == ["0401"]
+    recent = [{"ts": "2026-10-29T06:00:00+03:00", "alarms": ["0401"]}]
+    assert wm.stale_plan([], d, set(), NOW, log=recent, inbox=["0401"], core=core).alarms == []
+    old = [{"ts": "2026-10-28T06:00:00+03:00", "alarms": ["0401"]}]
+    assert wm.stale_plan([], d, set(), NOW, log=old, inbox=["0401"], core=core).alarms == ["0401"]
+
+
+def test_w20261028_009_non_core_or_known_session_raises_no_alarm():
+    d = {k: v for k, v in DIR.items() if k != "0401"}
+    assert wm.stale_plan([], d, set(), NOW, inbox=["0401"], core=frozenset()).alarms == []
+    assert wm.stale_plan([], DIR, set(), NOW, inbox=["0401"], core=frozenset({"0401"})).alarms == []
+
+
+def test_w20261028_009_send_alarms_sends_one_line_to_0101():
+    p = wm.WakePlan()
+    p.alarms = ["0104"]
+    p.skipped = [("0104", "لا معرّفَ للجلسة 0104")] * 3
+    calls = []
+    wm.send_alarms(p, run=lambda cmd, **kw: calls.append(cmd))
+    assert len(calls) == 1 and "0101" in calls[0] and "0104" in calls[0][-1] and "3" in calls[0][-1]
+
+
+def test_w20261028_009_core_nums_reads_titles():
+    tabs = {"session_policy": {"core_sessions": ["0104 · الأمان", "0201 · البوابة"]}}
+    assert wm.core_nums(tabs) == frozenset({"0104", "0201"})
