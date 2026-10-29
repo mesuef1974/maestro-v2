@@ -88,3 +88,9 @@ class Receipt(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_governance_repo_has_no_receipt_producer_so_no_receipt_is_required(tmp_path):
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "ledger.py").write_text("", encoding="utf-8")
+    assert ledger.check_prepush_receipt(str(tmp_path)) is None
