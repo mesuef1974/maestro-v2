@@ -36,7 +36,8 @@ def _admitted(num: str, tree: str, trees: dict[str, set[str]]) -> bool:
     """شجرةُ المنصّة لكلّ رقمٍ غيرِ مربوطٍ بمجلّد؛ والرقمُ المربوطُ (directory_trees) من مجلّده وحدَه."""
     bound = {t for t, nums in trees.items() if num in nums}
     if bound:
-        return tree in bound
+        # مفتاحٌ ينتهي بـ«/*» يقبل أيَّ شجرةٍ مباشرةً تحته (أشجارُ العمل تتبدّل عند كلّ إعادة تشغيل؛ W-20261028-007)
+        return tree in bound or any(b.endswith("/*") and tree.startswith(b[:-1]) and "/" not in tree[len(b) - 1:] for b in bound)
     return "shschool_mvp" in tree
 
 

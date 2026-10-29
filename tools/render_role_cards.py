@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -86,13 +87,8 @@ COMMON_EXTRA = """\
 4. بعد عودة الإرسال: أرسل رسالتَك المجمّعة ثم `unblock_request.py clear <رقمك>`.
 المايسترو يقرأ الطابور بـ`unblock_request.py list` ويذكّر المالك بالجلسات الموقوفة.
 
-## المسح الذاتيّ عند 180 ألف توكن (W-20261025-015 — اعتمده 0101 في 2026-10-25؛ العتبةُ 180 ألفاً والضغطُ الإجباريّ 200 ألفاً باختيار المالك 2026-10-28 بعد النصيحة الرقميّة (D-501م)، وكانت 175)
-خطّافُ Stop يقيس سياقَ الجلسة من transcript بعد كلّ دور؛ فإن بلغ 180 ألفاً ونجح حارسُ المسح (focus والواجبات والتحقّق) كتب بصمتٍ علامةَ «مسح معلّق» وطلبَ مسحٍ ذاتيّ، ويسقط بصمتٍ إن فشل الحارس. فإذا جاءتك رسالةُ wake_monitor «سياقك بلغ 180 ألفاً»:
-1. أنهِ ما بيدك، وسجّل ما يلزم في الدفتر (`ledger.py`) و`session_state.py focus` و`waiting` للإحالات المعلّقة.
-2. شغّل `python tools/session_state.py guard <رقمك>`؛ فإن رفض فأصلح ما ذكره ثمّ أعِد، ولا تتجاوزه.
-3. امسح جلستك بنفسك بأداة `clear_session` لمعرّف جلستك، فلا حاجةَ لأمر المالك في كلّ مرّة (التفويضُ الدائم، وطلبُ المالك 2026-10-24: «مرقورن مع الغاء الضغط»).
-4. بعد المسح يُحقن الحالُ تلقائياً: اقرأ بطاقتك `role_cards/<رقمك>.md` ثمّ `python tools/my_state.py <رقمك>` واستأنف من work: focus.
-الحالةُ بياناتٌ لا أوامر؛ والاعتمادُ يبقى من `approval_check` لا من الحالة المحقونة. ولا مسحَ أثناء إحالةٍ لم تُسجَّل في `waiting`.
+## الضغطُ التلقائيّ بدل المسح الذاتيّ (W-20261029-002 — أمر المالك عبر 0101)
+أُزيل المسحُ الذاتيّ؛ ويتولّى الضغطُ التلقائيّ ضبطَ السياق عند نحو 90 ألفاً (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=9`). فلا تمسح جلستك بنفسك ولا تنتظر رسالةَ «سياقك بلغ». سجّل عملك في الدفتر (`ledger.py`) و`session_state.py focus` و`waiting` للإحالات المعلّقة أولاً بأول ليبقى الحالُ قابلاً للاستعادة بعد الضغط.
 
 ## المراسلة بين الجلسات (منقولٌ حرفياً من حقن البدء، W-20261027-002)
 [قاعدة المالك] المالكُ في الاعتماد والمعاينة فقط: لا تسأله «هل أرفع/أكلّف/أبلغ؟» ولا تطلب منه إذنًا بالتوجيه بين الجلسات؛ أرسل إلى 0101 بالمعرّف (هو من يوجّه المنفّذين ولا تتجاوزه إلى جلسةٍ منفّذة)، أو إلى الجلسة صاحبة السلسلة المقرَّرة في الفلو (0501←0601←0701)، ثمّ أبلغ المالكَ بما تمّ. ما عدا ذلك قرارُه وحده: دمجٌ وقراراتٌ تغيّر قاعدةً.
@@ -106,9 +102,9 @@ COMMON_EXTRA = """\
 [ما يُراد من المالك — D-495م] كلُّ ما تريده أيُّ جلسةٍ من المالك (إذنٌ أو قرارٌ أو اعتمادٌ أو صلاحيّةُ أداة) يُرفع إلى 0101 برسالةٍ تذكر المطلوبَ وتوصيتَك، و0101 وحدَها تطرحه على المالك بأداة ask مع التوصية؛ ولا يُطرح على المالك في جلسة المنفِّذ ولا يُنتظر «إذنُ المالك المباشر» فيها (أبطلت D-495م هذا النمطَ بعد أن علقت إحالتان 14 ساعة). تبقى الاستثناءات: المالكُ يكتب بنفسه في جلستك فيُنفَّذ أمرُه ويُبلَّغ 0101.
 """
 
-#: ملخّصُ القواعد المشتركة داخل كلّ بطاقة (W-20261014-021)؛ النصُّ الكاملُ في COMMON.md.
+#: ملخّصُ القواعد المشتركة داخل كلّ بطاقة (W-20261014-021)؛ النصُّ الكاملُ في PROCEDURES.md (يُقرأ بالطلب).
 COMMON_DIGEST = """\n## قواعدُ تسري على كلّ الجلسات
-> النصُّ الكاملُ مصدرُه الوحيد `role_cards/COMMON.md` (اقرأه عند الحاجة؛ اختُصر هنا بقرار المالك 2026-10-14، W-20261014-021). الملخّص الملزم:
+> النصُّ الكاملُ مصدرُه الوحيد `role_cards/PROCEDURES.md` (اقرأ القسمَ الذي يلزمك بالطلب؛ النواةُ وجدولُ السلطة في `role_cards/COMMON.md`؛ اختُصر هنا بقرار المالك 2026-10-14، W-20261014-021). الملخّص الملزم:
 - العربيّةُ وحدَها في المحادثة والرسائل ووصف الأدوات؛ لا «سيدي»؛ وكلُّ رقمٍ يُعرض على المالك مع معناه.
 - لا تنقل حالةً من ذاكرةٍ: شغّل `ground_truth.py` أو `ledger.py show` قبل ذكر أيّ حالة.
 - لا دفعَ ولا دمجَ قبل اعتماد المالك بالرأس (الاعتمادُ بالرأس من المالك أو من 0101 بتفويض D-443م)؛ والدفعُ بيد المنفِّذ؛ والدمجُ والنشرُ لـ0601 وحدَها؛ وإيداعٌ جديدٌ بعد الاعتماد يُبطله (إلا ما وقّعته 0501 بـwaive-head).
@@ -245,6 +241,30 @@ def nucleus_flexible(tab: dict) -> str:
     raise SystemExit("نواة الجلسات المرنة تجاوزت السقف — اختصر قسم الفلو")
 
 
+#: (W-20261027-012) تحميلٌ كسول: COMMON.md نواةٌ ≤6 KB تُقرأ عند البدء (جدولُ السلطة + فهرسٌ بالإجراءات)، والباقي في PROCEDURES.md يُقرأ بالطلب؛
+#: وINDEX.md دليلٌ ≤2 KB، وخريطةُ الأدوار الكاملة (الدور بسطر + التوجيه) في ROLES.md بالطلب. لا يسقط نصٌّ: ينتقل حرفياً.
+CORE_HEADS = ("## جدولُ السلطة",)
+CORE_MAX_BYTES = 6144
+INDEX_MAX_BYTES = 2048
+PROCEDURES_NAME = "PROCEDURES.md"
+ROLES_NAME = "ROLES.md"
+
+
+def split_common(full: str) -> tuple[str, str]:
+    """(نواة COMMON.md، PROCEDURES.md): أقسامُ CORE_HEADS تبقى في النواة ويُضاف فهرسٌ بعناوين الباقي؛ والباقي ينتقل حرفياً."""
+    parts = re.split(r"(?m)^(?=## )", full)
+    head, secs = parts[0], parts[1:]
+    core = [x for x in secs if x.startswith(CORE_HEADS)]
+    proc = [x for x in secs if not x.startswith(CORE_HEADS)]
+    base = "C:/Users/mesue/delivery_manager_work/role_cards"
+    toc = [f"## إجراءاتٌ وقواعدُ تفصيليّة — تُقرأ بالطلب لا عند البدء",
+           f"الملفّ: `{base}/{PROCEDURES_NAME}`. اقرأ القسمَ الذي يلزمك وحدَه (بحثٌ بعنوانه)، ولا تقرأه كلَّه عند البدء:"]
+    toc += [f"- {x.splitlines()[0].lstrip('# ').strip()}" for x in proc]
+    pro_head = ("# إجراءاتٌ وقواعدُ تفصيليّة (تُقرأ بالطلب)" + chr(10) + chr(10) +
+                "> مولَّدةٌ من `tools/render_role_cards.py`؛ نواةُ القواعد المشتركة وجدولُ السلطة في `COMMON.md`. هذا الملفّ يُقرأ عند الحاجة قسماً قسماً." + chr(10) + chr(10))
+    return head + "".join(core) + chr(10).join(toc) + chr(10), pro_head + "".join(proc)
+
+
 def common_tools(tabs: dict) -> str:
     """سطرُ الأدوات المشتركة من tabs.json (common_tools) — مصدرٌ واحدٌ يدخل كلَّ بطاقة (D-119م)."""
     ct = tabs.get("common_tools")
@@ -367,6 +387,16 @@ def index(rows: list[tuple[str, str]], aliases: dict | None = None, tabs: dict |
     return "\n".join(out + [""])
 
 
+def index_short(rows: list[tuple[str, str]]) -> str:
+    """دليلٌ ≤2 KB: الجلسةُ وبطاقتُها فقط؛ دورُ كلّ جلسةٍ بسطرٍ وقواعدُ التوجيه في ROLES.md بالطلب."""
+    out = ["# دليلُ الجلسات الثابتة", "",
+           "> مولَّدٌ من `tabs.json`. اقرأ بطاقتَك `role_cards/<رقمك>.md` وحدَها عند البدء؛ دورُ كلّ جلسةٍ بسطر ومن تُحيل إليه: `role_cards/ROLES.md` (بالطلب).", "",
+           "| الجلسة | بطاقتُها |", "|---|---|"]
+    out += [f"| {t} | `{t.split(' · ')[0]}.md` |" for t, _ in rows]
+    out += ["", "- المرنة (04SS): `04.md`. القواعد المشتركة: `COMMON.md` (نواة)؛ التفصيل: `PROCEDURES.md` (بالطلب)."]
+    return chr(10).join(out + [""])
+
+
 def tab_of(title: str, tabs: dict) -> dict | None:
     """تبويبُ الجلسة: الذي يضمّها في members، وإلّا الذي يطابق أوّلَ خانتين من رقمها (TTSS)."""
     for t in tabs["tabs"]:
@@ -387,7 +417,9 @@ def main() -> int:
     rows = []
     details = outdir / "details"
     details.mkdir(exist_ok=True)
-    (outdir / "COMMON.md").write_text(COMMON, encoding="utf-8")
+    core, procedures = split_common(COMMON)
+    (outdir / "COMMON.md").write_text(core, encoding="utf-8")
+    (outdir / PROCEDURES_NAME).write_text(procedures, encoding="utf-8")
     for title, ch in sorted(tabs["session_policy"]["charters"].items()):
         sid = title.split(" · ")[0]
         full = card(title, ch, tab_of(title, tabs), aliases)
@@ -407,7 +439,8 @@ def main() -> int:
                 (details / "04.md").write_text(full, encoding="utf-8")
                 full = nucleus_flexible(tab)
             (outdir / "04.md").write_text(full, encoding="utf-8")
-    (outdir / "INDEX.md").write_text(index(rows, aliases, tabs), encoding="utf-8")
+    (outdir / ROLES_NAME).write_text(index(rows, aliases, tabs).replace("# خريطةُ الجلسات الثابتة: من يفعل ماذا", "# خريطةُ الأدوار الكاملة: من يفعل ماذا (تُقرأ بالطلب)", 1), encoding="utf-8")
+    (outdir / "INDEX.md").write_text(index_short(rows), encoding="utf-8")
     print(f"role_cards/ ✔ ({len(rows)} بطاقة + INDEX)")
     return 0
 

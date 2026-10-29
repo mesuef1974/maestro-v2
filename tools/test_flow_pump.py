@@ -1645,3 +1645,37 @@ class HandOff(unittest.TestCase):
         self.assertFalse((self.path / "ledger" / "pending_wakes.jsonl").exists())
         fp.hand_off("W-1", "migrations", self.item, True, self.path, t0 + timedelta(hours=7))
         self.assertEqual(len(self._rows("0601")), 2)
+
+
+class DisarmPass(unittest.TestCase):
+    """W-20261028-032 (واقعة #1285): الدمجُ الآليّ يتحقّق من الرأس عند التفعيل فقط؛ رأسٌ تغيّر بعده بلا اعتمادٍ يُعطَّل التفعيلُ."""
+
+    NEW = "99999999" + "0" * 32
+
+    def run_pass(self, pr, ok=False, apply=True):
+        sh = FakeSh()
+        with (
+            mock.patch.object(fp, "approval_ok", return_value=ok),
+            mock.patch.object(fp.ledger, "add_note") as note,
+            mock.patch("inbox.send") as send,
+        ):
+            lines = fp.disarm_pass(_states(), [pr], apply, sh)
+        return lines, sh, note, send
+
+    def test_armed_pr_with_unapproved_new_head_is_disarmed_and_reported(self):
+        lines, sh, note, send = self.run_pass(_pr(head=self.NEW, autoMergeRequest={"mergeMethod": "SQUASH"}))
+        self.assertIn(["gh", "pr", "merge", "7", "--disable-auto"], sh.calls)
+        note.assert_called_once()
+        self.assertEqual(send.call_args[0][0], "0601")
+        self.assertIn("#7", lines[0])
+
+    def test_approved_head_or_unarmed_pr_is_left_alone(self):
+        for pr, ok in ((_pr(head=self.NEW, autoMergeRequest={"mergeMethod": "SQUASH"}), True), (_pr(head=self.NEW), False)):
+            lines, sh, note, send = self.run_pass(pr, ok=ok)
+            self.assertEqual((lines, sh.calls), ([], []))
+            note.assert_not_called()
+
+    def test_dry_run_disarms_nothing(self):
+        lines, sh, note, send = self.run_pass(_pr(head=self.NEW, autoMergeRequest={"mergeMethod": "SQUASH"}), apply=False)
+        self.assertEqual(sh.calls, [])
+        self.assertIn("(عرض)", lines[0])
