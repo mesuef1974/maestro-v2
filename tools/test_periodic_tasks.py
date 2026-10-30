@@ -104,3 +104,51 @@ def test_run_periodic_swallows_errors(monkeypatch, capsys):
     monkeypatch.setattr(pt, "run_due", lambda now, root: (_ for _ in ()).throw(ValueError("جدول معيب")))
     assert wm.run_periodic(SUN) == {}
     assert "جدول معيب" in capsys.readouterr().err
+
+
+def test_every_send_is_logged_in_the_ledger_with_its_due_time(tmp_path):
+    root = _root(tmp_path, T)
+    pt.run_due(SUN, root)
+    log = pt.read_log(root)
+    assert [(r["k"], r["id"]) for r in log] == [("sent", "a"), ("sent", "b")]
+    assert all(r["owner"] == "0301" and r["ts"].startswith("2026-10-25") for r in log)
+    assert pt.run_due(SUN, root, dry_run=True) == {}  # عرضٌ جافّ: لا سطرَ جديد
+    assert len(pt.read_log(root)) == 2
+
+
+def test_unrecorded_task_is_resent_after_six_hours_then_stops_at_cap(tmp_path):
+    import inbox
+
+    root = _root(tmp_path, T)
+    pt.run_due(SUN, root)
+    assert pt.run_due(SUN + timedelta(hours=5, minutes=59), root) == {}  # قبل 6 ساعات
+    assert pt.run_due(SUN + timedelta(hours=6), root) == {"0301": ["a", "b"]}  # أُعيدت
+    resent = inbox.pending("0301", root)[-1]["text"]
+    assert "إعادة" in resent and "فحص أ" in resent and "done" in resent
+    assert pt.run_due(SUN + timedelta(hours=6, minutes=15), root) == {}  # لا تكرارَ قبل 6 ساعات أخرى
+    assert pt.run_due(SUN + timedelta(hours=12), root) == {"0301": ["a", "b"]}  # الإعادة الثانية
+    assert pt.run_due(SUN + timedelta(hours=18), root) == {}  # بلغت السقف (إرسالٌ + إعادتان)
+    assert len(inbox.pending("0301", root)) == 3
+
+
+def test_recorded_result_stops_resending_only_that_task(tmp_path):
+    root = _root(tmp_path, T)
+    pt.run_due(SUN, root)
+    pt.mark_done("a", "0301", SUN + timedelta(hours=2), root)
+    assert pt.run_due(SUN + timedelta(hours=6), root) == {"0301": ["b"]}
+
+
+def test_mark_done_rejects_unknown_task_and_cli_records_it(tmp_path, monkeypatch):
+    root = _root(tmp_path, T)
+    with pytest.raises(ValueError):
+        pt.mark_done("zzz", "0301", SUN, root)
+    monkeypatch.setattr(pt, "ROOT", root)
+    assert pt.main(["done", "a", "--by", "0301"]) == 0
+    assert [r["k"] for r in pt.read_log(root)] == ["done"]
+
+
+def test_resend_does_not_cross_days(tmp_path):
+    root = _root(tmp_path, T)
+    pt.run_due(SUN, root)
+    nxt = SUN + timedelta(days=1, hours=1)  # الاثنين: لا إعادةَ لمهمّة الأمس
+    assert pt.run_due(nxt, root) == {}
