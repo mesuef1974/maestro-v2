@@ -112,9 +112,17 @@ def ack_valid(top: Path) -> bool:
 
 
 def stale(top: Path) -> bool | None:
-    """True = الترقيةُ ليست سلفاً (مهارةٌ قديمة)، False = مرقّاة، None = لا يُعرف (يُسمح بتحذير)."""
-    rc = git(str(top), "merge-base", "--is-ancestor", SKILL_UPGRADE, "HEAD").returncode
-    return True if rc == 1 else False if rc == 0 else None
+    """True = الترقيةُ ليست سلفاً (مهارةٌ قديمة)، False = مرقّاة، None = لا يُعرف (يُسمح بتحذير).
+
+    دمجٌ جارٍ (MERGE_HEAD) يجلب الترقيةَ نفسَها لا يُعدّ قديماً: الإيداعُ الذي يُحجَب هو ما يرقّي الشجرة (واقعةُ 0501، 2026-10-27:
+    دمجُ origin/main حُجب لأنّ HEAD قبل الدمج أقدمُ من 130d8a56f، فبقي الدمجُ معلّقاً بلا مخرجٍ إلا --no-verify؛ بإذن المالك)."""
+    for ref in ("HEAD", "MERGE_HEAD"):
+        rc = git(str(top), "merge-base", "--is-ancestor", SKILL_UPGRADE, ref).returncode
+        if rc == 0:
+            return False
+        if ref == "HEAD" and rc != 1:
+            return None
+    return True
 
 
 def staged_or_target_ui(command: str, cwd: str, top: Path) -> bool:
