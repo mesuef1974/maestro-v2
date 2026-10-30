@@ -1277,6 +1277,25 @@ NO_MERGE = HERE.parent / "ledger" / "flow_pump.nomerge"
 STALE_LOCK_S = 900
 
 
+RECONCILE_REPOS = ("sh-school/shschool_mvp", "mesuef1974/maestro-v2")
+
+
+def reconcile_pass(write: bool, run=None) -> list[str]:
+    """(W-20261028-030) مصالحةُ الدفتر مع المستودعين: عرضٌ فقط ما لم يُمرَّر `write` (--reconcile-write بعد دورتَي العرض).
+    فشلُ الأداة أو تعذّرُها لا يوقف الدورة أبداً: يُطبع سطراً ويُكمل."""
+    run = run or _sh
+    out = []
+    for repo in RECONCILE_REPOS:
+        cmd = [sys.executable, str(HERE / "ledger_reconcile.py"), "--repo", repo] + (["--write"] if write else [])
+        try:
+            rc, text = run(cmd)
+        except Exception as exc:  # noqa: BLE001 — المصالحةُ مساعدةٌ لا تُسقط الدورة
+            out.append(f"{repo}: تعذّر ({type(exc).__name__}: {exc})")
+            continue
+        out.append(f"{repo}: " + (_tail(text, 240) if rc == 0 else f"رمز {rc} — {_tail(text, 160)}"))
+    return out
+
+
 def _lock() -> bool:
     """قفلٌ بملفّ: دورتان لا تتداخلان؛ القفلُ الأقدم من 15 دقيقة يُعدّ ميتاً."""
     import time
@@ -1315,6 +1334,8 @@ def _run(argv=None) -> int:
     ap.add_argument("--no-line", action="store_true", help="بلا كتابة سطر الاعتماد في الطلب")
     ap.add_argument("--no-merge", action="store_true", help="بلا الدمج الآليّ")
     ap.add_argument("--no-ci", action="store_true", help="بلا إعادة الفحوص العالقة")
+    ap.add_argument("--no-reconcile", action="store_true", help="بلا مصالحة الدفتر مع المستودعين")
+    ap.add_argument("--reconcile-write", action="store_true", help="المصالحةُ تكتب merged للمؤكَّد؛ بدونه عرضٌ فقط (أوّل دورتين عرضٌ ثمّ يُفعَّل)")
     ap.add_argument("--no-root-follow", action="store_true", help="بلا تقديم الجذر إلى main بعد الدمج")
     a = ap.parse_args(argv)
 
@@ -1379,6 +1400,9 @@ def _run(argv=None) -> int:
     if not a.no_root_follow:
         for line in root_follow_pass(a.apply):
             print("جذر: " + line)
+    if not a.no_reconcile:
+        for line in reconcile_pass(a.apply and a.reconcile_write):
+            print("مصالحة: " + line)
     print("— مرحلة النشر (ledger_sync) —")
     if a.skip:
         orig = ledger_sync.plan
