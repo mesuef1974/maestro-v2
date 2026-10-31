@@ -1805,7 +1805,7 @@ def main() -> None:
                     return
                 print(json.dumps(it, ensure_ascii=False, indent=2))
                 if it:
-                    print("المواصفة — " + spec_status(it))
+                    print("المواصفة — " + spec_status(it), file=sys.stderr)  # stdout وثيقةُ JSON واحدة صالحة لـjson.loads (W-20261028-015)
             elif args.cmd == "spec-gaps":
                 gaps = spec_gaps(items)
                 for g in gaps:

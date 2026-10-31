@@ -25,6 +25,8 @@ AGE_STATES = ("ready_for_review", *STAGES)
 REREFER_MIN = 30
 REPORT_MIN = 90
 PUMP_BY = "0101"
+#: (W-20261028-006، D-429م) نافذتا الدمج الآليّ بتوقيت الدوحة: (الدفعة، البداية، النهاية) بالدقائق من منتصف الليل؛ البدايةُ مشمولةٌ والنهايةُ لا
+MERGE_WINDOWS = ((1, 14 * 60 + 30, 16 * 60 + 30), (2, 19 * 60, 21 * 60))
 PASS_STATES = ("pushed", "merged", "published")
 COUNTER = ROOT / "msg_counter.json"
 
@@ -96,6 +98,45 @@ def escalation_pass(states: dict[str, dict], apply: bool, now: datetime | None =
             log.parent.mkdir(parents=True, exist_ok=True)
             with log.open("a", encoding="utf-8") as f:
                 f.write(json.dumps({"card": e["card"], "level": e["level"], "state_ts": e["state_ts"], "ts": now.isoformat(timespec="seconds")}, ensure_ascii=False) + "\n")
+    return out
+
+
+def _window_end(window: str) -> datetime | None:
+    """نهايةُ نافذةٍ بمعرّفها «2026-10-30:1»؛ None لمعرّفٍ غير مفهوم."""
+    try:
+        day, batch = window.split(":")
+        end = {b: e for b, _s, e in MERGE_WINDOWS}[int(batch)]
+        return datetime.fromisoformat(day).replace(hour=end // 60, minute=end % 60, tzinfo=ledger.DOHA)
+    except (ValueError, KeyError):
+        return None
+
+
+def missed_window_pass(apply: bool, now: datetime | None = None, path: Path | None = None, report: Path | None = None) -> list[str]:
+    """نافذةٌ مرّت وفيها طلبٌ مؤهَّلٌ لم يُفعَّل عليه الدمجُ الآليّ تُنتج تنبيهاً واحداً في تقرير 0101 (المضخّةُ بالخطّاف فإن لم تتحرّك
+    جلسةٌ داخل النافذة فاتت). الحالةُ يكتبها merge_pass داخل النافذة؛ نافذةٌ لم تدُر فيها المضخّةُ أصلاً لا أثرَ لها هنا."""
+    now = now or datetime.now(ledger.DOHA)
+    path = path or _beside_ledger("merge_window_state.json")
+    report = report or _beside_ledger("pump_report_0101.txt")
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out, dirty = [], False
+    for window, entry in sorted(state.items()):
+        end = _window_end(window)
+        missed = sorted(set(entry.get("eligible", [])) - set(entry.get("armed", [])))
+        if end is None or now < end or entry.get("alerted") or not missed:
+            continue
+        nums = "، ".join(f"#{n}" for n in missed)
+        out.append(f"نافذة {window} مرّت وفيها طلبٌ مؤهَّلٌ غيرُ مفعَّل ({nums})" + ("" if apply else " (عرض)"))
+        if apply:
+            report.parent.mkdir(parents=True, exist_ok=True)
+            with report.open("a", encoding="utf-8") as f:
+                f.write(f"{now.isoformat(timespec='minutes')} نافذة {window}: طلباتٌ مؤهَّلة فاتها الدمجُ الآليّ {nums}\n")
+            entry["alerted"] = True
+            dirty = True
+    if dirty:
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
     return out
 
 

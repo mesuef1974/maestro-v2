@@ -142,3 +142,31 @@ def test_missing_tabs_file_means_no_aliases_and_no_bound_folders(tmp_path, monke
     monkeypatch.setattr(sd, "BASE", base)
     monkeypatch.setattr(sa, "TABS", tmp_path / "missing.json")
     assert set(sd.entries()) == {"0702"}
+
+
+WT = LIGHT + r"\.claude\worktrees"
+TREES_WT = {"_note": "x", "C:/Users/mesue/delivery_manager_work": ["0101"],
+            "C:/Users/mesue/delivery_manager_work/.claude/worktrees/*": ["0109", "0110"]}
+
+
+def test_w20261028_007_worktree_sessions_0109_0110_are_admitted(tmp_path):
+    base = tmp_path / "s"
+    trees = sa.directory_trees({"session_policy": {"directory_trees": TREES_WT}})
+    _session(base, "1", "reg", "0109 · السجل: الدفتر والقرارات", WT + r"\infallible-newton-af743e", cwd_only=True)
+    _session(base, "2", "health", "0110 · الصحة: فحص الرؤوس", WT + r"\nice-blackburn-8061f7", cwd_only=True)
+    e = sd.entries(base, aliases={}, trees=trees)
+    assert e["0109"]["id"] == "reg" and e["0110"]["id"] == "health"
+
+
+def test_w20261028_007_star_binding_is_per_number_and_direct_children_only(tmp_path):
+    base = tmp_path / "s"
+    trees = sa.directory_trees({"session_policy": {"directory_trees": TREES_WT}})
+    _session(base, "1", "root", "0109 · السجل", LIGHT, cwd_only=True)  # الجذر نفسُه ليس تحت /worktrees
+    _session(base, "2", "deep", "0110 · الصحة", WT + r"\a\b", cwd_only=True)  # حفيدٌ لا ابنٌ مباشر
+    _session(base, "3", "other", "0601 · الإصدار", WT + r"\x", cwd_only=True)  # رقمٌ غيرُ مربوط بالمجلّد
+    assert sd.entries(base, aliases={}, trees=trees) == {}
+
+
+def test_w20261028_007_real_registry_binds_0109_0110_to_worktrees_dir():
+    trees = sa.directory_trees()
+    assert trees["c:/users/mesue/delivery_manager_work/.claude/worktrees/*"] == {"0109", "0110"}

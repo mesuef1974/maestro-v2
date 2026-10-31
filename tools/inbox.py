@@ -56,6 +56,16 @@ def _beat_path(num: str, root: Path | None = None) -> Path:
     return _path(num, root).with_suffix(".beat")
 
 
+def _live_sid(sid: str) -> bool:
+    """معرّفُ CLI يطابق جلسةً حيّةً (local_…)؛ وفشلُ البحث = غيرُ مطابق."""
+    try:
+        import session_state
+
+        return session_state.local_session_id(sid).startswith("local_")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def code_fingerprint() -> str:
     """بصمةُ هذا الملفّ على القرص الآن؛ مراقبٌ بدأ ببصمةٍ ثمّ رآها تغيّرت يعمل بشيفرةٍ قديمة (W-20261028-033)."""
     try:
@@ -64,11 +74,13 @@ def code_fingerprint() -> str:
         return ""
 
 
-def beat(num: str, root: Path | None = None) -> None:
-    """يكتب نبضَ المراقب: pid ووقتٌ يثبتان أنّه حيّ."""
+def beat(num: str, root: Path | None = None, sid: str = "") -> None:
+    """يكتب نبضَ المراقب: pid ووقتٌ يثبتان أنّه حيّ. W-20261028-024: بمعرّفٍ لا يطابق جلسةً حيّةً يُهمَل النبضُ فلا يُحيي مراقباً وهمياً."""
+    if sid and not _live_sid(sid):
+        return
     p = _beat_path(num, root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"pid": os.getpid(), "t": time.time()}), encoding="utf-8")
+    p.write_text(json.dumps({"pid": os.getpid(), "t": time.time(), **({"sid": sid} if sid else {})}), encoding="utf-8")
 
 
 def beat_owner(num: str, root: Path | None = None, now: float | None = None) -> int | None:
@@ -92,7 +104,7 @@ def watcher_alive(num: str, root: Path | None = None, now: float | None = None) 
 
 
 def wait(num: str, root: Path | None = None, interval: float = WAIT_INTERVAL_S, timeout: float | None = None,
-         sleep=time.sleep, clock=time.time, once: bool = True, emit=None, fingerprint=code_fingerprint, note=None) -> list[dict]:
+         sleep=time.sleep, clock=time.time, once: bool = True, emit=None, fingerprint=code_fingerprint, note=None, sid: str = "") -> list[dict]:
     """يراقب صندوقَ `num` كلَّ `interval` ثانيةً ويكتب نبضاً.
     once=True (الافتراضيّ للمكتبة وسلوكُ `--once`): يعيد الواردَ (غيرَ مقرٍّ به: الإقرارُ لـread وحده، W-20261027-001) فور وصوله، أو [] عند انتهاء `timeout`.
     once=False (W-20261027-006): يواصل الحلقةَ، ويمرّر كلَّ دفعةِ واردٍ إلى `emit(msgs)` فور وصولها (مرّةً لكلّ رسالة)، ويعيد كلَّ ما وصل عند انتهاء `timeout`.
@@ -115,7 +127,7 @@ def wait(num: str, root: Path | None = None, interval: float = WAIT_INTERVAL_S, 
                 if note:
                     note(f"تغيّر inbox.py على القرص منذ بدء هذا المراقب ({fp0}): أخرج ليُعاد تشغيلي بالشيفرة الجديدة")
                 return got
-            beat(num, root)
+            beat(num, root, sid)
             msgs = read(num, False, root)  # W-20261027-020: لا إقرارَ في المراقب مطلقاً؛ فيجد read/الخطّافُ الواردَ ولو طُبع في ملفّ المهمّة
             if msgs and once:
                 return msgs
@@ -196,6 +208,23 @@ def send(to: str, frm: str, text: str, root: Path | None = None, ts: str | None 
     n = max([r["id"] for r in _rows(to, root) if r["k"] == "msg"] or [0]) + 1
     _append(to, {"k": "msg", "id": n, "ts": ts or _now(), "from": frm, "text": text}, root)
     return n
+
+
+SYSTEM_RECEIVERS = {"0000"}  # المضخّة/النظام: لا جلسةَ لها في الدليل ولها مراقبٌ خاصّ
+
+
+def receiver_known(num: str) -> bool:
+    """هل لرقم المستقبِل (بعد الإحالة إلى خليفته) جلسةٌ حيّة في الدليل؟ عطلُ الدليل أو خلوُّه لا يمنع الإرسال (يفتح ولا يغلق)."""
+    num = _successor(num)
+    if num in SYSTEM_RECEIVERS:
+        return True
+    try:
+        import session_directory  # noqa: PLC0415
+
+        known = session_directory.entries()
+    except Exception:  # noqa: BLE001
+        return True
+    return not known or num in known
 
 
 def _successor(num: str) -> str:
@@ -284,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("send")
     s.add_argument("--to", required=True)
     s.add_argument("--from", dest="frm", required=True)
+    s.add_argument("--force", action="store_true", help="يرسل لرقمٍ بلا جلسةٍ حيّة في الدليل (يُقبل صامتاً بلا قارئ)")
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--text")
     g.add_argument("--file")
@@ -294,12 +324,16 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("num")
     w.add_argument("--once", action="store_true", help="السلوكُ القديم: يخرج بأوّل وارد")
     w.add_argument("--timeout", type=float, default=None, help="ثوانٍ؛ بلا قيمة = بلا نهاية")
+    w.add_argument("--sid", default="", help="معرّفُ جلسة CLI: النبضُ يُهمَل إن لم يطابق جلسةً حيّة (W-20261028-024)")
     sub.add_parser("pending")
     sub.add_parser("reap", help="يوقف مراقباتِ الأرقام غير الحيّة في session_directory")
     sub.add_parser("hook")
     a = ap.parse_args(argv)
     if a.cmd == "send":
         text = a.text if a.text is not None else Path(a.file).read_text(encoding="utf-8")
+        if not a.force and not receiver_known(a.to):
+            print(f"رُفض: لا جلسةَ حيّةً للرقم {a.to} في الدليل فلن يقرأ أحدٌ صندوقه. تحقّق من الرقم (session_directory.py) أو أعد الإرسال بـ--force.", file=sys.stderr)
+            return 4
         try:
             print(f"أُلحقت #{send(a.to, a.frm, text)} بصندوق {a.to}")
             if not watcher_alive(a.to):
@@ -314,10 +348,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if a.cmd == "wait":
         if a.once:
-            msgs = wait(a.num, timeout=a.timeout, note=lambda t: print(t, flush=True))
+            msgs = wait(a.num, timeout=a.timeout, sid=a.sid, note=lambda t: print(t, flush=True))
             print(render(msgs) if msgs else "انتهت المهلة بلا وارد")
             return 0
-        msgs = wait(a.num, timeout=a.timeout, once=False, emit=lambda m: print(render(m), flush=True), note=lambda t: print(t, flush=True))
+        msgs = wait(a.num, timeout=a.timeout, once=False, sid=a.sid, emit=lambda m: print(render(m), flush=True), note=lambda t: print(t, flush=True))
         if not msgs:
             print("انتهت المهلة بلا وارد")
         return 0

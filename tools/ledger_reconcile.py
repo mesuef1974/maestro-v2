@@ -52,6 +52,50 @@ def codes_of(pr: dict) -> list[tuple[str, str]]:
     return list(out.items())
 
 
+def _head_matches(approved: str | None, head_oid: str | None) -> bool:
+    """الرأسُ المعتمَدُ بادئةٌ لرأس الطلب المدموج (8 أحرف على الأقل)، لا تطابقٌ جزئيٌّ عشوائيّ."""
+    a, h = (approved or "").strip().lower(), (head_oid or "").strip().lower()
+    return len(a) >= 8 and bool(h) and h.startswith(a)
+
+
+def write_candidates(items: dict[str, dict], prs: list[dict], ancestor=None) -> list[dict]:
+    """(W-20261028-030) بطاقاتٌ يُكتب لها merged: approved أو pushed، ورمزُها في **العنوان أو الفرع** (لا متنُ الوصف)،
+    وطلبُها MERGED، ورأسُ الطلب المدموج يطابق الرأسَ المعتمَد. الأبوّةُ لا تُفحص هنا فيبقى ما عداه عرضاً."""
+    out = []
+    for pr in sorted(prs, key=lambda p: p["number"]):
+        if pr.get("state") != "MERGED":
+            continue
+        marks = [m.group(0) for m in CODE.finditer(pr.get("title") or "")]
+        marks += [f"W-{m.group(1)}-{m.group(2)}" for m in BRANCH_CODE.finditer(pr.get("headRefName") or "")]
+        for code in dict.fromkeys(marks):
+            item = items.get(code)
+            if not item or item.get("state") not in ("approved", "pushed"):
+                continue
+            approved = item.get("approved_head")
+            exact = _head_matches(approved, pr.get("headRefOid"))
+            # الرأسُ المعتمَد أحدُ آباء رأس الطلب (دمجُ main فوقه بعد الاعتماد): يُقبل بدليلٍ من المصدر، وغيابُ الفحص يبقى عرضاً
+            parent = (not exact) and ancestor is not None and len((approved or "").strip()) >= 8 and ancestor(pr, approved) is True
+            if exact or parent:
+                out.append({"card": code, "from": item["state"], "pr": pr["number"], "approved_head": approved, "ancestor": parent})
+    return out
+
+
+def apply_candidates(cands: list[dict], move=None, by: str = "reconcile") -> dict:
+    """يكتب merged للمرشّحين (وضع الكتابة): approved تمرّ بـpushed أولاً كما يشترط الدفتر؛ فشلُ بطاقةٍ لا يوقف الباقي ويُبلَّغ."""
+    move = move or ledger.move
+    done, failed = [], []
+    for c in cands:
+        why = f"مدموج #{c['pr']}" + (" (الرأس المعتمَد أحدُ آباء رأس الطلب)" if c.get("ancestor") else "")
+        try:
+            if c["from"] == "approved":
+                move(c["card"], "pushed", head=c.get("approved_head"), by=by, waive_remote_check=why, note=f"مصالحة: {why}")
+            move(c["card"], "merged", by=by, note=f"مصالحة: {why}")
+            done.append(c["card"])
+        except Exception as exc:  # noqa: BLE001 — بوّابةُ الدفتر قد ترفض؛ تبقى البطاقةُ عرضاً
+            failed.append({"card": c["card"], "why": f"{type(exc).__name__}: {exc}"})
+    return {"written": done, "failed": failed}
+
+
 def reconcile(
     items: dict[str, dict],
     prs: list[dict],
@@ -158,7 +202,7 @@ def fetch_prs(repo: str, limit: int) -> list[dict] | None:
                 "--limit",
                 str(limit),
                 "--json",
-                "number,title,headRefName,state,body,mergeCommit",
+                "number,title,headRefName,headRefOid,state,body,mergeCommit",
             ],
             capture_output=True,
             text=True,
@@ -167,6 +211,20 @@ def fetch_prs(repo: str, limit: int) -> list[dict] | None:
     except FileNotFoundError:
         return None
     return json.loads(p.stdout) if p.returncode == 0 else None
+
+
+def make_ancestor_check(repo: str):
+    """`ancestor(pr, approved) -> True|False|None`: هل الرأسُ المعتمَد في تاريخ رأس الطلب؟ (compare API؛ None = غير مقيس)."""
+    def check(pr: dict, approved: str):
+        head = pr.get("headRefOid")
+        if not head:
+            return None
+        data = _gh_json(["api", f"repos/{repo}/compare/{approved}...{head}"])
+        if not isinstance(data, dict):
+            return None
+        return data.get("status") in ("ahead", "identical")
+
+    return check
 
 
 def _gh_json(args: list[str]):
@@ -253,6 +311,7 @@ def main() -> int:
     ap.add_argument("--repo", default="sh-school/shschool_mvp")
     ap.add_argument("--limit", type=int, default=400)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--write", action="store_true", help="يكتب merged للمرشّحين المؤكَّدين فقط (رمزٌ في العنوان/الفرع + رأسٌ معتمَد أو أحدُ آباء رأس الطلب)؛ بدونه عرضٌ فقط")
     ap.add_argument("--report", action="store_true", help="يكتب ledger/reconcile_latest.json وتقريرَ اليوم reports/reconcile_YYYY-MM-DD.md (عرضٌ فقط)")
     a = ap.parse_args()
     prs = fetch_prs(a.repo, a.limit)
@@ -267,6 +326,10 @@ def main() -> int:
         state, dt.datetime.now(dt.timezone.utc).astimezone(), branches, lambda b: branch_last_commit(a.repo, b)
     )
     res["unmeasured"] = [n for n, v in (("branches", branches),) if v is None]
+    if a.write:
+        cands = write_candidates(state, prs, make_ancestor_check(a.repo))
+        res["write"] = apply_candidates(cands)
+        print(f"كُتب merged: {len(res['write']['written'])}؛ رُفض: {len(res['write']['failed'])}", file=sys.stderr)
     if a.report:
         write_report(res)
     if a.json:

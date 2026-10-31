@@ -66,7 +66,8 @@ def test_directory_trees_normalise_paths_and_skip_meta(tmp_path, monkeypatch):
 
 def test_real_registry_binds_light_0101_and_0104_to_their_folder():
     # 0104 أُضيفت بأمر المالك 2026-10-28: جلستها الحيّة في delivery_manager_work منذ 10-24 ولم يرها الدليل فلم تُوقَظ
-    assert sa.directory_trees() == {"c:/users/mesue/delivery_manager_work": {"0101", "0104"}}
+    assert sa.directory_trees() == {"c:/users/mesue/delivery_manager_work": {"0101", "0104"},
+                                    "c:/users/mesue/delivery_manager_work/.claude/worktrees/*": {"0109", "0110"}}
 
 
 def test_canonical_follows_chain_and_stops_on_cycle():

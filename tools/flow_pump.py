@@ -1125,12 +1125,105 @@ def serial_block(num, prs: list[dict], armed_now: list, sh) -> str | None:
     return None
 
 
-def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -> list[str]:
-    """(D-450م) دمجٌ آليّ عند خضرة CI لطلبٍ سطرُ اعتماده سليم: `--auto` مقيَّدٌ بالرأس (`--match-head-commit`) فلا يُدمج غيرُه.
-    (W-20261022-020) وطلبٌ واحدٌ فقط لكلّ نشر: لا تفعيلَ والطابورُ أو main مشغولان (serial_block)."""
+def disarm_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -> list[str]:
+    """(W-20261028-032، واقعة #1285) `--match-head-commit` يتحقّق من الرأس عند التفعيل فقط؛ فكلُّ دورةٍ: طلبٌ مفعَّلٌ عليه الدمجُ الآليّ
+    ورأسُه الحاليّ بلا اعتمادٍ ثابتٍ يُعطَّل تفعيلُه (`--disable-auto`) ويُسجَّل في ملاحظة البطاقة وصندوق 0601. بعد التعطيل لا يتكرّر لأنّ autoMergeRequest يفرغ."""
     sh = sh or _sh
     out: list[str] = []
+    pairs, _ = card_prs(states, prs)
+    for cid, pr in sorted(pairs.items()):
+        if not pr.get("autoMergeRequest"):
+            continue
+        num, head = pr.get("number"), pr["headRefOid"][:8]
+        if approval_ok(cid, head):
+            continue
+        if not apply:
+            out.append(f"{cid}: #{num} دمجٌ آليٌّ مفعَّلٌ على رأس {head} بلا اعتمادٍ ثابت — يُعطَّل (عرض)")
+            continue
+        rc, msg = sh(["gh", "pr", "merge", str(num), "--disable-auto"], ac.REPO_DIR)
+        if rc != 0:
+            out.append(f"{cid}: #{num} تعطيلُ الدمج الآليّ على رأس {head} بلا اعتماد: ✘ {_tail(msg)}")
+            continue
+        text = f"عُطِّل الدمجُ الآليّ على #{num}: رأسُه {head} بلا اعتمادٍ ثابتٍ (تغيّر بعد التفعيل) — مضخّة التدفّق"
+        try:
+            ledger.add_note(cid, text, SENDER)
+            import inbox  # noqa: PLC0415
+
+            inbox.send("0601", PUMP_FROM, text)
+        except Exception:  # noqa: BLE001 — التعطيلُ نجح؛ التبليغُ لا يُسقط الدورة
+            pass
+        out.append(f"{cid}: #{num} عُطِّل الدمجُ الآليّ — رأس {head} بلا اعتمادٍ ثابت ✔")
+    return out
+
+
+#: (W-20261028-006، D-429م) نافذتا الدمج الآليّ بتوقيت الدوحة كلَّ يوم: [بداية، نهاية) بالدقائق من منتصف الليل؛ ساعتان لأنّ المضخّة تدور بالخطّاف لا بساعةٍ خارجيّة
+MERGE_WINDOWS = pump_health.MERGE_WINDOWS
+#: حالةُ النوافذ: مفتاحُها «التاريخ:الدفعة» ← {"blocked": [...], "eligible": [...], "armed": [...], "alerted": bool}؛ يقرؤها pump_health
+MERGE_WINDOW_STATE = HERE.parent / "ledger" / "merge_window_state.json"
+
+
+def merge_window(now=None) -> str | None:
+    """معرّفُ نافذةِ الدمج المفتوحةِ الآن («2026-10-30:1») أو None خارج النافذتين؛ البدايةُ مشمولةٌ والنهايةُ لا."""
+    from datetime import datetime  # noqa: PLC0415
+
+    now = (now or datetime.now(ledger.DOHA)).astimezone(ledger.DOHA)
+    minute = now.hour * 60 + now.minute
+    for batch, start, end in MERGE_WINDOWS:
+        if start <= minute < end:
+            return f"{now.date().isoformat()}:{batch}"
+    return None
+
+
+def _window_state() -> dict:
+    try:
+        return json.loads(MERGE_WINDOW_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_window_state(state: dict) -> None:
+    MERGE_WINDOW_STATE.parent.mkdir(parents=True, exist_ok=True)
+    MERGE_WINDOW_STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _window_report(window: str, blocked: list[tuple[str, object, str]], eligible: list, armed: list, apply: bool) -> list[str]:
+    """يسجّل في حالة النافذة المؤهَّلَ والمفعَّل، ويبلّغ 0601 بغير المؤهَّل مرّةً لكلّ (نافذة، بطاقة، سبب) في رسالةٍ واحدة."""
+    state = _window_state()
+    entry = state.setdefault(window, {"blocked": [], "eligible": [], "armed": [], "alerted": False})
+    new = [(cid, num, why) for cid, num, why in blocked if f"{cid}#{num}:{why}" not in entry["blocked"]]
+    out: list[str] = []
+    if new:
+        out.append(f"نافذة {window}: غيرُ مؤهَّل ({len(new)}) يُبلَّغ به 0601 مرّةً" + ("" if apply else " (عرض)"))
+    if not apply:
+        return out
+    entry["eligible"] = sorted(set(entry["eligible"]) | {n for n in eligible if n is not None})
+    entry["armed"] = sorted(set(entry["armed"]) | {n for n in armed if n is not None})
+    if new:
+        try:
+            import inbox  # noqa: PLC0415
+
+            text = f"[مضخّة:نافذة {window}] طلباتٌ لم تتأهّل للدمج الآليّ هذه النافذة: " + "؛ ".join(f"{cid} #{num}: {why}" for cid, num, why in new)
+            inbox.send("0601", PUMP_FROM, text)
+        except Exception as exc:  # الإبلاغُ لا يُسقط الدورة، ولا يُسجَّل المبلَّغُ به فيعاد في الدورة التالية
+            return out + [f"نافذة {window}: تعذّر الإبلاغ ({exc})"]
+        entry["blocked"].extend(f"{cid}#{num}:{why}" for cid, num, why in new)
+    _write_window_state(state)
+    return out
+
+
+def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=None) -> list[str]:
+    """(D-450م) دمجٌ آليّ عند خضرة CI لطلبٍ سطرُ اعتماده سليم: `--auto` مقيَّدٌ بالرأس (`--match-head-commit`) فلا يُدمج غيرُه.
+    (W-20261022-020) وطلبٌ واحدٌ فقط لكلّ نشر: لا تفعيلَ والطابورُ أو main مشغولان (serial_block).
+    (W-20261028-006) ولا تفعيلَ خارج نافذتَي النشر 14:30–16:30 و19:00–21:00 بالدوحة (merge_window): سطرٌ واحد بلا استدعاء gh؛
+    وما فُعِّل داخلها يبقى مفعَّلاً فيُدمج عند خضرة CI ولو بعد إغلاقها، وغيرُ المؤهَّل يُبلَّغ به 0601 مرّةً لكلّ نافذة."""
+    sh = sh or _sh
+    window = merge_window(now)
+    if window is None:
+        return ["خارج نافذة النشر (14:30–16:30 و19:00–21:00 بتوقيت الدوحة) — لا تفعيلَ للدمج الآليّ"]
+    out: list[str] = []
     armed_now: list = []
+    blocked: list[tuple[str, object, str]] = []
+    eligible: list = []
     for cid, pr, _item in approved_prs(states, prs):
         num, full = pr.get("number"), pr["headRefOid"]
         head = full[:8]
@@ -1138,14 +1231,18 @@ def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -
             continue  # الدمجُ الآليّ مفعَّلٌ أصلاً على هذا الطلب
         if not line_ok(pr.get("body"), head, cid):
             out.append(f"{cid}: #{num} بلا سطر اعتمادٍ سليمٍ للرأس {head} — لا دمج")
+            blocked.append((cid, num, f"بلا سطر اعتمادٍ سليمٍ للرأس {head}"))
             continue
         why = merge_block(cid, pr)
         if why:
             out.append(f"{cid}: #{num} لا دمجَ آليّاً — {why}")
+            blocked.append((cid, num, why))
             continue
         if not approval_ok(cid, head):
             out.append(f"{cid}: #{num} رأس {head} بلا اعتمادٍ ثابت — لا دمج")
+            blocked.append((cid, num, f"رأس {head} بلا اعتمادٍ ثابت"))
             continue
+        eligible.append(num)
         wait = serial_block(num, prs, armed_now, sh)
         if wait:
             out.append(f"{cid}: #{num} ⏸ يؤجَّل الدمجُ الآليّ — {wait}")
@@ -1162,7 +1259,8 @@ def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -
             out.append(f"{cid}: #{num} دمجٌ آليّ عند خضرة CI: ✔")
         else:
             out.append(f"{cid}: #{num} نجح الأمرُ لكنّ الدمجَ الآليّ غيرُ مفعَّلٍ على GitHub (autoMergeRequest فارغ) — لا تأشير")
-    return out
+    armed = armed_now + [pr.get("number") for _c, pr, _i in approved_prs(states, prs) if pr.get("autoMergeRequest")]
+    return out + _window_report(window, blocked, eligible, armed, apply)
 
 
 def auto_merge_armed(num, sh) -> bool:
@@ -1246,6 +1344,25 @@ NO_MERGE = HERE.parent / "ledger" / "flow_pump.nomerge"
 STALE_LOCK_S = 900
 
 
+RECONCILE_REPOS = ("sh-school/shschool_mvp", "mesuef1974/maestro-v2")
+
+
+def reconcile_pass(write: bool, run=None) -> list[str]:
+    """(W-20261028-030) مصالحةُ الدفتر مع المستودعين: عرضٌ فقط ما لم يُمرَّر `write` (--reconcile-write بعد دورتَي العرض).
+    فشلُ الأداة أو تعذّرُها لا يوقف الدورة أبداً: يُطبع سطراً ويُكمل."""
+    run = run or _sh
+    out = []
+    for repo in RECONCILE_REPOS:
+        cmd = [sys.executable, str(HERE / "ledger_reconcile.py"), "--repo", repo] + (["--write"] if write else [])
+        try:
+            rc, text = run(cmd)
+        except Exception as exc:  # noqa: BLE001 — المصالحةُ مساعدةٌ لا تُسقط الدورة
+            out.append(f"{repo}: تعذّر ({type(exc).__name__}: {exc})")
+            continue
+        out.append(f"{repo}: " + (_tail(text, 240) if rc == 0 else f"رمز {rc} — {_tail(text, 160)}"))
+    return out
+
+
 def _lock() -> bool:
     """قفلٌ بملفّ: دورتان لا تتداخلان؛ القفلُ الأقدم من 15 دقيقة يُعدّ ميتاً."""
     import time
@@ -1284,6 +1401,8 @@ def _run(argv=None) -> int:
     ap.add_argument("--no-line", action="store_true", help="بلا كتابة سطر الاعتماد في الطلب")
     ap.add_argument("--no-merge", action="store_true", help="بلا الدمج الآليّ")
     ap.add_argument("--no-ci", action="store_true", help="بلا إعادة الفحوص العالقة")
+    ap.add_argument("--no-reconcile", action="store_true", help="بلا مصالحة الدفتر مع المستودعين")
+    ap.add_argument("--reconcile-write", action="store_true", help="المصالحةُ تكتب merged للمؤكَّد؛ بدونه عرضٌ فقط (أوّل دورتين عرضٌ ثمّ يُفعَّل)")
     ap.add_argument("--no-root-follow", action="store_true", help="بلا تقديم الجذر إلى main بعد الدمج")
     a = ap.parse_args(argv)
 
@@ -1338,6 +1457,8 @@ def _run(argv=None) -> int:
     if NO_MERGE.exists():
         print(f"دمج: معطَّل بمفتاح ({NO_MERGE.name})")
     elif not a.no_merge:
+        for line in disarm_pass(states, prs, a.apply):
+            print("تعطيل: " + line)
         for line in merge_pass(states, prs, a.apply):
             print("دمج: " + line)
     if not a.no_ci:
@@ -1346,6 +1467,9 @@ def _run(argv=None) -> int:
     if not a.no_root_follow:
         for line in root_follow_pass(a.apply):
             print("جذر: " + line)
+    if not a.no_reconcile:
+        for line in reconcile_pass(a.apply and a.reconcile_write):
+            print("مصالحة: " + line)
     print("— مرحلة النشر (ledger_sync) —")
     if a.skip:
         orig = ledger_sync.plan
@@ -1359,6 +1483,8 @@ def _run(argv=None) -> int:
         st = ledger.reduce_state(evs)
         for line in pump_health.escalation_pass({c: v for c, v in st.items() if c not in a.skip}, a.apply):
             print("تصعيد: " + line)
+        for line in pump_health.missed_window_pass(a.apply, path=MERGE_WINDOW_STATE):
+            print("نافذة: " + line)
         if a.apply and pump_health.write_daily(st, evs):
             print("صحة: كُتبت لقطةُ اليوم")
     except Exception as exc:  # الرصدُ لا يُسقط الدورة

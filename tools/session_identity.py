@@ -63,64 +63,31 @@ def _newest_first(base: Path) -> list[Path]:
 #: W-20261028-011: 3 ثوانٍ لم تكفِ (0101 عُرّفت 0104 يوم 10-28)؛ نصبر حتى 15 ثانيةً ثمّ نقول «لا أعرف» ولا نخمّن
 ID_WAIT_S = 15.0
 ID_POLL_S = 0.5
-#: عمرُ علامة المسح الذاتيّ السارية (يطابق PENDING_TTL_S في session_state)
-AUTO_CLEAR_TTL_S = 900
-
-
-def auto_clear_nums(root: Path | None = None) -> set[str]:
-    """أرقامُ الجلسات صاحبة علامة مسحٍ ذاتيّ سارية (handover_notes/auto_clear_<رقم>.json)؛ تتجاهل التالف والمنتهي."""
-    out: set[str] = set()
-    for f in ((root or ROOT) / "handover_notes").glob("auto_clear_*.json"):
-        try:
-            d = json.loads(f.read_text(encoding="utf-8"))
-            created = datetime.fromisoformat(d["created_at"])
-            if (datetime.now(created.tzinfo) - created).total_seconds() <= AUTO_CLEAR_TTL_S:
-                out.add(str(d["num"]))
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return out
-
-
 def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: float = ID_WAIT_S,
-              pending: set[str] | None = None, sleep=time.sleep) -> tuple[str | None, list[str]]:
+              sleep=time.sleep) -> tuple[str | None, list[str]]:
     """(العنوانُ الحيّ، المرشَّحون) كما في `_resolve`؛ مع معرّفِ جلسةٍ لم يُطابَق بعدُ نعيد قراءةَ الملفّات حتى `wait_s` ثانيةً
-    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook). وعند الالتباس تُختار صاحبةُ علامة المسح السارية إن كانت وحيدة."""
+    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook)."""
     waited = 0.0
     while True:
-        title, candidates, by_id, focused = _resolve(cwd, session_id, base)
+        title, candidates, by_id = _resolve(cwd, session_id, base)
         if by_id or not session_id or waited >= wait_s:
             break
         sleep(ID_POLL_S)
         waited += ID_POLL_S
-    if title is None and len(candidates) > 1:
-        marked = auto_clear_nums() if pending is None else pending
-        owners = [c for c in candidates if _num_of(c) in marked]
-        if len(owners) == 1:
-            return owners[0], []
-        chosen = _last_focused(candidates, focused)
-        if chosen is not None:
-            return chosen, []
     return title, candidates
 
 
-def _last_focused(candidates: list[str], focused: dict[str, int]) -> str | None:
-    """آخرُ تفكيكٍ للالتباس: البدءُ والمسحُ يقعان في الجلسة التي يركّز عليها المالك، فصاحبةُ أحدث lastFocusedAt هي الباديةُ
-    (واقعةُ 2026-10-27: 0101 بدأت برسالةٍ من 0501 فلم يُكتب معرّفُها في المهلة وطُبع «لا أعرف أيَّها أنت» رغم أنّ 0104 خاملةٌ
-    ولم تُركَّز منذ أقدم). يُعاد None حين تتساوى الأحدثُ أو يغيب الحقل، فلا تخمين."""
-    stamps = sorted(((focused.get(c, 0), c) for c in candidates), reverse=True)
-    if len(stamps) < 2 or stamps[0][0] <= 0 or stamps[0][0] == stamps[1][0]:
-        return None
-    return stamps[0][1]
+def _in_root(cwd: str) -> bool:
+    """جذرُ المجلّد المشترك (أو شجرةٌ داخله غير المنصّة): جلساتُه تُعرَف بالمعرّف لا بالشجرة."""
+    return bool(cwd) and ROOT_NAME in cwd.replace("\\", "/").lower() and PLATFORM not in cwd.replace("\\", "/")
 
 
-def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, list[str], bool, dict[str, int]]:
-    """(العنوانُ الحيّ، المرشَّحون عند الالتباس، أبالمعرّف؟، lastFocusedAt لكلّ مرشَّح): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)،
-    ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
+def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, list[str], bool]:
+    """(العنوانُ الحيّ، المرشَّحون عند الالتباس): أوّلاً بمعرّف الجلسة (cliSessionId أو ما سبقه)، ثمّ بالشجرة إن لم تشاركها جلسةٌ حيّةٌ أخرى.
 
-    شجرةٌ تشترك فيها جلستان حيّتان بلا معرّفٍ يميّز: (None، العناوين) فيفكّ app_title الالتباسَ بعلامة المسح أو بآخر تركيز."""
+    شجرةٌ تشترك فيها جلستان حيّتان بلا معرّفٍ يميّز: (None، العناوين) فيسأل الهوك 0101 بدل أن يخمّن ويضلّل."""
     base = SESSIONS if base is None else base
     by_tree: dict[str, str] = {}
-    focused: dict[str, int] = {}
     files = _newest_first(base)
     if session_id:  # مسارٌ سريع: الجلسةُ الحيّةُ أحدثُ الملفّات؛ لا نحلّل إلا ما يحوي معرّفها نصّاً
         prior_hit = None  # تدرّج الأولويّة: sessionId/cliSessionId يغلبان priorCliSessionIds، والأحدثُ تعديلاً داخل كلٍّ
@@ -139,11 +106,11 @@ def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, 
             if not NUM.match(title) or d.get("isArchived"):
                 continue
             if session_id in (d.get("sessionId"), d.get("cliSessionId")):
-                return title, [], True, {}
+                return title, [], True
             if prior_hit is None and session_id in (d.get("priorCliSessionIds") or []):
                 prior_hit = title
         if prior_hit is not None:
-            return prior_hit, [], True, {}
+            return prior_hit, [], True
     for f in files:
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
@@ -154,20 +121,16 @@ def _resolve(cwd: str, session_id: str, base: Path | None) -> tuple[str | None, 
             continue
         ids = {d.get("sessionId"), d.get("cliSessionId"), *(d.get("priorCliSessionIds") or [])}
         if session_id and session_id in ids:
-            return title, [], True, {}
+            return title, [], True
         tree = _norm(str(d.get("worktreePath") or d.get("cwd") or ""))
         if tree and _norm(cwd).startswith(tree):
             by_tree[title] = tree
-            try:
-                focused[title] = int(d.get("lastFocusedAt") or 0)
-            except (TypeError, ValueError):
-                focused[title] = 0
     if len(by_tree) > 1:  # الأخصّ يغلب: شجرةٌ داخل مجلّد جلسةٍ أخرى لا تلتبس بها
         longest = max(len(t) for t in by_tree.values())
         by_tree = {k: v for k, v in by_tree.items() if len(v) == longest}
-    if len(by_tree) == 1:
-        return next(iter(by_tree)), [], False, {}
-    return None, sorted(by_tree), False, {k: focused.get(k, 0) for k in by_tree}
+    if len(by_tree) == 1 and not (session_id and _in_root(cwd)):  # W-20261028-024: معرّفٌ غير مطابق في الجذر لا يُحسب رقماً بالشجرة
+        return next(iter(by_tree)), [], False
+    return None, sorted(by_tree), False
 
 
 def _num_of(title: str | None) -> str | None:
@@ -183,7 +146,7 @@ def ambiguous_message(where: str, candidates: list[str]) -> str:
             "وإن تعذّر فاسأل 0101 ولا تفترض.")
 
 
-def message(title: str | None, tree: str | None) -> str:
+def message(title: str | None, tree: str | None, sid: str = "") -> str:
     if title is None:
         return ("[هويّة الجلسة] لم أجد اسمَ هذه الشجرة (" + str(tree) + ") في session_names.json — "
                 "اسأل 0101 عن رقمك قبل أيّ عمل، ولا تفترض أنّك مرنة 04SS.")
@@ -216,7 +179,7 @@ def directory_lines(num: str | None = None) -> list[str]:
         import session_directory
 
         d = {k: v for k, v in session_directory.entries().items() if k in (num, "0101")}  # معرّفُ الجلسة نفسها و0101 فقط؛ لغيرهما session_directory.py (W-20261026-002)
-        out.append("[المراسلة بين الجلسات] ما تريده من المالك يُرفع إلى 0101 وهي وحدَها تطرحه بأداة ask (D-495م)؛ قاعدةُ المالك ومتابعةُ الإحالة وعناوينُ الجلسات: `C:/Users/mesue/delivery_manager_work/role_cards/COMMON.md` قسم «المراسلة بين الجلسات» (اقرأه قبل أول إرسال). "
+        out.append("[المراسلة بين الجلسات] ما تريده من المالك يُرفع إلى 0101 وهي وحدَها تطرحه بأداة ask (D-495م)؛ قاعدةُ المالك ومتابعةُ الإحالة وعناوينُ الجلسات: `C:/Users/mesue/delivery_manager_work/role_cards/PROCEDURES.md` قسم «المراسلة بين الجلسات» (اقرأه قبل أول إرسال). "
                    "المعرّفاتُ الحيّة (تتبدّل عند إعادة التشغيل؛ للتحقّق `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`): "
                    + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
     except Exception:  # noqa: BLE001
@@ -298,7 +261,7 @@ def main() -> int:
         if live is None:
             mark_pending(session_id, cwd)
         if live is not None:
-            print(message(live, None))
+            print(message(live, None, session_id))
         elif candidates:
             print(ambiguous_message("هذا المجلّد", candidates))
         else:
@@ -324,7 +287,7 @@ def main() -> int:
         mark_pending(session_id, cwd)
         print(ambiguous_message(f"هذه الشجرة ({tree})", candidates))
     else:
-        print(message(live or lookup(cwd, names), tree))
+        print(message(live or lookup(cwd, names), tree, session_id))
     for line in directory_lines(_num_of(live or lookup(cwd, names))):
         print(line)
     try:  # تحذيرٌ فقط (لا حجب): شجرةٌ بلا ترقية مهارة الهويّة البصريّة (#897) تعمل بنسخةٍ قديمةٍ منها

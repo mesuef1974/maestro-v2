@@ -27,3 +27,33 @@ handover_notes/state_*.json
 
 # نسخ أدوات قديمة أُخرجت من tools بلا حذف (W-20261025-016)
 archive_local/
+
+# حالة التشغيل المولَّدة في الجذر (W-20261028-017): تكتبها المضخّات والخطّافات فلا تُتبَّع
+ledger/pump_*
+ledger/prepush_*
+ledger/pr_watch_state.json
+ledger/periodic_state.json
+ledger/pending_wakes.jsonl
+ledger/roadmap_queue.jsonl
+ledger/flow_pump.*
+ledger/ci_reruns.json
+ledger/inbox/
+tools/_*.txt
+wake_log.jsonl*
+flow_watch_latest.txt
+flow_watch_state.json
+pr_watch_latest.txt
+preview_alert_latest.txt
+unblock_queue.json
+identity_guard.mode
+
+# مذكّرات التسليم تبقى محلّيّاً (قرار 0101 2026-10-29: لا تُودَع ولا تُحذف؛ تُنقل خارج المستودع لاحقاً)
+handover_notes/
+
+# أدواتُ المالك خارج المستودع عمداً: تضبط كلماتِ مرور حسابات المعاينة (لا git ولا CI)
+tools/reset_preview_passwords.sh
+tools/preview_accounts_registry.json
+
+# نسخٌ احتياطيّة وملفّاتٌ مؤقّتة محلّيّة
+backup_*/
+tmp/
