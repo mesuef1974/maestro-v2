@@ -35,8 +35,15 @@ APPROVED_STATES = {"approved", "pushed", "merged", "published", "closed"}
 APPROVAL_LINE = re.compile(r"اعتُمد من المالك[^\n]*|اعتمد المالك[^\n]*")
 
 
+RUN_TIMEOUT_S = 120
+
+
 def run(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    #: W-20261101-002: تعليقُ gh يعلّق دورةَ المضخّة حتى موت القفل (900 ث)؛ المهلةُ نفسُها في push_approved.
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=RUN_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return 124, f"انتهت المهلة ({RUN_TIMEOUT_S} ث): {' '.join(cmd[:3])}"
     return p.returncode, (p.stdout or "")
 
 
