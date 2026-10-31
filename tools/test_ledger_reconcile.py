@@ -148,5 +148,63 @@ class PublishedAndBranchTest(unittest.TestCase):
         w.assert_not_called()
 
 
+class WriteCandidatesTest(unittest.TestCase):
+    """(W-20261028-030) الكتابة إلى merged بدليلٍ: الرمزُ في العنوان أو الفرع، والرأسُ المعتمَدُ = رأسُ الطلب المدموج."""
+
+    def merged(self, n, head, title="", branch=""):
+        return {**pr(n, "MERGED", title=title, branch=branch), "headRefOid": head}
+
+    def test_title_code_and_matching_head_is_a_candidate(self):
+        items = {"W-20261028-006": {"state": "approved", "approved_head": "aaaa1111"}}
+        out = lr.write_candidates(items, [self.merged(1292, "aaaa1111bbbb", title="fix (W-20261028-006)")])
+        self.assertEqual([(c["card"], c["pr"]) for c in out], [("W-20261028-006", 1292)])
+
+    def test_branch_code_and_matching_head_is_a_candidate(self):
+        items = {"W-20261027-017": {"state": "pushed", "approved_head": "cccc3333"}}
+        out = lr.write_candidates(items, [self.merged(1290, "cccc3333dddd", branch="claude/w20261027-017-x")])
+        self.assertEqual([c["card"] for c in out], ["W-20261027-017"])
+
+    def test_head_mismatch_writes_nothing(self):
+        items = {"W-20261028-006": {"state": "approved", "approved_head": "aaaa1111"}}
+        out = lr.write_candidates(items, [self.merged(1292, "eeee5555ffff", title="fix (W-20261028-006)")])
+        self.assertEqual(out, [])
+
+    def test_code_only_in_body_writes_nothing(self):
+        items = {"W-20261028-006": {"state": "approved", "approved_head": "aaaa1111"}}
+        p = {**self.merged(1292, "aaaa1111bbbb", title="fix"), "body": "مستقلّة عنه W-20261028-006"}
+        self.assertEqual(lr.write_candidates(items, [p]), [])
+
+    def test_open_pr_writes_nothing(self):
+        items = {"W-20261028-006": {"state": "approved", "approved_head": "aaaa1111"}}
+        p = {**pr(1292, "OPEN", title="fix (W-20261028-006)"), "headRefOid": "aaaa1111bbbb"}
+        self.assertEqual(lr.write_candidates(items, [p]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_write_candidates_accepts_ancestor_head_with_evidence():
+    items = {"W-20261028-030": {"state": "approved", "approved_head": "aaaaaaaa11"}}
+    prs = [{"number": 7, "state": "MERGED", "title": "W-20261028-030: x", "headRefName": "b", "headRefOid": "bbbbbbbb22"}]
+    assert lr.write_candidates(items, prs) == []  # بلا فحص أبوّة يبقى عرضاً
+    assert lr.write_candidates(items, prs, lambda pr, a: None) == []
+    assert lr.write_candidates(items, prs, lambda pr, a: False) == []
+    got = lr.write_candidates(items, prs, lambda pr, a: True)
+    assert got and got[0]["ancestor"] is True and got[0]["pr"] == 7
+
+
+def test_apply_candidates_passes_through_pushed_and_reports_failures():
+    calls = []
+
+    def fake(card, state, **kw):
+        calls.append((card, state))
+        if card == "W-2":
+            raise RuntimeError("ترفض البوّابة")
+
+    cands = [{"card": "W-1", "from": "approved", "pr": 1, "approved_head": "aaaaaaaa"},
+             {"card": "W-2", "from": "pushed", "pr": 2},
+             {"card": "W-3", "from": "pushed", "pr": 3}]
+    res = lr.apply_candidates(cands, fake)
+    assert res["written"] == ["W-1", "W-3"] and res["failed"][0]["card"] == "W-2"
+    assert calls[:2] == [("W-1", "pushed"), ("W-1", "merged")]
