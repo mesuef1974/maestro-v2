@@ -425,7 +425,7 @@ def _log_once(text: str) -> None:
         from datetime import datetime
 
         with LOG.open("a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat(timespec='seconds')} {text}\n")
+            f.write(f"{datetime.now(ledger.DOHA).isoformat(timespec='seconds')} {text}\n")
     except OSError:
         pass
 
@@ -1376,6 +1376,73 @@ def _lock() -> bool:
         return False
 
 
+STATUS = HERE.parent / "ledger" / "LAST_STATUS.json"
+FAIL_MARK = "✘"
+
+
+class _FailTee:
+    """يمرّر الخرجَ كما هو ويعدّ أسطرَ الفشل (✘) — W-20261101-002: فشلُ مرحلةٍ لا يعود rc=0."""
+
+    def __init__(self, stream):
+        self.stream, self.fails, self.lines = stream, [], 0
+
+    def write(self, s):
+        for ln in s.splitlines():
+            if ln.strip():
+                self.lines += 1
+                if FAIL_MARK in ln:
+                    self.fails.append(ln.strip()[:200])
+        return self.stream.write(s)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+_TEE: _FailTee | None = None
+
+
+def honest_rc(rc: int, tee: _FailTee | None = None) -> int:
+    """rc الدورة الصادق: ما أعاده ledger_sync، أو 1 إن ظهر ✘ في أيّ مرحلة."""
+    tee = tee or _TEE
+    return rc or (1 if tee is not None and tee.fails else 0)
+
+
+def write_status(rc: int, tee: _FailTee | None, apply: bool, path: Path | None = None) -> None:
+    """ledger/LAST_STATUS.json بصيغة عقد المخرج: ok/finished (بإزاحة الدوحة)/counts/err؛ تعذّرُ الكتابة يُبقي آخرَ قيمةٍ سليمة."""
+    from datetime import datetime
+
+    path = path or STATUS
+    fails = tee.fails if tee else []
+    doc = {
+        "ok": rc == 0,
+        "rc": rc,
+        "apply": apply,
+        "finished": datetime.now(ledger.DOHA).isoformat(timespec="seconds"),
+        "counts": {"lines": tee.lines if tee else 0, "failed": len(fails)},
+        "err": fails[:5],
+    }
+    try:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def periodic_pass(apply: bool) -> list[str]:
+    """المهامّ الدوريّة المستحقّة (كانت من wake_monitor): رسالةٌ واحدةٌ لكلّ صاحبٍ إلى صندوقه؛ فشلُها ✘ ولا يُسقط الدورة."""
+    try:
+        import periodic_tasks
+
+        sent = periodic_tasks.run_due(dry_run=not apply)
+    except Exception as exc:  # noqa: BLE001
+        return [f"{FAIL_MARK} تعذّرت المهامّ الدوريّة: {type(exc).__name__}: {str(exc)[:80]}"]
+    return [f"{'أُرسلت' if apply else 'مستحقّة'} {owner}: {', '.join(ids)}" for owner, ids in sorted(sent.items())]
+
+
 def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     if OFF.exists():
@@ -1384,9 +1451,13 @@ def main(argv=None) -> int:
     if not _lock():
         print("دورةٌ أخرى تعمل — تخطٍّ")
         return 0
+    global _TEE
+    _TEE = tee = _FailTee(sys.stdout)
+    real_out, sys.stdout = sys.stdout, tee
     try:
         return _run(argv)
     finally:
+        sys.stdout = real_out
         LOCK.unlink(missing_ok=True)
 
 
@@ -1489,11 +1560,16 @@ def _run(argv=None) -> int:
             print("صحة: كُتبت لقطةُ اليوم")
     except Exception as exc:  # الرصدُ لا يُسقط الدورة
         print(f"صحة المضخّة: تعذّر ({exc})")
+    print("— المهامّ الدوريّة —")
+    for line in periodic_pass(a.apply):
+        print("دوريّة: " + line)
+    rc = honest_rc(rc)
     if a.apply:
         from datetime import datetime
 
         with LOG.open("a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat(timespec='seconds')} rc={rc}\n")
+            f.write(f"{datetime.now(ledger.DOHA).isoformat(timespec='seconds')} rc={rc}\n")
+        write_status(rc, _TEE, True)
     return rc
 
 
