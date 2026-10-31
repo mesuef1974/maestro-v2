@@ -7,7 +7,7 @@ import re
 import tempfile
 import time
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -536,6 +536,9 @@ class MergePass(unittest.TestCase):
         with (
             mock.patch.object(fp, "approval_ok", return_value=ok),
             mock.patch.object(fp.ac, "security_approved", return_value=security),
+            mock.patch.object(fp, "merge_window", return_value="2026-10-30:1"),
+            mock.patch.object(fp, "MERGE_WINDOW_STATE", Path(tempfile.mkdtemp()) / "w.json"),
+            mock.patch("inbox.send"),
         ):
             lines = fp.merge_pass(_states(), [pr], apply, sh)
         return lines, sh
@@ -603,6 +606,8 @@ class SerialMerge(unittest.TestCase):
         with (
             mock.patch.object(fp, "approval_ok", return_value=True),
             mock.patch.object(fp.ac, "security_approved", return_value=None),
+            mock.patch.object(fp, "merge_window", return_value="2026-10-30:1"),
+            mock.patch.object(fp, "MERGE_WINDOW_STATE", Path(tempfile.mkdtemp()) / "w.json"),
         ):
             lines = fp.merge_pass(states or _states(), prs, apply, sh)
         return lines, sh
@@ -1679,3 +1684,71 @@ class DisarmPass(unittest.TestCase):
         lines, sh, note, send = self.run_pass(_pr(head=self.NEW, autoMergeRequest={"mergeMethod": "SQUASH"}), apply=False)
         self.assertEqual(sh.calls, [])
         self.assertIn("(عرض)", lines[0])
+
+
+class MergeWindow(unittest.TestCase):
+    """W-20261028-006: نافذتا الدمج الآليّ 14:30–16:30 و19:00–21:00 بالدوحة؛ البدايةُ مشمولةٌ والنهايةُ لا."""
+
+    @staticmethod
+    def at(h, m, day=30):
+        return datetime(2026, 10, day, h, m, tzinfo=fp.ledger.DOHA)
+
+    def test_boundaries_of_both_windows(self):
+        cases = {
+            (14, 29): None, (14, 30): "2026-10-30:1", (16, 29): "2026-10-30:1", (16, 30): None,
+            (18, 59): None, (19, 0): "2026-10-30:2", (20, 59): "2026-10-30:2", (21, 0): None,
+            (0, 0): None, (12, 0): None,
+        }
+        for (h, m), want in cases.items():
+            self.assertEqual(fp.merge_window(self.at(h, m)), want, f"{h}:{m}")
+
+    def test_window_follows_doha_clock_not_the_machine_zone(self):
+        utc = datetime(2026, 10, 30, 11, 30, tzinfo=timezone.utc)  # 14:30 بالدوحة
+        self.assertEqual(fp.merge_window(utc), "2026-10-30:1")
+
+    def test_outside_window_no_gh_call_and_one_line(self):
+        sh = ViewSh()
+        with (
+            mock.patch.object(fp, "approval_ok", return_value=True),
+            mock.patch.object(fp.ac, "security_approved", return_value=None),
+        ):
+            lines = fp.merge_pass(_states(), [_pr(body=LINED)], True, sh, now=self.at(16, 30))
+        self.assertEqual(sh.calls, [])
+        self.assertEqual(len(lines), 1)
+        self.assertIn("خارج نافذة النشر", lines[0])
+
+    def run_in_window(self, prs, state_path, ok=True):
+        sh = ViewSh()
+        with (
+            mock.patch.object(fp, "approval_ok", return_value=ok),
+            mock.patch.object(fp.ac, "security_approved", return_value=None),
+            mock.patch.object(fp, "MERGE_WINDOW_STATE", state_path),
+            mock.patch("inbox.send") as send,
+        ):
+            lines = fp.merge_pass(_states(), prs, True, sh, now=self.at(15, 0))
+        return lines, sh, send
+
+    def test_eligible_pr_is_armed_once_inside_window(self):
+        with tempfile.TemporaryDirectory() as d:
+            lines, sh, _ = self.run_in_window([_pr(body=LINED)], Path(d) / "w.json")
+        merges = [c for c in sh.calls if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(len(merges), 1)
+        self.assertTrue(any("✔" in x for x in lines))
+
+    def test_ineligible_is_reported_to_0601_once_per_window(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d) / "w.json"
+            _, sh, send = self.run_in_window([_pr(body=LINED)], state, ok=False)
+            self.assertEqual([c for c in sh.calls if c[:3] == ["gh", "pr", "merge"]], [])
+            self.assertEqual(send.call_count, 1)
+            self.assertEqual(send.call_args.args[0], "0601")
+            _, _, send2 = self.run_in_window([_pr(body=LINED)], state, ok=False)
+            self.assertEqual(send2.call_count, 0)  # لا تكرار في دورةٍ ثانية من النافذة نفسها
+
+    def test_state_records_eligible_and_armed(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d) / "w.json"
+            self.run_in_window([_pr(body=LINED)], state)
+            entry = json.loads(state.read_text(encoding="utf-8"))["2026-10-30:1"]
+        self.assertEqual(entry["eligible"], [7])
+        self.assertEqual(entry["armed"], [7])

@@ -1156,12 +1156,74 @@ def disarm_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) 
     return out
 
 
-def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -> list[str]:
+#: (W-20261028-006، D-429م) نافذتا الدمج الآليّ بتوقيت الدوحة كلَّ يوم: [بداية، نهاية) بالدقائق من منتصف الليل؛ ساعتان لأنّ المضخّة تدور بالخطّاف لا بساعةٍ خارجيّة
+MERGE_WINDOWS = pump_health.MERGE_WINDOWS
+#: حالةُ النوافذ: مفتاحُها «التاريخ:الدفعة» ← {"blocked": [...], "eligible": [...], "armed": [...], "alerted": bool}؛ يقرؤها pump_health
+MERGE_WINDOW_STATE = HERE.parent / "ledger" / "merge_window_state.json"
+
+
+def merge_window(now=None) -> str | None:
+    """معرّفُ نافذةِ الدمج المفتوحةِ الآن («2026-10-30:1») أو None خارج النافذتين؛ البدايةُ مشمولةٌ والنهايةُ لا."""
+    from datetime import datetime  # noqa: PLC0415
+
+    now = (now or datetime.now(ledger.DOHA)).astimezone(ledger.DOHA)
+    minute = now.hour * 60 + now.minute
+    for batch, start, end in MERGE_WINDOWS:
+        if start <= minute < end:
+            return f"{now.date().isoformat()}:{batch}"
+    return None
+
+
+def _window_state() -> dict:
+    try:
+        return json.loads(MERGE_WINDOW_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_window_state(state: dict) -> None:
+    MERGE_WINDOW_STATE.parent.mkdir(parents=True, exist_ok=True)
+    MERGE_WINDOW_STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _window_report(window: str, blocked: list[tuple[str, object, str]], eligible: list, armed: list, apply: bool) -> list[str]:
+    """يسجّل في حالة النافذة المؤهَّلَ والمفعَّل، ويبلّغ 0601 بغير المؤهَّل مرّةً لكلّ (نافذة، بطاقة، سبب) في رسالةٍ واحدة."""
+    state = _window_state()
+    entry = state.setdefault(window, {"blocked": [], "eligible": [], "armed": [], "alerted": False})
+    new = [(cid, num, why) for cid, num, why in blocked if f"{cid}#{num}:{why}" not in entry["blocked"]]
+    out: list[str] = []
+    if new:
+        out.append(f"نافذة {window}: غيرُ مؤهَّل ({len(new)}) يُبلَّغ به 0601 مرّةً" + ("" if apply else " (عرض)"))
+    if not apply:
+        return out
+    entry["eligible"] = sorted(set(entry["eligible"]) | {n for n in eligible if n is not None})
+    entry["armed"] = sorted(set(entry["armed"]) | {n for n in armed if n is not None})
+    if new:
+        try:
+            import inbox  # noqa: PLC0415
+
+            text = f"[مضخّة:نافذة {window}] طلباتٌ لم تتأهّل للدمج الآليّ هذه النافذة: " + "؛ ".join(f"{cid} #{num}: {why}" for cid, num, why in new)
+            inbox.send("0601", PUMP_FROM, text)
+        except Exception as exc:  # الإبلاغُ لا يُسقط الدورة، ولا يُسجَّل المبلَّغُ به فيعاد في الدورة التالية
+            return out + [f"نافذة {window}: تعذّر الإبلاغ ({exc})"]
+        entry["blocked"].extend(f"{cid}#{num}:{why}" for cid, num, why in new)
+    _write_window_state(state)
+    return out
+
+
+def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=None) -> list[str]:
     """(D-450م) دمجٌ آليّ عند خضرة CI لطلبٍ سطرُ اعتماده سليم: `--auto` مقيَّدٌ بالرأس (`--match-head-commit`) فلا يُدمج غيرُه.
-    (W-20261022-020) وطلبٌ واحدٌ فقط لكلّ نشر: لا تفعيلَ والطابورُ أو main مشغولان (serial_block)."""
+    (W-20261022-020) وطلبٌ واحدٌ فقط لكلّ نشر: لا تفعيلَ والطابورُ أو main مشغولان (serial_block).
+    (W-20261028-006) ولا تفعيلَ خارج نافذتَي النشر 14:30–16:30 و19:00–21:00 بالدوحة (merge_window): سطرٌ واحد بلا استدعاء gh؛
+    وما فُعِّل داخلها يبقى مفعَّلاً فيُدمج عند خضرة CI ولو بعد إغلاقها، وغيرُ المؤهَّل يُبلَّغ به 0601 مرّةً لكلّ نافذة."""
     sh = sh or _sh
+    window = merge_window(now)
+    if window is None:
+        return ["خارج نافذة النشر (14:30–16:30 و19:00–21:00 بتوقيت الدوحة) — لا تفعيلَ للدمج الآليّ"]
     out: list[str] = []
     armed_now: list = []
+    blocked: list[tuple[str, object, str]] = []
+    eligible: list = []
     for cid, pr, _item in approved_prs(states, prs):
         num, full = pr.get("number"), pr["headRefOid"]
         head = full[:8]
@@ -1169,14 +1231,18 @@ def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -
             continue  # الدمجُ الآليّ مفعَّلٌ أصلاً على هذا الطلب
         if not line_ok(pr.get("body"), head, cid):
             out.append(f"{cid}: #{num} بلا سطر اعتمادٍ سليمٍ للرأس {head} — لا دمج")
+            blocked.append((cid, num, f"بلا سطر اعتمادٍ سليمٍ للرأس {head}"))
             continue
         why = merge_block(cid, pr)
         if why:
             out.append(f"{cid}: #{num} لا دمجَ آليّاً — {why}")
+            blocked.append((cid, num, why))
             continue
         if not approval_ok(cid, head):
             out.append(f"{cid}: #{num} رأس {head} بلا اعتمادٍ ثابت — لا دمج")
+            blocked.append((cid, num, f"رأس {head} بلا اعتمادٍ ثابت"))
             continue
+        eligible.append(num)
         wait = serial_block(num, prs, armed_now, sh)
         if wait:
             out.append(f"{cid}: #{num} ⏸ يؤجَّل الدمجُ الآليّ — {wait}")
@@ -1193,7 +1259,8 @@ def merge_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None) -
             out.append(f"{cid}: #{num} دمجٌ آليّ عند خضرة CI: ✔")
         else:
             out.append(f"{cid}: #{num} نجح الأمرُ لكنّ الدمجَ الآليّ غيرُ مفعَّلٍ على GitHub (autoMergeRequest فارغ) — لا تأشير")
-    return out
+    armed = armed_now + [pr.get("number") for _c, pr, _i in approved_prs(states, prs) if pr.get("autoMergeRequest")]
+    return out + _window_report(window, blocked, eligible, armed, apply)
 
 
 def auto_merge_armed(num, sh) -> bool:
@@ -1392,6 +1459,8 @@ def _run(argv=None) -> int:
         st = ledger.reduce_state(evs)
         for line in pump_health.escalation_pass({c: v for c, v in st.items() if c not in a.skip}, a.apply):
             print("تصعيد: " + line)
+        for line in pump_health.missed_window_pass(a.apply, path=MERGE_WINDOW_STATE):
+            print("نافذة: " + line)
         if a.apply and pump_health.write_daily(st, evs):
             print("صحة: كُتبت لقطةُ اليوم")
     except Exception as exc:  # الرصدُ لا يُسقط الدورة

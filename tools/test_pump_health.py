@@ -66,3 +66,30 @@ def test_daily_log_idempotent_and_weekly(tmp_path):
     assert row["messages"] == {"0701": 4} and row["ages"]["W-1"]["age_min"] == 12
     w = ph.weekly_summary(h, 7, NOW)
     assert w["days"] == 1 and w["oldest_age_min"] == 12 and w["messages_latest"] == {"0701": 4}
+
+
+def test_missed_window_alert_once_and_only_after_it_ends(tmp_path):
+    state, rep = tmp_path / "w.json", tmp_path / "rep.txt"
+    state.write_text(json.dumps({"2026-10-30:1": {"eligible": [7, 8], "armed": [8], "blocked": [], "alerted": False}}), encoding="utf-8")
+    inside = datetime(2026, 10, 30, 16, 29, tzinfo=ledger.DOHA)
+    assert ph.missed_window_pass(True, inside, state, rep) == []  # النافذة لم تنتهِ
+    after = datetime(2026, 10, 30, 16, 30, tzinfo=ledger.DOHA)
+    out = ph.missed_window_pass(True, after, state, rep)
+    assert len(out) == 1 and "#7" in out[0] and "#8" not in out[0]
+    assert "#7" in rep.read_text(encoding="utf-8")
+    assert ph.missed_window_pass(True, after, state, rep) == []  # لا تكرار
+
+
+def test_missed_window_no_alert_when_all_eligible_were_armed(tmp_path):
+    state = tmp_path / "w.json"
+    state.write_text(json.dumps({"2026-10-30:2": {"eligible": [9], "armed": [9], "alerted": False}}), encoding="utf-8")
+    after = datetime(2026, 10, 30, 21, 0, tzinfo=ledger.DOHA)
+    assert ph.missed_window_pass(True, after, state, tmp_path / "r.txt") == []
+
+
+def test_missed_window_preview_does_not_write(tmp_path):
+    state, rep = tmp_path / "w.json", tmp_path / "rep.txt"
+    state.write_text(json.dumps({"2026-10-29:2": {"eligible": [5], "armed": [], "alerted": False}}), encoding="utf-8")
+    after = datetime(2026, 10, 30, 8, 0, tzinfo=ledger.DOHA)
+    assert len(ph.missed_window_pass(False, after, state, rep)) == 1
+    assert not rep.exists() and json.loads(state.read_text(encoding="utf-8"))["2026-10-29:2"]["alerted"] is False
