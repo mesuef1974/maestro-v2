@@ -104,3 +104,68 @@ def test_run_periodic_swallows_errors(monkeypatch, capsys):
     monkeypatch.setattr(pt, "run_due", lambda now, root: (_ for _ in ()).throw(ValueError("جدول معيب")))
     assert wm.run_periodic(SUN) == {}
     assert "جدول معيب" in capsys.readouterr().err
+
+
+def _sent_log(root):
+    return [json.loads(x) for x in pt.log_path(root).read_text(encoding="utf-8").splitlines()]
+
+
+def test_every_send_is_logged_with_its_time(tmp_path):
+    root = _root(tmp_path, T)
+    pt.run_due(SUN, root, send=lambda o, t: None)
+    rows = _sent_log(root)
+    assert {(r["task"], r["kind"], r["owner"]) for r in rows} == {("a", "sent", "0301"), ("b", "sent", "0301")}
+    assert all(r["ts"] == SUN.isoformat(timespec="seconds") for r in rows)
+
+
+def test_dry_run_logs_nothing(tmp_path):
+    root = _root(tmp_path, T)
+    pt.run_due(SUN, root, send=lambda o, t: None, dry_run=True)
+    assert not pt.log_path(root).exists()
+
+
+def test_unfinished_task_is_resent_after_six_hours_at_most_twice_and_not_across_days(tmp_path):
+    root = _root(tmp_path, [T[0]])
+    sent = []
+    send = lambda o, t: sent.append(t)  # noqa: E731
+    pt.run_due(SUN, root, send=send)  # 07:45 أول إرسال
+    pt.run_due(SUN + timedelta(hours=5, minutes=59), root, send=send)
+    assert len(sent) == 1  # قبل 6 ساعات لا إعادة
+    pt.run_due(SUN + timedelta(hours=6), root, send=send)  # 13:45
+    assert len(sent) == 2 and "إعادة" in sent[1]
+    pt.run_due(SUN + timedelta(hours=12), root, send=send)  # 19:45
+    assert len(sent) == 3
+    pt.run_due(SUN + timedelta(hours=16), root, send=send)  # 23:45: سقف الإعادتين
+    assert len(sent) == 3
+    assert [r["kind"] for r in _sent_log(root)] == ["sent", "resent", "resent"]
+    next_sun = SUN + timedelta(days=7)
+    pt.run_due(next_sun, root, send=send)  # الأسبوع التالي: إرسالٌ جديدٌ لا إعادة
+    assert len(sent) == 4 and "إعادة" not in sent[3].splitlines()[1]
+
+
+def test_done_stops_that_task_only_and_unknown_id_is_rejected(tmp_path):
+    root = _root(tmp_path, T)
+    sent = []
+    send = lambda o, t: sent.append(t)  # noqa: E731
+    pt.run_due(SUN, root, send=send)
+    assert pt.mark_done("a", SUN + timedelta(hours=1), root) == "0301"
+    with pytest.raises(ValueError):
+        pt.mark_done("zzz", SUN, root)
+    pt.run_due(SUN + timedelta(hours=6), root, send=send)
+    assert len(sent) == 2
+    resent_lines = [x for x in sent[1].splitlines() if "[إعادة:" in x]
+    assert len(resent_lines) == 1 and "فحص ب" in resent_lines[0]  # b وحدها، لا a
+
+
+def test_message_tells_how_to_record_completion(tmp_path):
+    root = _root(tmp_path, [T[0]])
+    sent = []
+    pt.run_due(SUN, root, send=lambda o, t: sent.append(t))
+    assert "periodic_tasks.py done a" in sent[0]
+
+
+def test_done_command_exit_codes(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(pt, "ROOT", _root(tmp_path, T))
+    assert pt.main(["done", "a"]) == 0
+    assert pt.main(["done", "nope"]) == 2
+    assert "مجهول" in capsys.readouterr().err
