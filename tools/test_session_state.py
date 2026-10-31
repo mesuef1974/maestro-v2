@@ -301,19 +301,6 @@ def test_duties_cli_needs_owner_quote(tree, monkeypatch):
 
 
 
-def test_live_sessions_skips_archived_and_dedups(tmp_path):
-    d = tmp_path / "a" / "b"
-    d.mkdir(parents=True)
-    rows = [("local_1", {"title": "0201 · ق", "cwd": "D:/m", "isArchived": False, "lastActivityAt": 1}),
-            ("local_2", {"title": "0201 · ق", "cwd": "D:/new", "isArchived": False, "lastActivityAt": 9}),
-            ("local_3", {"title": "0202 · ر", "cwd": "D:/m", "isArchived": True}),
-            ("local_4", {"title": "بلا رقم", "cwd": "D:/m"})]
-    for n, v in rows:
-        (d / f"{n}.json").write_text(json.dumps(v, ensure_ascii=False), encoding="utf-8")
-    out = ss.live_sessions(tmp_path)
-    assert [(x["num"], x["tree"]) for x in out] == [("0201", "D:/new")]
-
-
 def test_clear_hook_injects_identity_and_duties_by_itself(tree):
     """بعد مسحٍ يدويّ: الخطّافُ يحقن هويّتَه وواجباتِه وحدَه بلا عنوانٍ معروف."""
     ss.set_focus("0108", "W-1", 1, root=tree)
@@ -786,4 +773,27 @@ def test_num_cache_ignores_bad_input_and_is_capped(tree):
     data = json.loads(ss.num_cache_path(tree).read_text(encoding="utf-8"))
     assert len(data) == ss.NUM_CACHE_MAX and "s0" not in data and f"s{ss.NUM_CACHE_MAX + 4}" in data
 
+
+def test_hook_does_not_inject_after_auto_compact(tree):
+    """قرار المالك 2026-10-31: الضغطُ التلقائيّ (source=compact) لا يحقن حالةً؛ الملخّصُ يكفي، والحقنُ عند startup وclear فقط."""
+    ss.write_state("0108", _gen(tree), tree)
+    titles = lambda cwd, sid: ("0108 · التقييم والعصف", [])  # noqa: E731
+    for source in ("startup", "clear"):
+        assert ss.cmd_hook(json.dumps({"source": source, "cwd": "x", "session_id": "s"}), tree, NOW, titles)
+    assert ss.cmd_hook(json.dumps({"source": "compact", "cwd": "x", "session_id": "s"}), tree, NOW, titles) == ""
+
+
+def test_title_nums_prefers_title_and_falls_back_to_candidates_when_empty():
+    assert ss.title_nums("0426 · إدارة", ["0999 x"]) == {"0426"}
+    assert ss.title_nums("", ["0101-أ · خفيفة", "0101-أ · نسخة"]) == {"0101-أ"}
+    assert ss.title_nums(None, ["بلا رقم"]) == set()
+
+
+def test_stop_call_log_rotates_past_one_megabyte(tree):
+    log = ss.state_path("0000", tree).with_name("stop_hook_calls.log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("x" * (ss.LOG_ROTATE_BYTES + 1), encoding="utf-8")
+    ss._log_stop_call(tree, "cwd", "sid", "اختبار")
+    assert log.with_name("stop_hook_calls.log.1").stat().st_size == ss.LOG_ROTATE_BYTES + 1
+    assert log.read_text(encoding="utf-8").count("اختبار") == 1 and log.stat().st_size < 1000
 

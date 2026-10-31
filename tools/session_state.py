@@ -13,7 +13,7 @@
     session_state.py duties NNNN --none | --add ID --every N --what "<وصفٌ قصير>" --owner-quote "<نصّ الأمر>" | --clear
                                           # الواجباتُ الدائمة/الدورات؛ تُسجَّل أو يُصرَّح بخلوّها (W-20261024-006)
 
-لا مسحَ ذاتيّ: الضغطُ التلقائيّ (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=9) يحلّ محلَّه (W-20261029-002).
+لا مسحَ ذاتيّ: الضغطُ التلقائيّ عند نحو 250 ألفاً (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=25 من autoCompactWindow=1000000) يحلّ محلَّه (W-20261029-002)، ولا يحقن الخطّافُ حالةً بعده: source=compact يعود فارغاً والملخّصُ يكفي (قرار المالك 2026-10-31، W-20261031-001).
 """
 
 from __future__ import annotations
@@ -198,7 +198,8 @@ def _git_info(cwd: str | None) -> dict | None:
 
 
 OUTBOX_KEEP = 30  # أقصى عددٍ من المستقبِلين المحفوظين في صندوق الصادر
-NAME_NUM_RE = re.compile(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])")
+LOG_ROTATE_BYTES = 1_000_000  # حدّ stop_hook_calls.log قبل الدوران (W-20261031-001)
+NAME_NUM_RE =re.compile(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])")
 XSESSION_RE = re.compile(r'<cross-session-message[^>]*?from(?:-session)?="([^"]*)"(?:[^>]*?name="([^"]*)")?')
 
 
@@ -557,7 +558,7 @@ def num_cache_path(root: Path | None = None) -> Path:
 
 def cache_num(sid: str, num: str, root: Path | None = None, now: datetime | None = None) -> None:
     """يحفظ session_id→رقم عند أوّل تحديدٍ ناجح (W-20261027-007) ليُستعمل حين يفشل عنوانُ التطبيق؛ لا يرفع استثناءً."""
-    if not sid or not re.fullmatch(r"\d{4}(?:-[ء-ي])?", num or ""):
+    if not sid or not SESSION_RE.match(num or ""):
         return
     try:
         p = num_cache_path(root)
@@ -596,28 +597,6 @@ def _log_injection(num: str, root: Path | None, verdict: str = "", issues: list[
             ledger.add_note(card, (INJECT_MARK + (f"؛ {verdict}" if verdict else "") + (": " + "؛ ".join(issues or [])[:90] if issues else ""))[:230], num, main_root(root) / "ledger" / "events.jsonl")
     except Exception:  # noqa: BLE001, S110
         pass
-
-
-def live_sessions(base: Path | None = None) -> list[dict]:
-    """جلساتُ التطبيق الحيّة (غيرُ المؤرشفة) بعنوانٍ يبدأ برقمٍ: [{num, title, tree}] بلا تكرار (الأحدثُ نشاطاً يغلب)."""
-    import session_identity
-
-    base = session_identity.SESSIONS if base is None else base
-    out: dict[str, dict] = {}
-    for f in base.glob("*/*/local_*.json"):
-        try:
-            d = json.loads(f.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        title = str(d.get("title", ""))
-        m = re.match(r"\s*(\d{4})\b", title)
-        if not m or d.get("isArchived"):
-            continue
-        act = int(d.get("lastActivityAt") or 0)
-        prev = out.get(m.group(1))
-        if prev is None or act > prev["_act"]:
-            out[m.group(1)] = {"num": m.group(1), "title": title, "tree": str(d.get("worktreePath") or d.get("cwd") or ""), "_act": act}
-    return [{k: v for k, v in x.items() if k != "_act"} for x in sorted(out.values(), key=lambda x: x["num"])]
 
 
 def _label_of(title: str, num: str) -> str:
@@ -824,6 +803,11 @@ def resume_head(state: dict) -> str:
     return "\n".join(lines)
 
 
+def title_nums(title: str | None, cands: list[str]) -> set[str]:
+    """أرقامُ الجلسة من العنوان إن وُجد وإلا من المرشّحين (عنوانٌ فارغٌ يسقط إلى المرشّحين)؛ رقمٌ واحدٌ يعني تحديداً صالحاً."""
+    return {m.group(1) for m in (NAME_NUM_RE.match(c) for c in ([title] if title else cands)) if m}
+
+
 def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = None, titles=None) -> str:
     """يعيد JSON الخطاف (additionalContext) أو "" . لا يسقط الجلسةَ أبداً."""
     try:
@@ -837,7 +821,7 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         if title is None and sid and session_identity._in_root(cwd):  # W-20261028-027: كنّاسُ الجذر بمعرّفٍ غير مطابق لا يحقن ولا يحذف علامةً
             return ""
         # المعرّفُ الجديد لا يُكتب في ملف الجلسة قبل إطلاق الخطاف (جُرّب 2026-10-23): فإن اشترك المرشّحون في رقمٍ واحدٍ حُسم به
-        nums = {m.group(1) for m in (re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", c) for c in ([title] if title else cands)) if m}
+        nums = title_nums(title, cands)
         if len(nums) != 1:
             return ""
         num = nums.pop()
@@ -847,8 +831,10 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
         age = (now or _now()) - datetime.fromisoformat(state["generated_at"])
         if age > STALE_AFTER:
             return ""
-        card_num = ("04" if not (main_root(root) / "role_cards" / f"{num}.md").exists() else num) if num.startswith("04") and "-" not in num else num  # 0702 جلسةٌ حيّةٌ مستقلّة ببطاقتها
-        card = main_root(root) / "role_cards" / f"{card_num}.md"
+        role_cards = main_root(root) / "role_cards"
+        # مرنةٌ 04SS بلا بطاقةٍ خاصّة تقرأ بطاقة 04؛ و0702 جلسةٌ مستقلّةٌ ببطاقتها
+        card_num = "04" if num.startswith("04") and "-" not in num and not (role_cards / f"{num}.md").exists() else num
+        card = role_cards / f"{card_num}.md"
         ident = f"هويّتك: الجلسة {num}؛ معرّف الجلسة للمراسلة {local_session_id(sid)}؛ ملفُّ حالتك المعياريّ handover_notes/state_{num}.json وتركيزك handover_notes/focus_{num}.json" + (f"؛ بطاقتك role_cards/{card_num}.md" if card.exists() else "")
         verdict, issues = reconcile(state, derive(num, state.get("session_label", ""), now, root, cwd=cwd or None))
         verdict_line = f"[مطابقة العودة مع الدفتر وgit] {verdict}" + ("؛ " + "؛ ".join(issues[:5]) if issues else "")
@@ -863,7 +849,10 @@ def cmd_hook(stdin_text: str, root: Path | None = None, now: datetime | None = N
 def _log_stop_call(root: Path | None, cwd: str, sid: str, outcome: str) -> None:
     """سطرٌ لكلّ استدعاءٍ للخطّاف (W-20261025-007): وقتٌ، cwd، session_id، الرقمُ المحلول أو سببُ التخطّي. لا يرفع استثناءً."""
     try:
-        with state_path("0000", root).with_name("stop_hook_calls.log").open("a", encoding="utf-8") as f:
+        log = state_path("0000", root).with_name("stop_hook_calls.log")
+        if log.exists() and log.stat().st_size > LOG_ROTATE_BYTES:  # دوران: نسخةٌ سابقةٌ واحدة (.1) تُستبدل فلا يكبر السجلّ بلا حدّ
+            log.replace(log.with_name(log.name + ".1"))
+        with log.open("a", encoding="utf-8") as f:
             f.write(f"{_fmt(_now())} cwd={cwd} session_id={sid} {outcome}\n")
     except OSError:
         pass
@@ -881,10 +870,10 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
         cwd, sid = hook.get("cwd", ""), str(hook.get("session_id", ""))
         outcome = "تخطّي: فشل قبل تحديد الرقم"
         title, cands = (titles or session_identity.app_title)(cwd, sid)
-        nums = {m.group(1) for m in (re.match(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])", c) for c in ([title] if title else cands)) if m}
+        nums = title_nums(title, cands)
         from_cache = False
         if len(nums) != 1:
-            remembered = cached_num(sid, root) if len(nums) != 1 and sid else None
+            remembered = cached_num(sid, root) if sid else None
             if remembered:  # W-20261027-007: العنوانُ فشل فيُستعمل الرقمُ المحفوظ لهذا session_id عند أوّل نجاح
                 nums, from_cache = {remembered}, True
                 outcome = f"{remembered}: (من ذاكرة session_id)"
