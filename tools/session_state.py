@@ -199,7 +199,7 @@ def _git_info(cwd: str | None) -> dict | None:
 
 OUTBOX_KEEP = 30  # أقصى عددٍ من المستقبِلين المحفوظين في صندوق الصادر
 LOG_ROTATE_BYTES = 1_000_000  # حدّ stop_hook_calls.log قبل الدوران (W-20261031-001)
-NAME_NUM_RE =re.compile(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])")
+NAME_NUM_RE = re.compile(r"\s*(\d{4}(?:-[ء-ي])?)(?![\w-])")
 XSESSION_RE = re.compile(r'<cross-session-message[^>]*?from(?:-session)?="([^"]*)"(?:[^>]*?name="([^"]*)")?')
 
 
@@ -558,7 +558,7 @@ def num_cache_path(root: Path | None = None) -> Path:
 
 def cache_num(sid: str, num: str, root: Path | None = None, now: datetime | None = None) -> None:
     """يحفظ session_id→رقم عند أوّل تحديدٍ ناجح (W-20261027-007) ليُستعمل حين يفشل عنوانُ التطبيق؛ لا يرفع استثناءً."""
-    if not sid or not SESSION_RE.match(num or ""):
+    if not sid or not SESSION_RE.fullmatch(num or ""):
         return
     try:
         p = num_cache_path(root)
