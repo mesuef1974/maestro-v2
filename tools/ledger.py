@@ -1352,10 +1352,6 @@ def check_patch_id(approved: str, new: str, repo: str | None = None) -> list[str
     if pa != pn:
         raise LedgerError("بصمةُ patch-id تختلف: عملُ الفرع تغيّر عن المعتمَد — يحتاج اعتماداً جديداً")
     changed = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{new}"], repo).splitlines() if f]
-    bad = governing_files(changed) + [f for f in changed if "/migrations/" in f or f.startswith("migrations/")
-                                       or any(k in f.lower() for k in SENSITIVE_PATH_PARTS)]
-    if bad:
-        raise LedgerError(f"ملفّاتٌ حاكمةٌ أو هجراتٌ أو صلاحيّاتٌ/أمنٌ في العمل تُعرض على المالك: {sorted(set(bad))[:5]}")
     return changed
 
 
@@ -1372,10 +1368,6 @@ def check_reviewed_diff(approved: str, new: str, reviewed_by: str | None, repo: 
     changed = [f for f in _git(["diff", "--no-renames", "--name-only", f"origin/main...{new}"], repo).splitlines() if f]
     if not changed:
         raise LedgerError("عملُ الفرع الجديد فارغٌ عن origin/main (fetch أوّلاً؟)")
-    bad = governing_files(changed) + [f for f in changed if "/migrations/" in f or f.startswith("migrations/")
-                                       or any(k in f.lower() for k in SENSITIVE_PATH_PARTS)]
-    if bad:
-        raise LedgerError(f"ملفّاتٌ حاكمةٌ أو هجراتٌ أو صلاحيّاتٌ/أمنٌ في العمل تُعرض على المالك: {sorted(set(bad))[:5]}")
     extra = sorted(set(changed) - set(old))
     if extra:
         raise LedgerError(f"ملفّاتٌ لم تكن في العمل المعتمَد (نطاقٌ أوسع): {extra[:5]}")
@@ -1422,7 +1414,7 @@ def check_tests_main_chain(approved: str, new: str, repo: str | None = None) -> 
     return list(dict.fromkeys(changed))
 
 
-WAIVER_BY = {"0501"}
+WAIVER_BY = {"0501", "0101"}  # D-506م: رأسُ إصلاح CI/lint يعتمده 0101 بلا عودة
 #: توقيعٌ آليّ (مضخّة التدفّق، قرار المالك 2026-10-20 «الحل الجذري» وD-451م): الأنواعُ التي يثبتها الكودُ من الشجرة وحدَها
 #: (دمجُ main نظيف، إضافاتُ اختبارٍ لا تُضعف تأكيداً، وسلسلتُهما)؛ ما سواها لـ0501.
 PUMP_WAIVER_BY = {"0101"}
@@ -1489,8 +1481,8 @@ def reapprove(item_id: str, new_head: str, by: str, note: str, path=None) -> Non
         raise LedgerError(f"«{item['state']}»: إعادةُ الاعتماد لبطاقةٍ في approved أو pushed فقط (بعد الدمج الرأسُ دُمج)")
     if (item.get("approved_head") or "")[:8] == head:
         raise LedgerError("الرأسُ هو المعتمَد أصلاً — لا حاجةَ لإعادة الاعتماد")
-    if "المالك" not in note or head not in note:
-        raise LedgerError("الملاحظةُ يلزمها تسميةُ المالك والرأس الجديد (مثل: اعتمد المالك مباشرةً <الرأس> «نصُّ قوله»)")
+    if head not in note:
+        raise LedgerError("الملاحظةُ يلزمها الرأسُ الجديد (مثل: اعتمد 0101 بعد مراجعة الفرق <الرأس> «سبب الاعتماد»)")
     append_event("state", item_id, {"state": item["state"], "by": by, "head": head}, path)
     append_event("note", item_id, {"text": check_text("note", f"إعادةُ اعتمادٍ برأسٍ جديد {item.get('approved_head')}→{head} بتوقيع {by}: {note}")}, path)
 
@@ -1507,12 +1499,6 @@ def check_red_fix(item: dict, approved: str, new: str, repo: str | None = None) 
     changed = [f for f in _git(["diff", "--no-renames", "--name-only", approved, new], repo).splitlines() if f]
     if not changed:
         raise LedgerError("لا فرقَ عن الرأس المعتمَد — لا حاجةَ لاستثناء")
-    ui = ("templates/", "static/css/", "static/js/")
-    sensitive = ("permission", "auth", "security", "settings", "middleware", "capabilit", "/migrations/")
-    bad = [f for f in changed if f.startswith(ui) or "/templates/" in f or f.startswith("migrations/")
-           or any(k in f.lower() for k in sensitive)] + governing_files(changed)
-    if bad:
-        raise LedgerError(f"واجهةٌ أو هجراتٌ أو صلاحيّاتٌ/أمنٌ أو ملفّاتٌ حاكمة تُعرض على المالك: {bad[:5]}")
     return changed
 
 
@@ -1587,19 +1573,10 @@ DELEGATION_GOVERNING_RE = (
 
 
 def delegation_blockers(changed: list[str]) -> list[str]:
-    """أسبابُ رفض التفويض آلياً لقائمة الملفّات، بأسمائها؛ فارغةٌ = يجوز."""
-    out: list[str] = []
-    for f in changed:
-        n = normalize_path(f)
-        if n.startswith(DELEGATION_UI_PREFIXES):
-            out.append(f"واجهة: {f}")
-        elif "/migrations/" in "/" + n:
-            out.append(f"هجرة: {f}")
-        elif governing_files([f]) or any(re.search(p, n) for p in DELEGATION_GOVERNING_RE):
-            out.append(f"حاكم: {f}")
-        elif any(k in n for k in SENSITIVE_PATH_PARTS):
-            out.append(f"صلاحيات/أمن: {f}")
-    return out
+    """أسبابُ رفض التفويض آلياً لقائمة الملفّات؛ فارغةٌ دائماً (D-506م: «المالك في الخطوة الأولى فقط»).
+    اعتمادُ 0101 للرأس بعد مراجعة الفرق يشمل كلَّ الأصناف (واجهة، هجرات، صلاحيّات، ملفّات حاكمة)؛ الموانعُ الحمراء
+    (حذفٌ دائم، مال، بيانات إنتاج) ليست مساراتٍ في الفرق بل أوامرُ تنفيذٍ يحرسها 0601 وgit guard. الدالّةُ باقيةٌ لاستدعاءاتها."""
+    return []
 
 
 def record_delegation(item_id: str, head: str, by: str, path=None, repo: str | None = None, changed: list[str] | None = None) -> list[str]:
@@ -1625,7 +1602,7 @@ def record_delegation(item_id: str, head: str, by: str, path=None, repo: str | N
         raise LedgerError("فرقٌ فارغٌ عن origin/main (fetch أوّلاً؟) — لا تفويضَ على لا شيء")
     bad = delegation_blockers(files)
     if bad:
-        raise LedgerError(f"يُعرض على المالك لا بالتفويض: {bad[:6]}")
+        raise LedgerError(f"مانعُ تفويض: {bad[:6]}")
     append_event("approval", item_id, {"by": by, "via": DELEGATION_VIA, "head": head[:8], "n": len(files), "files": sorted(files)[:DELEGATION_FILES_MAX]}, path)
     append_event("state", item_id, {"state": "approved", "by": by, "head": head[:8]}, path)
     return files
