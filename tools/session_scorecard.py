@@ -29,7 +29,7 @@ import ledger_stale  # noqa: E402
 
 TERMINAL = ("published", "closed", "deferred", "verified")
 OK, WATCH, ACCOUNT, NONE = "ملتزمة", "تحتاج متابعة", "تحتاج مساءلة", "بلا بطاقات"
-HEAVY_TOKENS = 140_000
+HEAVY_TOKENS = 200_000
 CHARTER_STALE_DAYS = 30
 SESSION_NO = re.compile(r"^\d{4}$")
 HEALTH_LINE = re.compile(r"(\d{4}).*?(\d+)k")
@@ -178,7 +178,7 @@ def suggestions(number, items, now, root, move, viol, tokens) -> list[str]:
         out.append(f"{viol} مخالفة مفتوحة: أضيفي قاعدتها لذاكرتك")
     if tokens is not None and tokens >= HEAVY_TOKENS:
         out.append(
-            f"سياقٌ {tokens // 1000}k ≥ 140k: لخّصي الذاكرة أو استبدلي الجلسة (D-441م)"
+            f"سياقٌ {tokens // 1000}k ≥ 200k: لخّصي الذاكرة أو استبدلي الجلسة (D-441م)"
         )
     age = charter_age_days(root, number, now)
     if (
