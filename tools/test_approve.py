@@ -69,11 +69,11 @@ def test_only_0101_and_reviewed_required(env):
         _run(env, reviewed="قصير")
 
 
-def test_ui_or_governing_diff_is_refused(env):
+def test_ui_or_governing_diff_is_accepted_under_d506(env):
+    """D-506م: الواجهةُ والملفّاتُ الحاكمةُ في الفرق لا تمنع اعتمادَ 0101 بعد المراجعة."""
     cid, p, conf = env
-    with pytest.raises(approve.RefusedError):
-        _run(env, git=_git("tools/a.py\ntemplates/x.html"))
-    assert conf.read_text(encoding="utf-8") == STANDING and ledger.reduce_state(ledger.load_events(p))[cid]["state"] == "ready_for_review"
+    _run(env, git=_git("tools/a.py\ntemplates/x.html"))
+    assert ledger.reduce_state(ledger.load_events(p))[cid]["state"] == "approved"
 
 
 def test_ledger_failure_rolls_back_the_confirmation_row(env, monkeypatch):
