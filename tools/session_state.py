@@ -931,6 +931,39 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
     return block
 
 
+#: W-20261101-002: عمرُ آخر دورةٍ للمضخّة (ledger/flow_pump.log) أكبرُ من هذا ⇒ المضخّةُ غائبة والصمتُ يُقرأ نجاحاً.
+PUMP_STALE_MIN = 30
+#: إنذارٌ واحدٌ لكلّ عطل (عقدُ المخرج): لا يتكرّر قبل مرور هذه المدّة.
+ABSENCE_REPEAT_MIN = 30
+
+
+def absence_alert(root: Path | None = None, now: datetime | None = None) -> str:
+    """إنذارُ غياب المضخّة من خطّاف Stop: يعيد JSON فيه systemMessage (لا يمنع الإنهاء) أو "".
+
+    العمرُ من mtime سجلّ الدورات؛ لا إنذارَ ليلاً (23:00–07:00 الدوحة) ولا قبل مرور ABSENCE_REPEAT_MIN على الإنذار السابق.
+    الغيابُ إنذار: غيابُ الملف نفسُه يُنذر. لا يُسقط الخطّافَ أبداً."""
+    try:
+        now = (now or datetime.now(DOHA)).astimezone(DOHA)
+        if not 7 <= now.hour < 23:
+            return ""
+        ledger_dir = main_root(root) / "ledger"
+        log, stamp = ledger_dir / "flow_pump.log", ledger_dir / "absence_alert.stamp"
+        age = (now.timestamp() - log.stat().st_mtime) / 60 if log.is_file() else None
+        if age is not None and age <= PUMP_STALE_MIN:
+            return ""
+        if stamp.is_file():  # الوقتُ من محتوى الختم لا من mtime فيُقاس بالساعة نفسها التي تُمرَّر
+            last = datetime.fromisoformat(stamp.read_text(encoding="utf-8").strip())
+            if (now - last).total_seconds() / 60 < ABSENCE_REPEAT_MIN:
+                return ""
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(now.isoformat(timespec="seconds"), encoding="utf-8")
+        when = "لا أثرَ لسجلّ الدورات" if age is None else f"آخرُ دورةٍ قبل {int(age)} د"
+        msg = f"[إنذار غياب] مضخّةُ الفلو متوقّفة: {when} (الحدّ {PUMP_STALE_MIN} د). أبلغ 0101؛ الصمتُ ليس نجاحاً."
+        return json.dumps({"systemMessage": msg}, ensure_ascii=False)
+    except Exception:  # noqa: BLE001 — الإنذارُ لا يُسقط الخطّاف
+        return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -968,7 +1001,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     if a.cmd == "stop-hook":
-        out = cmd_stop_hook(sys.stdin.read())
+        out = cmd_stop_hook(sys.stdin.read()) or absence_alert()
         if out:
             try:
                 sys.stdout.write(out) if sys.stdout else os.write(1, out.encode("utf-8"))  # pythonw بلا sys.stdout لكنّ المقبضَ الموروث يعمل

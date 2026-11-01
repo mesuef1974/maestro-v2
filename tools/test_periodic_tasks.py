@@ -5,7 +5,7 @@ from pathlib import Path
 
 import periodic_tasks as pt
 import pytest
-import wake_monitor as wm
+import flow_pump as fp
 
 DOHA = timezone(timedelta(hours=3))
 ROOT = Path(__file__).resolve().parent.parent
@@ -83,27 +83,39 @@ def test_failed_send_does_not_mark_task_done(tmp_path):
     assert pt.load_state(root) == {}  # لم يُسجَّل شيء فتُعاد في الدورة التالية
 
 
-def test_wake_monitor_runs_periodic_only_on_commit_or_watch(monkeypatch):
-    calls = []
-    monkeypatch.setattr(wm, "run_periodic", lambda now: calls.append(now) or {})
-    import inbox as ib
-
-    monkeypatch.setattr(ib, "pending_nums", lambda root=None: {})
-    monkeypatch.setattr(wm, "live_for", lambda a: set())
-    monkeypatch.setattr(wm, "sender_count", lambda s: 0)
-    monkeypatch.setattr(wm, "read_log", lambda: [])
-    base = {"all": True, "stale": True, "bells_only": False, "running": None, "sender": "0701"}
-    wm.make_plan(wm.argparse.Namespace(**base), [], "", {})
-    assert calls == []  # عرضٌ جافّ
-    wm.make_plan(wm.argparse.Namespace(**base, commit=True), [], "", {})
-    wm.make_plan(wm.argparse.Namespace(**base, watch=True), [], "", {})
-    assert len(calls) == 2
+def test_pump_runs_periodic_dry_and_applied(monkeypatch):
+    """W-20261101-002: المهامّ الدوريّة في دورة المضخّة؛ العرضُ لا يرسل (dry_run) والتطبيقُ يرسل."""
+    seen = []
+    monkeypatch.setattr(pt, "run_due", lambda dry_run=False: seen.append(dry_run) or {"0701": ["T-1"]})
+    assert fp.periodic_pass(False) == ["مستحقّة 0701: T-1"]
+    assert fp.periodic_pass(True) == ["أُرسلت 0701: T-1"]
+    assert seen == [True, False]
 
 
-def test_run_periodic_swallows_errors(monkeypatch, capsys):
-    monkeypatch.setattr(pt, "run_due", lambda now, root: (_ for _ in ()).throw(ValueError("جدول معيب")))
-    assert wm.run_periodic(SUN) == {}
-    assert "جدول معيب" in capsys.readouterr().err
+def test_pump_periodic_failure_is_a_visible_failure_not_a_crash(monkeypatch):
+    monkeypatch.setattr(pt, "run_due", lambda dry_run=False: (_ for _ in ()).throw(ValueError("جدول معيب")))
+    out = fp.periodic_pass(True)
+    assert len(out) == 1 and fp.FAIL_MARK in out[0] and "جدول معيب" in out[0]
+
+
+def test_honest_rc_turns_any_failed_stage_into_nonzero():
+    tee = fp._FailTee(open(__import__("os").devnull, "w", encoding="utf-8"))
+    tee.write("دفع: W-1 ✔\nprepush: W-2 3bd3bca5 ✘ رمز الخروج 1\n")
+    assert tee.fails and fp.honest_rc(0, tee) == 1
+    assert fp.honest_rc(2, tee) == 2  # rc الأصليّ غير الصفريّ يبقى
+    clean = fp._FailTee(open(__import__("os").devnull, "w", encoding="utf-8"))
+    clean.write("دفع: لا شيء\n")
+    assert fp.honest_rc(0, clean) == 0
+
+
+def test_last_status_json_follows_the_output_contract(tmp_path):
+    tee = fp._FailTee(open(__import__("os").devnull, "w", encoding="utf-8"))
+    tee.write("prepush: W-2 ✘ فشل\n")
+    path = tmp_path / "LAST_STATUS.json"
+    fp.write_status(1, tee, True, path)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    assert doc["ok"] is False and doc["rc"] == 1 and doc["counts"]["failed"] == 1
+    assert doc["finished"].endswith("+03:00") and doc["err"] == ["prepush: W-2 ✘ فشل"]
 
 
 def _sent_log(root):

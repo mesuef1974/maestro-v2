@@ -320,7 +320,6 @@ def pr_watch_alerts(now: datetime | None = None, age_min: float | None = -1.0) -
 
 
 WATCHED_ARTIFACTS = (  # (الرمز، الملف، ما يدلّ على توقّفه) — عمرُ آخر كتابةٍ لا وجودُ الملف
-    ("wake_monitor", "wake_log.jsonl", "مراقبُ الإيقاظ (wake-monitor-sweep)"),
     ("flow_pump", "ledger/flow_pump.log", "مضخّةُ الفلو (flow_pump)"),
 )
 MONITOR_STALE_MIN = 30
