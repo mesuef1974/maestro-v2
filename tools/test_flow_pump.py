@@ -566,10 +566,7 @@ class MergePass(unittest.TestCase):
         cases = {
             "مسودّة": _pr(body=LINED, isDraft=True),
             "لا main": _pr(body=LINED, baseRefName="develop"),
-            "0601": _pr(body=LINED, files=[{"path": "school/migrations/0007_x.py"}]),
             "واسع": _pr(body=LINED, changedFiles=120),
-            "أقرّ أمنياً": _pr(body=LINED, labels=[{"name": fp.SECURITY_LABEL}]),
-            "مساراتٌ أمنيّة": _pr(body=LINED, files=[{"path": "school/permissions.py"}]),
             "بلا سطر": _pr(),
         }
         for why, pr in cases.items():
@@ -669,11 +666,10 @@ class SerialMerge(unittest.TestCase):
         self.assertEqual(sum("(عرض)" in line for line in lines), 1)
         self.assertEqual(sh.calls, [])
 
-    def test_migration_and_security_blocks_still_come_first(self):
-        lines, sh = self.run_pass([_pr(body=LINED, files=[{"path": "school/migrations/0007_x.py"}])], sh=ViewSh(runs_out=json.dumps([_run()])))
-        self.assertIn("0601", lines[0])
-        self.assertNotIn("يؤجَّل", lines[0])
-
+    def test_migration_and_security_prs_are_no_longer_blocked_under_d506(self):
+        """D-506م: الهجراتُ والمساراتُ الأمنيّة تُدمج بعد اعتماد 0101 للرأس وخضرة CI بلا كلمة المالك."""
+        for files, labels in (([{"path": "school/migrations/0007_x.py"}], []), ([{"path": "school/permissions.py"}], []), ([], [{"name": fp.SECURITY_LABEL}])):
+            self.assertIsNone(fp.merge_block("W-1", _pr(body=LINED, files=files, labels=labels)))
 
 class PushPass(unittest.TestCase):
     def setUp(self):
@@ -1401,11 +1397,10 @@ class OpenPrPass(unittest.TestCase):
         self.assertEqual(self.creates(sh), [])
         self.assertIn("بلا اعتمادٍ ثابت", lines[0])
 
-    def test_forbidden_categories_are_not_opened(self):
-        for files, word in ((("app/migrations/0001_x.py",), "هجرات"), (("core/permissions.py",), "أمن"), (("accounts/rls.py",), "أمنيّ")):
+    def test_migration_and_security_branches_are_opened_under_d506(self):
+        for files in (("app/migrations/0001_x.py",), ("core/permissions.py",), ("accounts/rls.py",)):
             lines, sh, _ = self.run_pass(sh=self.sh(files=files))
-            self.assertEqual(self.creates(sh), [], files)
-            self.assertIn(word, lines[0], files)
+            self.assertEqual(len(self.creates(sh)), 1, files)
 
     def test_a_wide_branch_is_not_opened(self):
         lines, sh, _ = self.run_pass(sh=self.sh(files=[f"docs/f{i}.md" for i in range(fp.MAX_FILES)]))
