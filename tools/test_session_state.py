@@ -769,3 +769,37 @@ def test_stop_call_log_rotates_past_one_megabyte(tree):
     ss._log_stop_call(tree, "cwd", "sid", "اختبار")
     assert log.with_name("stop_hook_calls.log.1").stat().st_size == ss.LOG_ROTATE_BYTES + 1
     assert log.read_text(encoding="utf-8").count("اختبار") == 1 and log.stat().st_size < 1000
+
+
+def _pump_log(tree, age_min, now):
+    d = ss.main_root(tree) / "ledger"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "flow_pump.log"
+    f.write_text("x", encoding="utf-8")
+    import os
+
+    t = now.timestamp() - age_min * 60
+    os.utime(f, (t, t))
+
+
+def test_absence_alert_fires_once_when_pump_is_silent_then_repeats_only_after_window(tree):
+    """W-20261101-002: غيابُ المضخّة إنذار؛ واحدٌ لكلّ عطل ولا يمنع الإنهاء (systemMessage لا decision)."""
+    now = datetime(2026, 11, 1, 12, 0, tzinfo=ss.DOHA)
+    _pump_log(tree, 45, now)
+    out = ss.absence_alert(tree, now)
+    assert json.loads(out)["systemMessage"].startswith("[إنذار غياب]") and "decision" not in out
+    assert ss.absence_alert(tree, now + timedelta(minutes=5)) == ""
+    assert ss.absence_alert(tree, now + timedelta(minutes=31)) != ""
+
+
+def test_absence_alert_silent_when_pump_fresh_or_at_night(tree):
+    now = datetime(2026, 11, 1, 12, 0, tzinfo=ss.DOHA)
+    _pump_log(tree, 5, now)
+    assert ss.absence_alert(tree, now) == ""
+    _pump_log(tree, 600, now)
+    assert ss.absence_alert(tree, now.replace(hour=2)) == ""  # لا إنذارَ ليلاً
+
+
+def test_absence_alert_fires_when_log_missing(tree):
+    now = datetime(2026, 11, 1, 12, 0, tzinfo=ss.DOHA)
+    assert "لا أثرَ" in ss.absence_alert(tree, now)

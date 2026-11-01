@@ -36,6 +36,8 @@ ledger/periodic_state.json
 ledger/pending_wakes.jsonl
 ledger/roadmap_queue.jsonl
 ledger/flow_pump.*
+ledger/LAST_STATUS.json
+ledger/absence_alert.stamp
 ledger/ci_reruns.json
 ledger/inbox/
 tools/_*.txt

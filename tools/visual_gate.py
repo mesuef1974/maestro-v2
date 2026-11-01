@@ -177,9 +177,12 @@ MEASURE_JS = r"""
 
 
 def head8(repo: str | None = None) -> str:
-    out = subprocess.run(
-        ["git", "-C", repo or ".", "rev-parse", "--short=8", "HEAD"], capture_output=True, text=True, encoding="utf-8"
-    )
+    try:  # W-20261101-002: مهلةٌ فلا يعلّق git الدورةَ
+        out = subprocess.run(
+            ["git", "-C", repo or ".", "rev-parse", "--short=8", "HEAD"], capture_output=True, text=True, encoding="utf-8", timeout=30
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit("انتهت مهلة قراءة رأس الإيداع: مرّر --head")
     if out.returncode != 0:
         raise SystemExit("تعذّر قراءة رأس الإيداع: مرّر --head")
     return out.stdout.strip()
