@@ -166,6 +166,39 @@ def test_cli_wait_once_exits_at_first_message(tmp_path, monkeypatch, capsys):
     assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["س"]  # W-20261027-001: --once لا يقرّ؛ read يجده بعد الإيقاظ
 
 
+def test_cli_wait_default_exits_at_first_message_to_wake_the_session(tmp_path, monkeypatch, capsys):
+    """أمر المالك 2026-11-03: بلا علمٍ ينتهي المراقبُ بأوّل وارد (انتهاءُ المهمّة الخلفيّة هو الإيقاظُ الوحيد)؛ ويطبع سطرَ الإيقاظ ولا يقرّ."""
+    monkeypatch.setattr(inbox, "ROOT", tmp_path)
+    inbox.send("0301", "0101", "س", tmp_path)
+    assert inbox.main(["wait", "0301"]) == 0
+    out = capsys.readouterr().out
+    assert "س" in out and "[إيقاظ] 1 وارد" in out and "read 0301" in out
+    assert [m["text"] for m in inbox.pending("0301", tmp_path)] == ["س"]
+
+
+def test_cli_wait_follow_keeps_looping_until_timeout(tmp_path, monkeypatch, capsys):
+    """--follow هو السلوكُ القديم: يطبع ويواصل حتى المهلة (لا يوقظ)."""
+    monkeypatch.setattr(inbox, "ROOT", tmp_path)
+    monkeypatch.setattr(inbox, "WAIT_INTERVAL_S", 0)
+    inbox.send("0301", "0101", "س", tmp_path)
+    assert inbox.main(["wait", "0301", "--follow", "--timeout", "0"]) == 0
+    assert "س" in capsys.readouterr().out and [m["text"] for m in inbox.pending("0301", tmp_path)] == ["س"]
+
+
+def test_cli_wait_exit_codes_distinguish_other_watcher_from_code_change(tmp_path, monkeypatch, capsys):
+    """2 = لك مراقبٌ آخر حيّ (لا تُعِدني)؛ 5 = تغيّرت الشيفرة (أعِدني)."""
+    import os
+
+    monkeypatch.setattr(inbox, "ROOT", tmp_path)
+    inbox.beat("0301", tmp_path)
+    monkeypatch.setattr(inbox, "beat_owner", lambda *a, **k: os.getpid() + 1)
+    assert inbox.main(["wait", "0301"]) == 2
+    monkeypatch.setattr(inbox, "beat_owner", lambda *a, **k: None)
+    fps = iter(["a", "b", "b"])
+    monkeypatch.setattr(inbox, "code_fingerprint", lambda: next(fps))
+    assert inbox.main(["wait", "0301", "--timeout", "0"]) == 5
+
+
 def test_w20261028_024_beat_with_unmatched_sid_is_ignored_and_matched_is_written(tmp_path, monkeypatch):
     """W-20261028-024 (4): نبضٌ بمعرّفٍ لا يطابق جلسةً حيّةً يُهمَل فلا يُحيي مراقباً وهمياً."""
     import session_state

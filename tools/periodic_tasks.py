@@ -28,7 +28,7 @@ DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")  # يطابق datetime.
 SENDER = "0000"  # مرسِلُ الجدول: ليس جلسة
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 RESEND_AFTER_H = 6  # ساعاتٌ منذ آخر إرسالٍ بلا إنجازٍ مسجَّل
-MAX_RESENDS = 2  # إعاداتٌ في اليوم (غير الإرسال الأوّل)
+MAX_RESENDS = 1  # إعادةٌ واحدة في اليوم (غير الإرسال الأوّل) — سقفُ المالك 2026-11-03: التذكيراتُ كانت تملأ الصناديق
 
 
 def schedule_path(root: Path | None = None) -> Path:
