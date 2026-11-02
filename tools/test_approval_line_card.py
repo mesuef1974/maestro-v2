@@ -94,10 +94,9 @@ def test_the_pump_signs_only_the_code_proven_kinds(monkeypatch, tmp_path):
                                      "tests-main-chain": "check_tests_main_chain"}[kind], lambda *a, **k: [])
         path, cid = _approved(tmp_path, kind)
         ledger.waive_head(cid, "deadbeef", "0101", "سبب", path=path, kind=kind)
-    for kind in ("docs", "reviewed-diff", "red-fix", "types-only", "patch-id"):
-        path, cid = _approved(tmp_path, "x-" + kind)
-        with pytest.raises(ledger.LedgerError, match="الاستثناءُ لـ"):
-            ledger.waive_head(cid, "deadbeef", "0101", "سبب", path=path, kind=kind, changed=["docs/a.md"])
+    # D-506م: 0101 يوقّع رأسَ إصلاح CI/lint (docs) بلا عودة؛ غيرُ المسجَّلين يُرفضون
+    path, cid = _approved(tmp_path, "x-docs")
+    ledger.waive_head(cid, "deadbeef", "0101", "سبب", path=path, kind="docs", changed=["docs/a.md"])
     path, cid = _approved(tmp_path, "other")
     with pytest.raises(ledger.LedgerError, match="الاستثناءُ لـ"):
         ledger.waive_head(cid, "deadbeef", "0702", "سبب", path=path, kind="auto")

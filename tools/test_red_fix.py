@@ -19,8 +19,8 @@ def test_unpushed_rejected(tmp_path):
 
 
 @pytest.mark.parametrize("name", ["templates/a.html", "static/css/a.css", "static/js/a.js", "core/migrations/0009_x.py", "core/permissions.py", "CLAUDE.md"])
-def test_sensitive_rejected(tmp_path, name):
+def test_sensitive_paths_are_accepted_under_d506(tmp_path, name):
+    """D-506م: رأسُ إصلاح CI/lint يعتمده 0101 بلا عودة لأي صنفٍ مدفوع."""
     repo, approved = setup(tmp_path)
     new = commit(repo, name, "x")
-    with pytest.raises(ledger.LedgerError):
-        ledger.check_red_fix({"state": "pushed"}, approved, new, str(repo))
+    assert ledger.check_red_fix({"state": "pushed"}, approved, new, str(repo)) == [name]
