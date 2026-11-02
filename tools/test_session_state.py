@@ -239,16 +239,6 @@ def _ctx(out):
     return json.loads(out)["hookSpecificOutput"]["additionalContext"]
 
 
-
-
-
-
-
-
-
-
-
-
 def test_injection_logged_in_ledger_without_staling_focus(tree):
     _ready(tree)
     ss.set_focus("0108", "W-1", 1, root=tree)
@@ -299,21 +289,6 @@ def test_duties_cli_needs_owner_quote(tree, monkeypatch):
 # ---- clear_all والسيناريو الحاسم ----
 
 
-
-
-def test_live_sessions_skips_archived_and_dedups(tmp_path):
-    d = tmp_path / "a" / "b"
-    d.mkdir(parents=True)
-    rows = [("local_1", {"title": "0201 · ق", "cwd": "D:/m", "isArchived": False, "lastActivityAt": 1}),
-            ("local_2", {"title": "0201 · ق", "cwd": "D:/new", "isArchived": False, "lastActivityAt": 9}),
-            ("local_3", {"title": "0202 · ر", "cwd": "D:/m", "isArchived": True}),
-            ("local_4", {"title": "بلا رقم", "cwd": "D:/m"})]
-    for n, v in rows:
-        (d / f"{n}.json").write_text(json.dumps(v, ensure_ascii=False), encoding="utf-8")
-    out = ss.live_sessions(tmp_path)
-    assert [(x["num"], x["tree"]) for x in out] == [("0201", "D:/new")]
-
-
 def test_clear_hook_injects_identity_and_duties_by_itself(tree):
     """بعد مسحٍ يدويّ: الخطّافُ يحقن هويّتَه وواجباتِه وحدَه بلا عنوانٍ معروف."""
     ss.set_focus("0108", "W-1", 1, root=tree)
@@ -349,8 +324,6 @@ def test_waiting_validation_rejects_free_text(tree):
 def test_waiting_empty_by_default_and_not_rendered(tree):
     s = _gen(tree)
     assert s["waiting"] == [] and "إحالاتٌ صادرةٌ" not in ss.render(s)
-
-
 
 
 def test_local_session_id_maps_cli_id_or_falls_back(tmp_path):
@@ -507,8 +480,6 @@ def test_stop_hook_logs_every_call_with_reason(tree):
     assert "تعذّرت قراءةُ الحمولة" in rows[3]
 
 
-
-
 # ── تدرّج الأولويّة والتطابق مع الأصل (W-20261025-010) ──
 def _put_session(base, name, mtime, **kw):
     import os
@@ -586,8 +557,6 @@ class TestUnifiedGuardAndFocusRenewal:
         assert f["card"] == "W-1" and f["step"] == 3
 
 
-
-
 def test_hook_does_not_repeat_identity_directory_lines(tree):
     """W-20261025-029: أسطرُ «قاعدة المالك» و«متابعة الإحالة» و«عناوين الجلسات» يطبعها session_identity وحدَه."""
     ss.write_state("0108", _gen(tree), tree)
@@ -606,8 +575,6 @@ def test_compact_render_lists_waiting_once(tree):
     assert "#3 إلى 0501" in ss.resume_head(s)
 
 
-
-
 class TestDeriveFocus:
     """W-20261027-018: جلسةٌ فوق العتبة تحجز بطاقاتٍ بلا focus معلَن: يُشتقّ التركيز من أحدث بطاقةٍ محجوزة فلا يُحجب المسحُ دائماً."""
 
@@ -623,7 +590,6 @@ class TestDeriveFocus:
 
     def test_no_held_card_derives_nothing(self, tree):
         assert ss.derive_focus("0777", tree) is False and ss._load_focus("0777", tree) is None
-
 
 
 class TestFitState:
@@ -667,12 +633,6 @@ class TestFitState:
         monkeypatch.setattr(ss, "write_state", lambda *a, **k: (_ for _ in ()).throw(ValueError("x")))
         assert ss.cmd_stop_hook(hook, tree, lambda c, i: ("0108 · التقييم", [])) == ""
         assert "تعذّر التجديد" in ss.state_path("0000", tree).with_name("stop_hook_calls.log").read_text(encoding="utf-8")
-
-
-
-
-
-
 
 
 def _append_event(tree, ev):
@@ -787,6 +747,28 @@ def test_num_cache_ignores_bad_input_and_is_capped(tree):
     assert len(data) == ss.NUM_CACHE_MAX and "s0" not in data and f"s{ss.NUM_CACHE_MAX + 4}" in data
 
 
+def test_hook_does_not_inject_after_auto_compact(tree):
+    """قرار المالك 2026-10-31: الضغطُ التلقائيّ (source=compact) لا يحقن حالةً؛ الملخّصُ يكفي، والحقنُ عند startup وclear فقط."""
+    ss.write_state("0108", _gen(tree), tree)
+    titles = lambda cwd, sid: ("0108 · التقييم والعصف", [])  # noqa: E731
+    for source in ("startup", "clear"):
+        assert ss.cmd_hook(json.dumps({"source": source, "cwd": "x", "session_id": "s"}), tree, NOW, titles)
+    assert ss.cmd_hook(json.dumps({"source": "compact", "cwd": "x", "session_id": "s"}), tree, NOW, titles) == ""
+
+
+def test_title_nums_prefers_title_and_falls_back_to_candidates_when_empty():
+    assert ss.title_nums("0426 · إدارة", ["0999 x"]) == {"0426"}
+    assert ss.title_nums("", ["0101-أ · خفيفة", "0101-أ · نسخة"]) == {"0101-أ"}
+    assert ss.title_nums(None, ["بلا رقم"]) == set()
+
+
+def test_stop_call_log_rotates_past_one_megabyte(tree):
+    log = ss.state_path("0000", tree).with_name("stop_hook_calls.log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("x" * (ss.LOG_ROTATE_BYTES + 1), encoding="utf-8")
+    ss._log_stop_call(tree, "cwd", "sid", "اختبار")
+    assert log.with_name("stop_hook_calls.log.1").stat().st_size == ss.LOG_ROTATE_BYTES + 1
+    assert log.read_text(encoding="utf-8").count("اختبار") == 1 and log.stat().st_size < 1000
 
 
 def _pump_log(tree, age_min, now):

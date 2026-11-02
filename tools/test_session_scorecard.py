@@ -87,8 +87,8 @@ class ScorecardTest(unittest.TestCase):
 
     def test_heavy_context_suggestion(self):
         ev = [created("A", 10), state("A", 5, "ready_for_review", "0401", "0401")]
-        r = sc.score(ev, NOW, Path("/nonexistent"), {"0401": 150_000})[0]
-        self.assertTrue(any("140k" in s for s in r["suggestions"]))
+        r = sc.score(ev, NOW, Path("/nonexistent"), {"0401": 210_000})[0]
+        self.assertTrue(any("200k" in s for s in r["suggestions"]))
 
     def test_html_renders(self):
         ev = [created("A", 10), state("A", 5, "ready_for_review", "0401", "0401")]
