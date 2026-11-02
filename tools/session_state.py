@@ -544,9 +544,22 @@ def duties_guard(num: str, root: Path | None = None) -> list[str]:
     return []
 
 
-def clear_guard(num: str, root: Path | None = None, now: datetime | None = None, ledger_path: Path | None = None) -> list[str]:
-    """الفحصُ الواحدُ لأمر guard وخطّاف Stop (W-20261025-023): التركيزُ والواجباتُ وتطابقُ ملفّ الحالة مع الدفتر."""
-    return focus_guard(num, root, ledger_path) + duties_guard(num, root) + verify(num, root, now, ledger_path)
+def record_clear_issues(num: str, root: Path | None = None, cwd: str | None = None, ledger_path: Path | None = None) -> list[str]:
+    """(W-20261101-012، D-510م) مانعُ المسح من سجلّ الجلسة؛ لجلسات التجربة وحدَها. لا يرفع استثناءً، ويُسجَّل كلُّ رفض."""
+    try:
+        import session_record
+
+        issues = session_record.clear_issues(num, cwd, main_root(root), ledger_path)
+        if issues:
+            session_record.log_refusal(num, "clear", issues, main_root(root))
+        return [f"سجلّ الجلسة (D-510م): {x}" for x in issues]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def clear_guard(num: str, root: Path | None = None, now: datetime | None = None, ledger_path: Path | None = None, cwd: str | None = None) -> list[str]:
+    """الفحصُ الواحدُ لأمر guard وخطّاف Stop (W-20261025-023): التركيزُ والواجباتُ وتطابقُ ملفّ الحالة مع الدفتر، وسجلُّ الجلسة (D-510م)."""
+    return focus_guard(num, root, ledger_path) + duties_guard(num, root) + verify(num, root, now, ledger_path) + record_clear_issues(num, root, cwd, ledger_path)
 
 
 NUM_CACHE_MAX = 300  # أكثرُ ما تحفظه ذاكرةُ session_id→رقم؛ الأقدمُ يسقط
@@ -911,6 +924,16 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
             outcome = f"{num}: جُدِّد" + (" (من ذاكرة session_id)" if from_cache else "")
         except Exception as exc:  # noqa: BLE001  # W-20261027-037: فشلُ التجديد لا يُسقط قياسَ السياق وطلبَ المسح
             outcome = f"{num}: تعذّر التجديد ({str(exc)[:60]})" + (" (من ذاكرة session_id)" if from_cache else "")
+        if not block and not hook.get("stop_hook_active"):  # W-20261101-012: سجلُّ الجلسة (D-510م) يرفض إنهاءَ الدور لجلسات التجربة
+            try:
+                import session_record
+
+                reason = session_record.stop_block(num, cwd or None, main_root(root))
+                if reason:
+                    outcome += " | سجلّ قديم"
+                    block = json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
+            except Exception as exc:  # noqa: BLE001  # السجلُّ لا يُسقط التجديد
+                outcome += f" | سجلّ: {type(exc).__name__}"
         if not block and not hook.get("stop_hook_active"):  # W-20261101-006: الواردُ لا يمنع Stop (يصل مع رسالة المستخدم التالية)؛ يبقى جرسٌ واحدٌ لغياب المراقب
             try:
                 import inbox
@@ -1036,7 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
         print("رقمُ جلسةٍ غيرُ صالح", file=sys.stderr)
         return 2
     if a.cmd == "guard":
-        errs = clear_guard(a.num)
+        errs = clear_guard(a.num, cwd=os.getcwd())
         print("سليم" if not errs else "فشل: " + "؛ ".join(errs))
         return 0 if not errs else 5
     if a.cmd == "focus":
