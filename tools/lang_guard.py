@@ -27,7 +27,7 @@ MIN_WORDS = 4
 #: حدّا المنع (D-411م): وصفُ الأداة 3 كلماتٍ لاتينيّة فأكثر؛ والنصُّ 6 فأكثر. ما بين 4 و5 في النصّ تحذيرٌ فقط.
 DESC_BLOCK_WORDS = 3
 TEXT_BLOCK_WORDS = 6
-TAIL_BYTES = 400_000
+TAIL_BYTES = 50_000  # W-20261101-006 بند 8: كانت 400 KB تُقرأ بكلّ أداة
 
 
 def mode() -> str:
@@ -74,6 +74,8 @@ def last_assistant_text(path: str) -> str:
 
 def log(payload: dict, offenders: list) -> None:
     """سطرٌ لكل استدعاء في lang_guard.log: الوقت|الجلسة|المجلد|المخالف — لقياس أسبوع warn."""
+    if not offenders:  # بند 8: المخالفاتُ وحدها تُسجَّل (98% من السجلّ كان «-»)
+        return
     try:
         from datetime import datetime, timezone
         row = "|".join([datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), str(payload.get("session_id", ""))[:8],

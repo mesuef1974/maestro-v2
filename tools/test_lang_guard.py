@@ -146,3 +146,11 @@ def test_block_text_six_words_denied(monkeypatch, capsys, tmp_path):
     t = _tr_one(tmp_path, "Run the real generation again with early stop.")
     _, out = _run_main(monkeypatch, capsys, {"tool_input": {"description": "عرض"}, "transcript_path": t}, "block")
     assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_log_records_offenders_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(lg, "MODE_FILE", tmp_path / "lang_guard.mode")
+    lg.log({"session_id": "abcd1234", "cwd": "x"}, [])
+    assert not (tmp_path / "lang_guard.log").exists()
+    lg.log({"session_id": "abcd1234", "cwd": "x"}, ["وصف الأداة"])
+    assert "وصف الأداة" in (tmp_path / "lang_guard.log").read_text(encoding="utf-8")

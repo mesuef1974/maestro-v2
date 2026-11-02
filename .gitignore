@@ -59,3 +59,6 @@ tools/preview_accounts_registry.json
 # نسخٌ احتياطيّة وملفّاتٌ مؤقّتة محلّيّة
 backup_*/
 tmp/
+handover_notes/session_title_cache.json
+handover_notes/session_title_cache.*.tmp
+handover_notes/bell_*.stamp

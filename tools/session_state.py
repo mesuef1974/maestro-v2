@@ -858,6 +858,24 @@ def _log_stop_call(root: Path | None, cwd: str, sid: str, outcome: str) -> None:
         pass
 
 
+#: جرسٌ واحد لكلّ مرحلة (W-20261101-006 بند 4): لا يتكرّر الجرسُ لرقمٍ واحد قبل مرور هذه الدقائق.
+BELL_REPEAT_MIN = 10
+
+
+def bell_due(num: str, root: Path | None = None, now: datetime | None = None) -> bool:
+    """هل حان جرسُ «لا مراقب» لهذا الرقم؟ يسجّل ختمَه فيمنع التكرارَ في الدقائق التالية؛ وفشلُ الكتابة = جرسٌ (الأحوط)."""
+    t = now or _now()
+    p = state_path("0000", root).with_name(f"bell_{num}.stamp")
+    try:
+        if p.exists() and t - datetime.fromisoformat(p.read_text(encoding="utf-8").strip()) < timedelta(minutes=BELL_REPEAT_MIN):
+            return False
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_fmt(t), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+    return True
+
+
 def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str:
     """Stop: يجدّد ملفَّ حالة الجلسة بعد كلّ دورٍ (idempotent) حتى لا يُطلب منها كتابتُه برسالة. لا يسقط الجلسةَ أبداً.
 
@@ -893,16 +911,11 @@ def cmd_stop_hook(stdin_text: str, root: Path | None = None, titles=None) -> str
             outcome = f"{num}: جُدِّد" + (" (من ذاكرة session_id)" if from_cache else "")
         except Exception as exc:  # noqa: BLE001  # W-20261027-037: فشلُ التجديد لا يُسقط قياسَ السياق وطلبَ المسح
             outcome = f"{num}: تعذّر التجديد ({str(exc)[:60]})" + (" (من ذاكرة session_id)" if from_cache else "")
-        if not block and not hook.get("stop_hook_active"):  # W-20261026-015: واردٌ غيرُ مسلَّم يمنع الإنهاءَ مرّةً لكلّ دفعة، والمحتوى في سبب المنع
+        if not block and not hook.get("stop_hook_active"):  # W-20261101-006: الواردُ لا يمنع Stop (يصل مع رسالة المستخدم التالية)؛ يبقى جرسٌ واحدٌ لغياب المراقب
             try:
                 import inbox
 
-                batch = inbox.claim_block(num, main_root(root))
-                if batch:
-                    outcome += f" | وارد: {len(batch)}"
-                    reason = "[صندوق الوارد] وصلك قبل الإنهاء:\n" + inbox.render(batch) + "\nنفّذ ما فيه أو ردّ عليه بـpython tools/inbox.py send ثمّ أنهِ."
-                    block = json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
-                elif not inbox.watcher_alive(num, main_root(root)):  # W-20261027-001: بلا مراقبٍ حيّ لا جرسَ لحظيّ
+                if not inbox.watcher_alive(num, main_root(root)) and bell_due(num, root):  # W-20261027-001: بلا مراقبٍ حيّ لا جرسَ لحظيّ
                     outcome += " | بلا مراقب"
                     reason = f"[الجرس] لا مراقبَ حيّاً لصندوقك. شغّل في الخلفيّة (Bash run_in_background): python {main_root(root).as_posix()}/tools/inbox.py wait {num} --sid {sid}"
                     block = json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)

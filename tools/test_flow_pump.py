@@ -1747,3 +1747,10 @@ class MergeWindow(unittest.TestCase):
             entry = json.loads(state.read_text(encoding="utf-8"))["2026-10-30:1"]
         self.assertEqual(entry["eligible"], [7])
         self.assertEqual(entry["armed"], [7])
+
+
+def test_windows_resource_exhaustion_exit_is_an_env_failure():
+    nl = chr(10)
+    log = "FAILED tools/test_x.py::test_a - CalledProcessError: exit status 3221225794" + nl + "E   exit status 3221225794" + nl
+    assert fp.failure_cond(1, log) == "prepush_env"
+    assert fp.failure_cond(1, "FAILED tools/test_x.py::test_a - assert 1 == 2") == "prepush"

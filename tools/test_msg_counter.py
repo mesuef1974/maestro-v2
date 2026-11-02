@@ -31,7 +31,7 @@ def test_hook_increments_sender_once_on_success_and_not_on_failure(tmp_path, mon
 
 def test_hook_warns_at_threshold_and_skips_unknown_sender(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(mc, "STATE", tmp_path / "msg_counter.json")
-    (tmp_path / "msg_counter.json").write_text(json.dumps({"limit": 600, "started": "x", "sessions": {"0301": {"count": mc.WARN_AT - 1, "since": "x"}}}), encoding="utf-8")
+    (tmp_path / "msg_counter.json").write_text(json.dumps({"limit": 600, "started": "x", "sessions": {"0301": {"count": int(600 * 0.8) - 1, "since": "x"}}}), encoding="utf-8")
     monkeypatch.setattr(si, "app_title", lambda *a, **k: ("0301 · الحوكمة", []))
     mc.hook(json.dumps(_payload("(delivery: delivered; message_id: 1)")))
     assert "اقتربت من الحدّ" in json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
@@ -80,3 +80,16 @@ def test_hook_warns_at_eighth_send_since_owner(tmp_path, monkeypatch, capsys):
     mc.hook(json.dumps(payload))
     out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
     assert "حدّ التطبيق" in out and "8 رسائل" in out
+
+
+def test_crossed_only_at_50_80_95_percent_and_limit():
+    assert [n for n in range(0, 601) if mc.crossed(n - 1, n, 600) and n] == [300, 480, 570, 600]
+    assert mc.crossed(299, 300, 600) and not mc.crossed(300, 301, 600)
+
+
+def test_hook_is_silent_between_thresholds(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(mc, "STATE", tmp_path / "msg_counter.json")
+    (tmp_path / "msg_counter.json").write_text(json.dumps({"limit": 600, "started": "x", "sessions": {"0301": {"count": 100, "since": "x"}}}), encoding="utf-8")
+    monkeypatch.setattr(si, "app_title", lambda *a, **k: ("0301 · الحوكمة", []))
+    mc.hook(json.dumps(_payload("(delivery: delivered; message_id: 1)")))
+    assert capsys.readouterr().out == ""
