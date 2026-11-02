@@ -56,13 +56,8 @@ def row(session: str, target: str, quote: str, question: str, now: datetime | No
 
 # ---- وضع التفويض الدائم (D-443م) ----
 #: أنماطُ مساراتٍ لا تُفوَّض أبداً: واجهة، صلاحيات/أمن، هجرات، ملفات حاكمة، وسلسلةُ الاعتماد نفسُها (لا يعتمد المفوَّضُ ما يعدّل بوّابتَه)
-FORBIDDEN = (
-    (r"(^|/)migrations?/", "هجرة"),
-    (r"(^|/)(templates|static)/|\.(html|css|vue|jsx?)$", "واجهة"),
-    (r"(^|/)(permissions?|capabilit\w*|rbac|auth\w*|security|secrets?)(/|\.|_|$)", "صلاحيات/أمن"),
-    (r"^CLAUDE\.md$|(^|/)\.claude/|(^|/)flow\.md$", "ملف حاكم"),
-    (r"(^|/)(approval_check|record_owner_confirmation|ledger)\.py$|(^|/)owner_confirmations\.md$", "سلسلة الاعتماد"),
-)
+#: D-506م («المالك في الخطوة الأولى فقط»): اعتمادُ 0101 يشمل الأصنافَ كلَّها بعد مراجعة الفرق؛ لا مسارَ ممنوعٌ من التفويض.
+FORBIDDEN: tuple = ()
 STANDING_TARGETS = ("standing-head-approval", "delegations-no-expiry")
 PATH_TOKEN = re.compile(r"[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+|\b[A-Za-z0-9_\-]+\.(?:py|md|js|css|html|yml|yaml|json|sql|txt)\b")
 
@@ -120,7 +115,7 @@ def delegation_problem(item: dict | None, card: str, head: str, diff_files: list
         return "لا فرقَ فعليّاً يُفحص (--tree/--base): المسّ يُحدَّد من ملفّات البطاقة والفرق الفعليّ معاً"
     hits = forbidden_hits([*card_paths(item), *diff_files])
     if hits:
-        return "يمسّ ما لا يُفوَّض فيُعرض على المالك: " + "؛ ".join(hits[:6])
+        return "يمسّ ما لا يُفوَّض: " + "؛ ".join(hits[:6])
     return None
 
 

@@ -372,6 +372,8 @@ def card_identity_problem(card: str, head: str | None) -> str | None:
 
 
 VISUAL_WAIVER_MARK = "تنازلٌ بصريّ بقرار المالك"
+#: D-506م: تنازلٌ بقرار 0101 بعد مراجعة الفرق يُقبل كذلك.
+VISUAL_WAIVER_MARKS = (VISUAL_WAIVER_MARK, "تنازلٌ بصريّ بقرار 0101")
 #: ما يمسّه رأسٌ جديدٌ فيمنع امتدادَ التنازل إليه (قرار المالك D-356م): الواجهةُ لا الخلفيّة.
 WAIVER_UI_PREFIXES = ("templates/", "static/")
 _HEX8 = re.compile(r"\b[0-9a-f]{8}\b")
@@ -384,7 +386,7 @@ def _waived_heads(card: dict) -> list[str]:
     heads: list[str] = []
     for n in card.get("notes", []):
         txt = _AUTHOR_PREFIX.sub("", str(n.get("note", n.get("text", ""))), count=1)
-        if txt.startswith(VISUAL_WAIVER_MARK):
+        if txt.startswith(VISUAL_WAIVER_MARKS):
             heads += _HEX8.findall(txt)
     return heads
 

@@ -218,3 +218,15 @@ def test_served_matches_requires_health_commit_to_equal_head():
         raise OSError("down")
 
     assert not vg.served_matches("http://x", "17d09f89", down)[0]
+
+
+def test_0101_ledger_note_waives_manifest_for_the_exact_pair(tmp_path):
+    """D-506م: ملاحظةُ دفترٍ بتوقيع 0101 تغني عن سطر المالك، لهذا الزوجِ بعينه فقط."""
+    note = "(0101) إعفاء manifest لـW-1 على abcd1234 — سبب"
+    assert vg.ledger_waiver_note("W-1", "abcd1234ffff", [note]) == note
+    assert vg.ledger_waiver_note("W-1", "ffff0000", [note]) is None  # رأسٌ آخر
+    assert vg.ledger_waiver_note("W-2", "abcd1234", [note]) is None  # بطاقةٌ أخرى
+    assert vg.ledger_waiver_note("W-1", "abcd1234", ["(0702) إعفاء manifest لـW-1 على abcd1234"]) is None  # موقّعٌ غير 0101
+    vg.waive("W-1", "abcd1234", "سبب", "0101", tmp_path, tmp_path / "none.md") if False else None
+    missing = tmp_path / "owner_confirmations.md"  # بلا ملف: الملاحظةُ وحدها تكفي
+    assert vg.owner_waiver_line("W-1", "abcd1234", missing, [note]) == note

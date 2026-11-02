@@ -38,6 +38,7 @@ STATE=$(echo "$INFO" | python -X utf8 -c 'import sys,json;print(json.load(sys.st
 FIRST=$(echo "$INFO" | python -X utf8 -c 'import sys,json;print((json.load(sys.stdin)["body"] or "").split("\n")[0])')
 case "$FIRST" in
   *"اعتُمد من المالك على 8500"*"الرأس $S"*) ;;
+  *"اعتمد 0101"*"الرأس $S"*) ;;  # D-506م: اعتمادُ 0101 للرأس بعد مراجعة الفرق
   *) say "سطرُ الاعتماد في وصف الطلب لا يذكر الرأس $S: «$FIRST»"; exit 4;;
 esac
 URGENT=$(echo "$INFO" | python -X utf8 -c 'import sys,json;print(int(any(l["name"]=="نشر-عاجل" for l in json.load(sys.stdin)["labels"])))')
@@ -50,7 +51,11 @@ if [ "$URGENT" != 1 ] && [ "${EMERGENCY:-0}" != 1 ] && [ "$DOW" != 5 ] && [ "$DO
 fi
 # داخل النافذة بوسم «نشر-عاجل» أو EMERGENCY=1 لا يكفي الوسم وحده: لا بدّ من سطر «أمرُ نافذة» للمالك في owner_confirmations.md للطلب (أو بطاقته)
 if [ "$DOW" != 5 ] && [ "$DOW" != 6 ] && [ "$HM" -ge 0700 ] && [ "$HM" -lt 1430 ]; then
+  if [ "$URGENT" = 1 ] && python -X utf8 -c 'import sys;sys.path.insert(0,sys.argv[1]);import ledger;c=sys.argv[2];n=ledger.reduce_state(ledger.load_events()).get(c,{}).get("notes",[]);sys.exit(0 if any(str(x.get("text","")).startswith("نشر-عاجل:") and len(str(x.get("text","")))>=20 for x in n) else 1)' "$(dirname "$0")" "${CARD:-NONE}" 2>/dev/null; then
+    say "نشر-عاجل بسببٍ مدوَّنٍ في الدفتر (D-507م) — لا يلزم سطرُ أمر نافذةٍ للمالك"
+  else
   python -X utf8 -c 'import sys;sys.path.insert(0,sys.argv[1]);from record_owner_confirmation import window_order_present as w;t=open(sys.argv[2],encoding="utf-8").read();sys.exit(0 if (w(t,"#"+sys.argv[3]) or w(t,sys.argv[4])) else 1)' "$(dirname "$0")" "$OWNER" "$PR" "${CARD:-NONE}"     || { say "داخل نافذة الدوام ($HM) ولا سطرَ «أمرُ نافذة» للمالك في owner_confirmations.md للطلب #$PR — لا دمج (سجِّله: record_owner_confirmation.py --window-order)"; exit 4; }
+  fi
 fi
 say "نشر-عاجل=$URGENT توقيت الدوحة=$HM"
 
@@ -70,7 +75,6 @@ done
 H=$(gh pr view "$PR" --repo $R --json headRefOid -q .headRefOid)
 if [ "${H:0:8}" != "$S" ]; then
   say "تغيّر الرأس: المطلوب $S والحاليّ ${H:0:8}"
-  if [ "$MIG" = 1 ]; then say "طلبٌ فيه هجرة: لا يكمل بلا كلمة مالكٍ جديدة على الرأس الجديد"; exit 3; fi
   if python -X utf8 "$DM/tools/approval_check.py" pr "$PR" --head "${H:0:8}" 2>&1 | approval_passed; then
     say "الاعتمادُ ✔ على الرأس الجديد — أعيد التشغيل به"
     exec bash "$0" "$PR" "${H:0:8}" "$@"
@@ -101,7 +105,7 @@ PEND=$(git diff --name-only "$PC" origin/main -- '*/migrations/*' 2>/dev/null | 
 AC="C:/Users/mesue/delivery_manager_work_rebuild/tools/approval_check.py"; [ -f "$AC" ] || AC="$DM/tools/approval_check.py"
 cp -rn "$DM/evidence/." "$(dirname "$(dirname "$AC")")/evidence/" 2>/dev/null
 if LEDGER_PATH="$DM/ledger/events.jsonl" python -X utf8 "$AC" pr "$PR" --head "$S" 2>&1 | approval_passed; then LINE=1; else LINE=0; fi
-if [ "$MIG" = 1 ]; then LINE=$(( LINE + $(grep -c "$S.*مباشر\|مباشر.*$S" "$OWNER") )); [ "$(grep -c "$S.*مباشر\|مباشر.*$S" "$OWNER")" -ge 1 ] || LINE=0; fi
+# D-506م: الهجرةُ لا تشترط «مباشراً» من المالك؛ يكفيها الاعتمادُ على الرأس (approval_ok) وفحصُ الهجرات المعلّقة على الإنتاج
 say "pr=$PR head=$S migrations_in_pr=$MIGN pending_on_prod=$PEND approval_ok=$LINE"
 # ظلُّ الدمج الآليّ (W-20261020-020، بلا تفعيل): يطبع حكمَ مصنِّف شروط التوقف ولا يغيّر شيئاً ممّا بعده — يُستعمل لقياس أخطاء التصنيف أسبوعاً قبل عرض التفعيل على المالك
 CLS="$(python -X utf8 "$(dirname "$0")/merge_stop_classifier.py" "$PR" --repo $R 2>&1 | head -8)"

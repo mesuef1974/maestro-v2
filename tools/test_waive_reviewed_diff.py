@@ -34,11 +34,11 @@ def test_wider_scope_rejected(tmp_path):
 
 
 @pytest.mark.parametrize("name", ["core/permissions.py", "ops/migrations/0001_x.py", "CLAUDE.md", ".claude/rules/a.md"])
-def test_sensitive_rejected(tmp_path, name):
+def test_sensitive_paths_are_accepted_after_0101_review_under_d506(tmp_path, name):
+    """D-506م: 0101 يراجع الفرق فيشمل اعتمادُه الأصنافَ كلَّها (واجهة، هجرات، صلاحيّات، حاكم)."""
     repo, approved = setup(tmp_path, work=(name, "x"))
     new = merge_main(repo)
-    with pytest.raises(ledger.LedgerError, match="تُعرض على المالك"):
-        ledger.check_reviewed_diff(approved, new, "0101", str(repo))
+    assert name in ledger.check_reviewed_diff(approved, new, "0101", str(repo))
 
 
 def _cli(monkeypatch, tmp_path, repo, approved, new, reviewed_by):

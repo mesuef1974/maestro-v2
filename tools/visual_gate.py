@@ -443,11 +443,33 @@ CONFIRMATIONS = ROOT / "owner_confirmations.md"
 WAIVER_MARK = "إعفاء manifest"
 
 
-def owner_waiver_line(card: str, head: str, confirmations: Path | None = None) -> str | None:
-    """سطرُ المالك المسجَّل لإعفاء manifest هذا الزوجِ (بطاقة + رأس) بعينه، وإلا None."""
+#: D-506م: ملاحظةُ دفترٍ بتوقيع 0101 «(0101) إعفاء manifest لـ<بطاقة> على <رأس>» تغني عن سطر المالك.
+WAIVER_SIGNERS = ("0101",)
+
+
+def ledger_waiver_note(card: str, head: str, notes: list[str] | None = None) -> str | None:
+    """ملاحظةُ الدفتر الموقَّعة من 0101 بإعفاء هذا الزوجِ (بطاقة + رأس) بعينه، وإلا None. `notes` للاختبار؛ الأصلُ قراءةُ الدفتر."""
+    if notes is None:
+        try:
+            sys.path.insert(0, str(ROOT / "tools"))
+            import ledger  # noqa: PLC0415
+
+            notes = [str(n.get("text", "")) for n in (ledger.reduce_state(ledger.load_events()).get(card) or {}).get("notes", [])]
+        except Exception:  # noqa: BLE001 — تعذّرُ الدفتر = لا إعفاء
+            return None
+    h8 = head[:8]
+    for txt in notes:
+        m = re.match(r"^\((\d{4})\)\s*(.*)$", txt.strip())
+        if m and m.group(1) in WAIVER_SIGNERS and m.group(2).startswith(WAIVER_MARK) and re.search(re.escape(card) + r"(?!\w)", txt) and re.search(r"(?<![0-9a-f])" + re.escape(h8) + r"(?![0-9a-f])", txt):
+            return txt.strip()
+    return None
+
+
+def owner_waiver_line(card: str, head: str, confirmations: Path | None = None, notes: list[str] | None = None) -> str | None:
+    """سطرُ إعفاء manifest هذا الزوجِ (بطاقة + رأس) بعينه: سطرُ المالك في owner_confirmations.md أو ملاحظةُ 0101 في الدفتر، وإلا None."""
     f = confirmations or CONFIRMATIONS
     if not f.exists():
-        return None
+        return ledger_waiver_note(card, head, notes)
     lines = f.read_text(encoding="utf-8").splitlines()
     # ملحقُ الإلغاء «ملغى[بطاقة@رأس]» (كما في approval_check.confirmations_evidence) يُسقط السطرَ المقصود
     voided = re.findall(r"ملغى\[(\S+?)@(\w+)\]", chr(10).join(lines))
@@ -460,11 +482,11 @@ def owner_waiver_line(card: str, head: str, confirmations: Path | None = None) -
             continue
         if WAIVER_MARK in ln and re.search(card_re, ln) and re.search(head_re, ln):
             return ln.strip()
-    return None
+    return ledger_waiver_note(card, head, notes)
 
 
 def waive(card: str, head: str, reason: str, by: str, evidence_dir: Path | None = None, confirmations: Path | None = None) -> str:
-    """يسجّل إعفاءً بصريّاً لرأسٍ بعينه: لا يُكتب بلا سطر المالك المطابق في owner_confirmations.md، ولا يعمّ ما بعده."""
+    """يسجّل إعفاءً بصريّاً لرأسٍ بعينه: لا يُكتب بلا سطر المالك المطابق في owner_confirmations.md أو ملاحظة دفترٍ بتوقيع 0101 (D-506م)، ولا يعمّ ما بعده."""
     head = head[:8]
     if not re.fullmatch(r"[0-9a-f]{8}", head):
         raise ValueError("--head8 غير صالح")
@@ -472,7 +494,7 @@ def waive(card: str, head: str, reason: str, by: str, evidence_dir: Path | None 
         raise ValueError("السببُ والتوقيعُ لازمان")
     line = owner_waiver_line(card, head, confirmations)
     if not line:
-        raise ValueError(f"لا سطرَ للمالك بـ«{WAIVER_MARK}» للبطاقة {card} @{head} في owner_confirmations.md")
+        raise ValueError(f"لا سطرَ إعفاءٍ بـ«{WAIVER_MARK}» للبطاقة {card} @{head}: لا في owner_confirmations.md ولا ملاحظةَ دفترٍ بتوقيع 0101")
     d = evidence_dir or EVIDENCE_DIR
     d.mkdir(parents=True, exist_ok=True)
     rec = {"card": card, "head": head, "by": by, "reason": reason, "owner_line": line, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}

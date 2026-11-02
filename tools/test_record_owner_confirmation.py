@@ -53,7 +53,8 @@ def test_delegation_is_for_0101_only_and_needs_a_review_text_and_matching_head()
     assert "لا فرقَ" in _problem(diff=())
 
 
-def test_delegation_refuses_ui_security_migration_governing_and_approval_chain_paths():
+def test_delegation_accepts_every_class_of_path_under_d506():
+    """D-506م: واجهةٌ وأمنٌ وهجراتٌ وملفّاتٌ حاكمةٌ وسلسلةُ الاعتماد كلُّها تُفوَّض بعد مراجعة الفرق."""
     for path in (
         "templates/dashboard/a.html",
         "static/css/x.css",
@@ -67,8 +68,8 @@ def test_delegation_refuses_ui_security_migration_governing_and_approval_chain_p
         "tools/ledger.py",
         "owner_confirmations.md",
     ):
-        assert "يمسّ ما لا يُفوَّض" in _problem(diff=(path,)), path
-    assert "يمسّ" in _problem(item={**OK_ITEM, "files": ["core/capabilities.py"]})  # من ملفّات البطاقة لا الفرق وحدَه
+        assert _problem(diff=(path,)) is None, path
+    assert _problem(item={**OK_ITEM, "files": ["core/capabilities.py"]}) is None
 
 
 def test_standing_quote_comes_from_the_owners_two_recorded_lines_only():

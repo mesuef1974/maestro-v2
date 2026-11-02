@@ -80,11 +80,11 @@ def test_extra_file_is_rejected(tmp_path):
 
 @pytest.mark.parametrize("path", ["CLAUDE.md", ".claude/rules/x.md", "docs/governance/flow.md",
                                   "app/migrations/0001_x.py", "core/permissions.py", "core/settings.py"])
-def test_governing_migration_and_security_files_are_rejected(tmp_path, path):
+def test_governing_migration_and_security_files_are_accepted_under_d506(tmp_path, path):
+    """D-506م: بصمةٌ مطابقة لعمل الفرع تكفي لأي صنفٍ؛ الأمرُ لا يرفض بالمسار."""
     repo, approved = setup(tmp_path, work=(path, "v"))
     new = rebase_onto_main(repo)
-    with pytest.raises(ledger.LedgerError, match="تُعرض على المالك"):
-        ledger.check_patch_id(approved, new, str(repo))
+    assert path in ledger.check_patch_id(approved, new, str(repo))
 
 
 def test_empty_diff_is_rejected(tmp_path):

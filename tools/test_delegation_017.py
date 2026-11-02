@@ -20,10 +20,10 @@ def _no_git(monkeypatch):
     monkeypatch.setattr(ac, "run", lambda cmd, cwd=None: (1, ""))
 
 
-def test_blockers_cover_ui_migration_permissions_governing():
-    bad = ledger.delegation_blockers(["templates/a.html", "static/css/x.css", "core/migrations/0001.py", "core/permissions.py",
-                                      "CLAUDE.md", ".claude/rules/a.md", "role_cards/COMMON.md", "tools/ledger.py", "decisions.md"])
-    assert len(bad) == 9
+def test_blockers_are_empty_for_every_class_under_d506():
+    """D-506م: اعتمادُ 0101 بعد مراجعة الفرق يشمل الواجهةَ والهجراتِ والصلاحيّاتِ والملفّاتِ الحاكمة."""
+    assert ledger.delegation_blockers(["templates/a.html", "static/css/x.css", "core/migrations/0001.py", "core/permissions.py",
+                                       "CLAUDE.md", ".claude/rules/a.md", "role_cards/COMMON.md", "tools/ledger.py", "decisions.md"]) == []
     assert ledger.delegation_blockers(["tools/session_state.py", "docs/a.md", "tests/test_x.py"]) == []
 
 
@@ -33,12 +33,11 @@ def test_only_0101_may_delegate(card):
         ledger.record_delegation(cid, "abcd1234", "0501", path=p, repo=str(p.parent), changed=["tools/a.py"])
 
 
-def test_blocked_files_are_refused_and_nothing_is_written(card):
+def test_ui_and_governing_files_are_delegable_under_d506(card):
     cid, p = card
-    n = len(ledger.load_events(p))
-    with pytest.raises(ledger.LedgerError, match="يُعرض على المالك"):
-        ledger.record_delegation(cid, "abcd1234", "0101", path=p, repo=str(p.parent), changed=["tools/a.py", "templates/x.html"])
-    assert len(ledger.load_events(p)) == n
+    files = ledger.record_delegation(cid, "abcd1234", "0101", path=p, repo=str(p.parent), changed=["tools/a.py", "templates/x.html", "CLAUDE.md"])
+    assert sorted(files) == ["CLAUDE.md", "templates/x.html", "tools/a.py"]
+    assert ledger.reduce_state(ledger.load_events(p))[cid]["approved_head"] == "abcd1234"
 
 
 def test_delegation_records_approval_and_head(card):
@@ -74,13 +73,13 @@ def test_delegation_on_other_head_is_stale(card, monkeypatch):
     assert ac.delegation_evidence(cid, "ffff0000")[0][1] == "stale"
 
 
-def test_tampered_record_with_blocked_file_becomes_conflict(card, monkeypatch):
+def test_record_with_ui_file_is_accepted_evidence_under_d506(card, monkeypatch):
     cid, p = card
     ledger.append_event("approval", cid, {"by": "0101", "via": ledger.DELEGATION_VIA, "head": "abcd1234", "n": 1, "files": ["static/js/a.js"]}, p)
     monkeypatch.setattr(ac, "_show", _show_from(p, cid))
     _no_git(monkeypatch)
     ev = ac.delegation_evidence(cid, "abcd1234")
-    assert ev[0][1] == "conflict" and "مرفوضٌ آلياً" in ev[0][0]
+    assert ev[0][1] == "ok"
 
 
 def test_actual_diff_wider_than_recorded_is_conflict(card, monkeypatch):

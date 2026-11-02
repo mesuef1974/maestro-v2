@@ -30,7 +30,6 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
 import os
 import re
@@ -878,16 +877,10 @@ def _pr_body(line: str, cid: str, item: dict) -> str:
 
 
 def openpr_block(cid: str, head_full: str, files: list[str]) -> str | None:
-    """سببُ منع فتح الطلب آليّاً (الفئاتُ الممنوعة: هجرات، أمن، طلبٌ واسع)؛ None إن لا مانع. يعيد استعمالَ merge_block ومحظوراتِه."""
-    from risk_tier import classify_paths  # noqa: PLC0415
-
-    why = merge_block(cid, {"files": [{"path": f} for f in files], "labels": [], "baseRefName": "main", "isDraft": False,
-                            "changedFiles": len(files), "headRefOid": head_full})
-    if why:
-        return why
-    if files and classify_paths(files)["category"] == "security" and not ac.security_approved(cid, head_full[:8]):
-        return "مسارٌ أمنيّ بلا «أقرّ أمنياً» من المالك على الرأس"
-    return None
+    """سببُ منع فتح الطلب آليّاً (طلبٌ واسع أو أساسٌ غيرُ main؛ الهجراتُ والأمنُ لا تُمنع منذ D-506م)؛ None إن لا مانع. يعيد استعمالَ merge_block ومحظوراتِه."""
+    # D-506م: لا منعَ لهجرةٍ أو مسارٍ أمنيّ؛ يبقى الاتّساعُ والأساسُ فقط (merge_block).
+    return merge_block(cid, {"files": [{"path": f} for f in files], "labels": [], "baseRefName": "main", "isDraft": False,
+                             "changedFiles": len(files), "headRefOid": head_full})
 
 
 def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None, sh=None, platform: str | None = None,
@@ -1073,15 +1066,9 @@ def merge_block(card: str, pr: dict) -> str | None:
     if (pr.get("baseRefName") or "") != "main":
         return f"الأساسُ «{pr.get('baseRefName')}» لا main"
     paths = [str(f.get("path", "")) for f in pr.get("files") or []]
-    if any("/migrations/" in "/" + p.replace("\\", "/") for p in paths):
-        return "هجراتٌ: الدمجُ لـ0601 (D-428م)"
+    # D-506م: الهجراتُ والمساراتُ الأمنيّة لا تُحجَب؛ اعتمادُ 0101 للرأس بعد مراجعة الفرق يكفي وتدمجه 0601 خَضِرَ CI بلا كلمة المالك.
     if max(int(pr.get("changedFiles") or 0), len(paths)) >= MAX_FILES:
         return f"طلبٌ واسع (≥{MAX_FILES} ملفّ): يُعرض ولا يُدمج آليّاً"
-    labels = {str(lb.get("name", "")) for lb in pr.get("labels") or []}
-    sensitive = [p for p in paths if any(fnmatch.fnmatchcase(p.lower(), g) for g in SENSITIVE_GLOBS)]
-    if (SECURITY_LABEL in labels or sensitive) and not ac.security_approved(card, pr["headRefOid"][:8]):
-        why = f"وسمُ «{SECURITY_LABEL}»" if SECURITY_LABEL in labels else f"مساراتٌ أمنيّة ({'، '.join(sensitive[:3])})"
-        return f"{why} بلا «أقرّ أمنياً» من المالك على الرأس أو سلفه المحمول"
     return None
 
 

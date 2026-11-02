@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """صحّةُ الجلسات: حجمُ السياق الحاليّ والخمولُ وتعدّدُ النماذج — قراءةٌ فقط (0102، 2026-10-08).
 
-    python session_health.py [--hours 72] [--warn 140000]
+    python session_health.py [--hours 72] [--warn 200000]
 
 السياقُ = آخرُ طلبٍ (input + قراءة + كتابة ذاكرة). فوق --warn: مرشّحةٌ لـ/compact أو للاستبدال بجلسةٍ خفيفة.
 خاملةٌ ≥ 6 س: مرشّحةٌ للأرشفة بعد التحقّق من الدفتر (archive_candidates.py) — لا أرشفةَ بلا أمر المالك.
@@ -41,7 +41,7 @@ def info(f: Path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=72)
-    ap.add_argument("--warn", type=int, default=140000)
+    ap.add_argument("--warn", type=int, default=200000)
     a = ap.parse_args()
     now = time.time()
     rows = []
