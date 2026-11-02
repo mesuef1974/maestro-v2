@@ -136,7 +136,8 @@ def test_dry_run_logs_nothing(tmp_path):
     assert not pt.log_path(root).exists()
 
 
-def test_unfinished_task_is_resent_after_six_hours_at_most_twice_and_not_across_days(tmp_path):
+def test_unfinished_task_is_resent_after_six_hours_at_most_once_and_not_across_days(tmp_path):
+    """سقفُ المالك 2026-11-03: إعادةٌ واحدة في اليوم لا اثنتان (التذكيراتُ كانت تملأ الصناديق)."""
     root = _root(tmp_path, [T[0]])
     sent = []
     send = lambda o, t: sent.append(t)  # noqa: E731
@@ -145,14 +146,14 @@ def test_unfinished_task_is_resent_after_six_hours_at_most_twice_and_not_across_
     assert len(sent) == 1  # قبل 6 ساعات لا إعادة
     pt.run_due(SUN + timedelta(hours=6), root, send=send)  # 13:45
     assert len(sent) == 2 and "إعادة" in sent[1]
-    pt.run_due(SUN + timedelta(hours=12), root, send=send)  # 19:45
-    assert len(sent) == 3
-    pt.run_due(SUN + timedelta(hours=16), root, send=send)  # 23:45: سقف الإعادتين
-    assert len(sent) == 3
-    assert [r["kind"] for r in _sent_log(root)] == ["sent", "resent", "resent"]
+    pt.run_due(SUN + timedelta(hours=12), root, send=send)  # 19:45: سقف الإعادة الواحدة
+    assert len(sent) == 2
+    pt.run_due(SUN + timedelta(hours=16), root, send=send)  # 23:45
+    assert len(sent) == 2
+    assert [r["kind"] for r in _sent_log(root)] == ["sent", "resent"]
     next_sun = SUN + timedelta(days=7)
     pt.run_due(next_sun, root, send=send)  # الأسبوع التالي: إرسالٌ جديدٌ لا إعادة
-    assert len(sent) == 4 and "إعادة" not in sent[3].splitlines()[1]
+    assert len(sent) == 3 and "إعادة" not in sent[2].splitlines()[1]
 
 
 def test_done_stops_that_task_only_and_unknown_id_is_rejected(tmp_path):
