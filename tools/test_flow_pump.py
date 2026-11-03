@@ -1580,6 +1580,26 @@ class CiPass(unittest.TestCase):
         self.assertFalse(any(c[:3] == ["gh", "pr", "update-branch"] for c in calls))
         self.assertIn("عرض", out[0])
 
+    VIS = [{"name": "لقطات الهويّة — حتميّةٌ ومقارنة", "bucket": "fail", "link": "https://github.com/o/r/actions/runs/77/job/1"}]
+
+    def test_visual_snapshot_failure_with_evidence_adds_label_and_reruns_once(self):
+        """W-20261103-002: فحصُ اللقطات الفاشل على رأسٍ بأدلّةٍ/إعفاء ⇒ وسم تغيير-بصريّ وإعادة الفحص مرّةً لكلّ رأس."""
+        with mock.patch.object(fp, "visual_evidence_for", lambda c, h: (True, "أدلةٌ كاملة")):
+            out, calls, note = self._run(self.VIS)
+            self.assertIn(["gh", "pr", "edit", "7", "--add-label", "تغيير-بصريّ"], calls)
+            self.assertIn(["gh", "run", "rerun", "77", "--failed"], calls)
+            note.assert_called_once()
+            out2, calls2, _ = self._run(self.VIS, done={"7:aaaaaaaa:visual": 1})
+            self.assertFalse(any(c[:3] == ["gh", "pr", "edit"] for c in calls2))  # مرّةٌ لكلّ رأس: ثم الإعادة العاديّة
+            dry, calls3, _ = self._run(self.VIS, apply=False)
+            self.assertFalse(any(c[:3] == ["gh", "pr", "edit"] for c in calls3))
+            self.assertIn("عرض", dry[0])
+
+    def test_visual_snapshot_failure_without_evidence_is_not_labelled(self):
+        with mock.patch.object(fp, "visual_evidence_for", lambda c, h: (False, "لا أدلة")):
+            _, calls, _ = self._run(self.VIS)
+        self.assertFalse(any(c[:3] == ["gh", "pr", "edit"] for c in calls))
+
     def test_pending_over_threshold_notes_once(self):
         out, _, note = self._run([{"name": "e2e", "bucket": "pending", "startedAt": "2026-10-23T11:00:00Z", "link": ""}])
         note.assert_called_once()
