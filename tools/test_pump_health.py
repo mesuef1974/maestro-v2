@@ -19,28 +19,63 @@ def test_under_30_no_escalation():
     assert ph.plan_escalations({"W-1": _st("approved", 29)}, [], NOW) == []
 
 
-def test_non_pump_stage_ignored():
-    assert ph.plan_escalations({"W-1": _st("ready_for_review", 500)}, [], NOW) == []
+def test_states_outside_wait_map_ignored_and_ready_for_review_goes_to_0101():
+    """D-512م: ready_for_review راكدةٌ تُدفع إلى 0101 (المعتمِدة)؛ والمنشورةُ والمغلقةُ لا تُدفع."""
+    assert ph.plan_escalations({"W-1": _st("published", 500), "W-2": _st("closed", 500)}, [], NOW) == []
+    plan = ph.plan_escalations({"W-1": _st("ready_for_review", 500)}, [], NOW)
+    assert [p["level"] for p in plan] == [90] and plan[0]["skipped"] == [30] and ph.nudge_target(plan[0]) == "0101"  # مستوىً واحدٌ في الدورة
+    assert ph.plan_escalations({"W-1": _st("routed", 8 * 1440)}, [], NOW) == []  # أقدمُ من أسبوع تراكمٌ لا ركود
+
+
+def test_routed_and_in_progress_nudge_holder_after_two_days_only():
+    assert ph.plan_escalations({"W-1": _st("routed", 1439), "W-2": _st("in_progress", 1000)}, [], NOW) == []
+    plan = ph.plan_escalations({"W-1": _st("routed", 1500, "0426")}, [], NOW)
+    assert [p["level"] for p in plan] == [1440] and ph.nudge_target(plan[0]) == "0426"
 
 
 def test_30_then_90_and_no_repeat(tmp_path):
     lp, log, rep = tmp_path / "e.jsonl", tmp_path / "esc.jsonl", tmp_path / "rep.txt"
     ledger.append_event("created", "W-20261025-901", {"title": "x"}, lp)
+    sent: list[tuple[str, str]] = []
+    send = lambda to, text: sent.append((to, text))  # noqa: E731
     st = {"W-20261025-901": _st("pushed", 35)}
-    out = ph.escalation_pass(st, True, NOW, log, rep, lp)
+    out = ph.escalation_pass(st, True, NOW, log, rep, lp, send)
     assert len(out) == 1 and "إعادةُ إحالة" in out[0] and not rep.exists()
-    assert ph.escalation_pass(st, True, NOW, log, rep, lp) == []  # مرّةً واحدة
+    assert sent == [("0701", ph.nudge_text({"card": "W-20261025-901", "age": 35, "state": "pushed"}))]  # الحاملُ يُوقَظ بخطوته
+    assert ph.escalation_pass(st, True, NOW, log, rep, lp, send) == [] and len(sent) == 1  # مرّةً واحدة
     st = {"W-20261025-901": {**st["W-20261025-901"]}}
     st["W-20261025-901"]["state_ts"] = (NOW - timedelta(minutes=95)).isoformat(timespec="seconds")
-    out = ph.escalation_pass(st, True, NOW, log, rep, lp)
+    out = ph.escalation_pass(st, True, NOW, log, rep, lp, send)
     assert any("تقرير 0101" in o for o in out)
     assert "W-20261025-901" in rep.read_text(encoding="utf-8")
+    assert [s[0] for s in sent[1:]] == ["0701", "0101"]  # الثانية: الحامل ثمّ 0101
+
+
+def test_merged_nudges_0601_regardless_of_holder(tmp_path):
+    lp = tmp_path / "e.jsonl"
+    ledger.append_event("created", "W-20261025-902", {"title": "x"}, lp)
+    sent = []
+    ph.escalation_pass({"W-20261025-902": _st("merged", 40, "0421")}, True, NOW, tmp_path / "esc.jsonl", tmp_path / "rep.txt", lp, lambda to, t: sent.append(to))
+    assert sent == ["0601"]
+
+
+def test_per_target_cap_defers_the_rest(tmp_path):
+    lp = tmp_path / "e.jsonl"
+    st = {}
+    for i in range(5):
+        cid = f"W-20261025-91{i}"
+        ledger.append_event("created", cid, {"title": "x"}, lp)
+        st[cid] = _st("merged", 40, "0421")
+    sent = []
+    out = ph.escalation_pass(st, True, NOW, tmp_path / "esc.jsonl", tmp_path / "rep.txt", lp, lambda to, t: sent.append(to))
+    assert sent == ["0601"] * 3 and sum("مؤجَّلة" in o for o in out) == 2
 
 
 def test_dry_run_writes_nothing(tmp_path):
     log, rep = tmp_path / "esc.jsonl", tmp_path / "rep.txt"
-    out = ph.escalation_pass({"W-1": _st("merged", 100)}, False, NOW, log, rep, tmp_path / "e.jsonl")
-    assert out and not log.exists() and not rep.exists()
+    sent = []
+    out = ph.escalation_pass({"W-1": _st("merged", 100)}, False, NOW, log, rep, tmp_path / "e.jsonl", lambda to, t: sent.append(to))
+    assert out and not log.exists() and not rep.exists() and sent == []
 
 
 def _ev(ts, state, by):
