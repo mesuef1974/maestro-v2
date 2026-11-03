@@ -100,3 +100,35 @@ def test_governance_repo_needs_no_premerge_fingerprint(tmp_path):
     (tmp_path / "tools").mkdir()
     (tmp_path / "tools" / "ledger.py").write_text("", encoding="utf-8")
     assert ledger.check_premerge_fingerprint({"type": "feature"}, "ready_for_review", None, "abcd1234", None, str(tmp_path)) is None
+
+
+def test_old_platform_tree_without_prepush_tool_uses_root_scripts(tmp_path):
+    """W-20261028-022 (D-499م R6): منصّةٌ أقدمُ من أداة prepush تُفحص بسكربتات الجذر لا «غير مقيس (أداة غائبة)»."""
+    import flow_pump as fp
+
+    root, tree = tmp_path / "root", tmp_path / "tree"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts" / "prepush_check.py").write_text("x", encoding="utf-8")
+    tree.mkdir()
+    (tree / "manage.py").write_text("x", encoding="utf-8")
+    assert fp.root_prepush_scripts(str(tree), str(root)) == str(root / "scripts")
+    cmd = fp.prepush_command(str(tree), str(tree / ".git"), str(tree / ".git"), "n", "net", str(root / "scripts"))
+    assert f"{root / 'scripts'}:/rootscripts:ro" in cmd and "PREPUSH_ROOT_SCRIPTS=/rootscripts" in cmd
+    assert "PREPUSH_ROOT_SCRIPTS=/rootscripts" not in fp.prepush_command(str(tree), str(tree / ".git"), str(tree / ".git"), "n", "net")
+
+
+def test_root_scripts_not_used_when_tree_has_its_own_tool_or_is_not_platform_or_root_lacks_it(tmp_path):
+    import flow_pump as fp
+
+    root, own, gov, bare = tmp_path / "root", tmp_path / "own", tmp_path / "gov", tmp_path / "bare"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts" / "prepush_check.py").write_text("x", encoding="utf-8")
+    (own / "scripts").mkdir(parents=True)
+    (own / "scripts" / "prepush_check.py").write_text("x", encoding="utf-8")
+    (own / "manage.py").write_text("x", encoding="utf-8")
+    gov.mkdir()  # مستودعُ حوكمة: بلا manage.py ⇒ الإيصالُ البديل لا الجذر
+    bare.mkdir()
+    (bare / "manage.py").write_text("x", encoding="utf-8")
+    assert fp.root_prepush_scripts(str(own), str(root)) is None
+    assert fp.root_prepush_scripts(str(gov), str(root)) is None
+    assert fp.root_prepush_scripts(str(bare), str(tmp_path / "empty-root")) is None

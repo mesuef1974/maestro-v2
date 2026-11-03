@@ -155,3 +155,16 @@ class HeldHonesty(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_report_lists_red_flow_watch_rows_owned_or_held():
+    """W-20261028-019: my_state يعرض الأحمر الذي أملكه أو أُحيل إليّ بدل «لا فعلَ مستنتَجاً»."""
+    import flow_watch
+    from datetime import datetime
+
+    ev = [{"id": "W-1", "ts": "2026-10-23T10:00:00+03:00", "kind": "created", "data": {"source": "owner", "problem": "م", "held_by": "0701"}}]
+    rows = [flow_watch.Row("red", 3, "راكدة", 500, "0701", "ابدأها", "W-1"),
+            flow_watch.Row("red", 3, "غيري", 500, "0108", "x", "W-9"),
+            flow_watch.Row("yellow", 3, "صفراء", 100, "0701", "x", "W-1")]
+    out = my_state.red_rows_for("0701", ev, datetime.now(), rows)
+    assert len(out) == 1 and "W-1" in out[0] and "ابدأها" in out[0]

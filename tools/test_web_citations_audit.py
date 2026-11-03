@@ -41,3 +41,19 @@ def test_strict_exit_code(tmp_path):
     doc = tmp_path / "d.md"; doc.write_text("https://x.example.org/a", encoding="utf-8")
     assert w.main(["--sot", str(sot), "--scan", str(doc), "--strict"]) == 1
     assert w.main(["--sot", str(sot), "--scan", str(doc)]) == 0
+
+
+# ===== W-20261023-020: استثناءُ مضيفاتٍ ليست استشهاداتٍ بحثيّة =====
+def test_020_fake_and_repo_hosts_are_not_external():
+    for u in ("https://evil.example/x", "https://mcp.sentry.dev/mcp", "https://shschoolmvp-production.up.railway.app/health/"):
+        assert not w.is_external(u), u
+
+
+def test_020_w3_namespace_paths_ignored_but_w3_other_paths_kept():
+    assert not w.is_external("http://www.w3.org/2000/svg")
+    assert not w.is_external("https://w3.org/1999/xhtml")
+    assert w.is_external("https://w3.org/TR/css-2023/")
+
+
+def test_020_real_external_source_still_counted():
+    assert w.is_external("https://almeezan.qa/LawPage.aspx?id=7121")

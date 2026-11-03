@@ -1520,7 +1520,7 @@ if __name__ == "__main__":
 
 
 class CiPass(unittest.TestCase):
-    def _run(self, checks, done=None, apply=True):
+    def _run(self, checks, done=None, apply=True, main_runs=None):
         from datetime import datetime, timezone
 
         states = {"W-9": {"state": "approved", "approved_head": "aaaaaaaa"}}
@@ -1529,6 +1529,8 @@ class CiPass(unittest.TestCase):
 
         def sh(cmd, cwd=None):
             calls.append(cmd)
+            if cmd[:2] == ["gh", "api"]:
+                return (0, json.dumps(main_runs)) if main_runs is not None else (1, "")
             return (0, json.dumps(checks)) if cmd[:3] == ["gh", "pr", "checks"] else (0, "")
 
         tmp = Path(tempfile.mkdtemp()) / "r.json"
@@ -1547,6 +1549,57 @@ class CiPass(unittest.TestCase):
         out2, calls2, _ = self._run([{"name": "axe", "bucket": "cancel", "link": link}], done={"7:aaaaaaaa": 1})
         self.assertFalse(any(c[:3] == ["gh", "run", "rerun"] for c in calls2))
         self.assertIn("لا إعادة ثانية", out2[0])
+
+    AUDIT = [{"name": "Security Summary", "bucket": "fail", "link": "https://github.com/o/r/actions/runs/55/job/1"}]
+
+    def test_stale_audit_failure_with_green_main_updates_branch_not_rerun(self):
+        """W-20261028-021 (D-499م R4): تدقيقُ تبعيّاتٍ فاشلٌ وmain أخضر عليه ⇒ تحديثُ الفرع من main، لا إعادةَ ولا احتسابَ لها."""
+        main = [{"name": "Security Summary", "conclusion": "success"}]
+        out, calls, _ = self._run(self.AUDIT, main_runs=main)
+        self.assertIn(["gh", "pr", "update-branch", "7"], calls)
+        self.assertFalse(any(c[:3] == ["gh", "run", "rerun"] for c in calls))
+        self.assertIn("تحديثُ الفرع من main", out[0])
+        # المحاولةُ مسجَّلة بمفتاحٍ مستقلّ فلا تُحسب إعادةً (مفتاح الإعادة الأصلي غير مسجَّل)
+        tmp_done = {"7:aaaaaaaa:updated": 1}
+        out2, calls2, _ = self._run(self.AUDIT, done=tmp_done, main_runs=main)
+        self.assertIn(["gh", "run", "rerun", "55", "--failed"], calls2)  # بعد المحاولة الواحدة: الإعادةُ العاديّة
+
+    def test_audit_failure_with_red_or_unknown_main_is_rerun_as_before(self):
+        for main in ([{"name": "Security Summary", "conclusion": "failure"}], None):
+            out, calls, _ = self._run(self.AUDIT, main_runs=main)
+            self.assertFalse(any(c[:3] == ["gh", "pr", "update-branch"] for c in calls))
+            self.assertIn(["gh", "run", "rerun", "55", "--failed"], calls)
+
+    def test_non_audit_failure_never_updates_branch(self):
+        bad = [{"name": "axe", "bucket": "fail", "link": "https://github.com/o/r/actions/runs/9/job/1"}]
+        _, calls, _ = self._run(bad, main_runs=[{"name": "axe", "conclusion": "success"}])
+        self.assertFalse(any(c[:3] == ["gh", "pr", "update-branch"] for c in calls))
+
+    def test_dry_run_reports_update_without_calling_it(self):
+        out, calls, _ = self._run(self.AUDIT, apply=False, main_runs=[{"name": "Security Summary", "conclusion": "success"}])
+        self.assertFalse(any(c[:3] == ["gh", "pr", "update-branch"] for c in calls))
+        self.assertIn("عرض", out[0])
+
+    VIS = [{"name": "لقطات الهويّة — حتميّةٌ ومقارنة", "bucket": "fail", "link": "https://github.com/o/r/actions/runs/77/job/1"}]
+
+    def test_visual_snapshot_failure_with_evidence_adds_label_and_reruns_once(self):
+        """W-20261103-002: فحصُ اللقطات الفاشل على رأسٍ بأدلّةٍ/إعفاء ⇒ وسم تغيير-بصريّ وإعادة الفحص مرّةً لكلّ رأس."""
+        with mock.patch.object(fp, "visual_evidence_for", lambda c, h: (True, "أدلةٌ كاملة")):
+            out, calls, note = self._run(self.VIS)
+            self.assertIn(["gh", "pr", "edit", "7", "--add-label", "تغيير-بصريّ"], calls)
+            self.assertFalse(any(c[:3] == ["gh", "run", "rerun"] for c in calls))  # rerun يحتفظ بحمولة الحدث القديمة
+            self.assertLess(calls.index(["gh", "pr", "close", "7"]), calls.index(["gh", "pr", "reopen", "7"]))
+            note.assert_called_once()
+            out2, calls2, _ = self._run(self.VIS, done={"7:aaaaaaaa:visual": 1})
+            self.assertFalse(any(c[:3] == ["gh", "pr", "edit"] for c in calls2))  # مرّةٌ لكلّ رأس: ثم الإعادة العاديّة
+            dry, calls3, _ = self._run(self.VIS, apply=False)
+            self.assertFalse(any(c[:3] == ["gh", "pr", "edit"] for c in calls3))
+            self.assertIn("عرض", dry[0])
+
+    def test_visual_snapshot_failure_without_evidence_is_not_labelled(self):
+        with mock.patch.object(fp, "visual_evidence_for", lambda c, h: (False, "لا أدلة")):
+            _, calls, _ = self._run(self.VIS)
+        self.assertFalse(any(c[:3] == ["gh", "pr", "edit"] for c in calls))
 
     def test_pending_over_threshold_notes_once(self):
         out, _, note = self._run([{"name": "e2e", "bucket": "pending", "startedAt": "2026-10-23T11:00:00Z", "link": ""}])
@@ -1754,3 +1807,45 @@ def test_windows_resource_exhaustion_exit_is_an_env_failure():
     log = "FAILED tools/test_x.py::test_a - CalledProcessError: exit status 3221225794" + nl + "E   exit status 3221225794" + nl
     assert fp.failure_cond(1, log) == "prepush_env"
     assert fp.failure_cond(1, "FAILED tools/test_x.py::test_a - assert 1 == 2") == "prepush"
+
+
+class PartialEnvRerun(unittest.TestCase):
+    """W-20261103-004: إخفاقاتٌ كلُّها بيئيّة ⇒ تُعاد الفاشلةُ وحدَها؛ نجاحُها يكتب الإيصال، وإخفاقٌ غيرُ بيئيٍّ واحد يمنع الإعادة الجزئيّة."""
+
+    ENV = "FAILED tools/test_a.py::test_x - CalledProcessError: exit status 3221225794" + chr(10) + "E   exit status 3221225794" + chr(10) + "1 failed"
+
+    def _tree(self):
+        d = Path(tempfile.mkdtemp())
+        git = mock.Mock(side_effect=lambda path, *a: (0, str(d / ".git")) if a[0] == "rev-parse" and "--absolute-git-dir" in a else (0, "H" * 40) if a[0] == "rev-parse" else (0, ""))
+        (d / ".git").mkdir()
+        return d, git
+
+    def test_ids_are_parsed_from_failed_and_error_lines(self):
+        ids = fp.failed_test_ids("FAILED tools/test_a.py::test_x[p] - boom" + chr(10) + "ERROR tools/test_b.py::T::test_y - x" + chr(10) + "2 failed")
+        self.assertEqual(ids, ["tools/test_a.py::test_x[p]", "tools/test_b.py::T::test_y"])
+
+    def test_env_only_failures_rerun_failed_ids_and_write_receipt(self):
+        d, git = self._tree()
+        calls = []
+        with mock.patch.object(fp, "PREPUSH_ATTEMPTS", d / "att.json"), mock.patch.object(fp, "_log_once"):
+            out = fp.governance_receipt("W-1", str(d), "H" * 40, git, {}, lambda p, t: (1, self.ENV),
+                                        partial_run=lambda p, ids, t: (calls.append(ids) or (0, "ok")))
+        self.assertEqual(calls, [["tools/test_a.py::test_x"]])
+        self.assertIn("إعادة جزئيّة بيئيّة", out)
+        self.assertTrue((d / ".git" / fp.ledger.RECEIPT_NAME).is_file())
+
+    def test_partial_rerun_that_still_fails_writes_no_receipt(self):
+        d, git = self._tree()
+        with mock.patch.object(fp, "PREPUSH_ATTEMPTS", d / "att.json"), mock.patch.object(fp, "_log_once"):
+            out = fp.governance_receipt("W-1", str(d), "H" * 40, git, {}, lambda p, t: (1, self.ENV), partial_run=lambda p, ids, t: (1, "no"))
+        self.assertIn("✘", out)
+        self.assertFalse((d / ".git" / fp.ledger.RECEIPT_NAME).exists())
+
+    def test_one_non_env_failure_means_no_partial_rerun(self):
+        d, git = self._tree()
+        calls = []
+        log = self.ENV.replace("1 failed", "") + chr(10) + "FAILED tools/test_b.py::test_y - AssertionError" + chr(10) + "2 failed"
+        with mock.patch.object(fp, "PREPUSH_ATTEMPTS", d / "att.json"), mock.patch.object(fp, "_log_once"):
+            out = fp.governance_receipt("W-1", str(d), "H" * 40, git, {}, lambda p, t: (1, log), partial_run=lambda p, ids, t: calls.append(ids))
+        self.assertEqual(calls, [])
+        self.assertIn("✘", out)

@@ -542,7 +542,22 @@ def _image_present(docker) -> bool:
     return rc == 0
 
 
-def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str) -> list[str]:
+def root_prepush_scripts(tree: str, root_repo: str | None = None) -> str | None:
+    """(W-20261028-022، D-499م R6) شجرةُ منصّةٍ أقدمُ من أداة prepush (بلا scripts/prepush_check.py) تُفحص بسكربتات الجذر لا «غير مقيس (أداة غائبة)»:
+    يعيد مجلّد scripts للجذر إن كانت الشجرةُ منصّةً (manage.py) وفاقدةً للأداة وللجذر الأداةُ؛ وإلا None."""
+    root = Path(root_repo or ready_mark_default_repo())
+    if push_approved.has_prepush_tool(tree) or not (Path(tree) / "manage.py").is_file():
+        return None
+    return str(root / "scripts") if push_approved.has_prepush_tool(str(root)) else None
+
+
+def ready_mark_default_repo() -> str:
+    import ready_mark  # noqa: PLC0415
+
+    return ready_mark.DEFAULT_REPO
+
+
+def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str, root_scripts: str | None = None) -> list[str]:
     """أمرُ docker run: الشجرةُ و.git الرئيس للقراءة فقط، على شبكةٍ داخليّةٍ لا خارجَ لها (فيها قاعدةُ الاختبار وحدَها)؛ GIT_DIR نسبةً إلى
     المركَّب. الإيصالُ لا يُكتب من الحاوية."""
     rel = os.path.relpath(gitdir, common).replace("\\", "/")
@@ -554,6 +569,7 @@ def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str) ->
         "-v", f"{tree}:/src:ro", "-v", f"{common}:/gitmain:ro", "-v", f"{runner}:/runner:ro",
         "-e", f"PREPUSH_GIT_DIR={git_dir}", "-e", "GIT_OPTIONAL_LOCKS=0", "-e", "HOME=/tmp",
         "-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=*",
+        *(["-v", f"{root_scripts}:/rootscripts:ro", "-e", "PREPUSH_ROOT_SCRIPTS=/rootscripts"] if root_scripts else []),
         PREPUSH_IMAGE, "sh", "/runner/entry.sh",
     ]
 
@@ -643,7 +659,41 @@ def _pytest_run(path: str, timeout: int) -> tuple[int, str]:
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
-def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_run=None, timeout: int = GOV_PYTEST_TIMEOUT_S) -> str:
+#: (W-20261103-004) سقفُ ما يُعاد جزئيّاً: فوقه الفشلُ ليس عارضاً بل عيبٌ في التشغيل نفسه
+PARTIAL_RERUN_MAX = 120
+_FAILED_ID = re.compile(r"^(?:FAILED|ERROR) (\S+?::\S+?)(?: - .*)?$", re.M)
+
+
+def failed_test_ids(log: str) -> list[str]:
+    """معرّفاتُ pytest الفاشلة من سطور FAILED/ERROR في المخرَج (مرتّبةٌ بلا تكرار)؛ ملخّصٌ مقصوص يُسقط ما لا يُقرأ فيُعاد تشغيل الكلّ بدلاً."""
+    return sorted(dict.fromkeys(_FAILED_ID.findall(log or "")))
+
+
+def _pytest_ids_run(path: str, ids: list[str], timeout: int) -> tuple[int, str]:
+    """pytest بمعرّفاتٍ محدَّدة في شجرة الحوكمة (المهلةُ 124، تعذّرُ التشغيل 127) — كـ_pytest_run."""
+    try:
+        p = subprocess.run([console_python(), "-m", "pytest", *ids, "-q", "-p", "no:cacheprovider"], cwd=path,  # noqa: S603
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, "تجاوز المهلة"
+    except OSError as exc:
+        return 127, f"pytest غير متاح: {exc}"
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def partial_env_rerun(code: int, log: str, path: str, partial_run=None, timeout: int = GOV_PYTEST_TIMEOUT_S) -> tuple[bool, str]:
+    """(ناجحة؟، ملاحظة): كلُّ إخفاقات pytest بيئيّةٌ (failure_cond == prepush_env بمخرجٍ فيه FAILED/ERROR مقروءة) ⇒ تُعاد الفاشلةُ وحدَها بمعرّفاتها
+    مرّةً واحدة؛ نجاحُها يعني أنّ المجموعَ أخضر (ما عداها نجح في التشغيل الأوّل). إخفاقٌ غيرُ بيئيّ واحدٌ أو مهلةٌ أو معرّفاتٌ كثيرة ⇒ لا إعادة جزئيّة."""
+    if code != 1 or failure_cond(code, log) != "prepush_env":
+        return False, ""
+    ids = failed_test_ids(log)
+    if not ids or len(ids) > PARTIAL_RERUN_MAX:
+        return False, ""
+    rc, out = (partial_run or _pytest_ids_run)(path, ids, timeout)
+    return rc == 0, f"إعادة جزئيّة بيئيّة: {len(ids)} اختباراً فاشلاً أُعيد وحدَه ← {'أخضر' if rc == 0 else f'رمز {rc}'}"
+
+
+def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_run=None, timeout: int = GOV_PYTEST_TIMEOUT_S, partial_run=None) -> str:
     """(W-20261026-018) مستودعُ الحوكمة بلا scripts/prepush_check.py: الإيصالُ البديل pytest tools/ أخضرَ للرأس نفسه في الشجرة النظيفة.
     لا يُكتب إلا برمز خروج 0 وبقاءِ الرأس ونظافةِ الشجرة بعد التشغيل؛ والفشلُ يُسجَّل لرأسه بشرطه (record_failure).
     يعيد سطرَ النتيجة المطبوع."""
@@ -651,13 +701,16 @@ def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_
     if rc or not gitdir.strip():
         return f"{cid}: ✘ تعذّرت قراءةُ مجلّد git للشجرة — لا إيصال بديل"
     code, log = (pytest_run or _pytest_run)(path, timeout)
+    partial_ok, partial_note = partial_env_rerun(code, log, path, partial_run, timeout)  # W-20261103-004
+    if partial_ok:
+        code = 0
     _, head_after = git(path, "rev-parse", "HEAD")
     _, dirty_after = git(path, "status", "--porcelain", "--untracked-files=no")
     if code == 0 and head_after.strip() == head and not dirty_after.strip():
         (Path(gitdir.strip()) / ledger.RECEIPT_NAME).write_text(
             json.dumps({"head": head[:8], "ok": True, "kind": push_approved.GOV_RECEIPT_KIND}), encoding="utf-8")
-        _log_once(f"prepush-حوكمة: {cid} {head[:8]} ✔")
-        return f"{cid}: ✔ pytest tools/ أخضر للرأس {head[:8]} — كُتب الإيصال البديل (حوكمة)"
+        _log_once(f"prepush-حوكمة: {cid} {head[:8]} ✔" + (f" ({partial_note})" if partial_ok else ""))
+        return f"{cid}: ✔ pytest tools/ أخضر للرأس {head[:8]} — كُتب الإيصال البديل (حوكمة)" + (f" — {partial_note}" if partial_ok else "")
     why = ("الرأس أو الشجرة تغيّر أثناء الفحص" if code == 0 else "تجاوز المهلة" if code == 124 else f"رمز الخروج {code}")
     tail = " | ".join((log or "").strip().splitlines()[-3:])[:300]
     record_failure(tried, f"{cid}:{head[:8]}", why, "prepush_env" if code == 0 else failure_cond(code, log))
@@ -711,7 +764,8 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
         if ran >= limit:
             out.append(f"{cid}: ⏸ prepush في الدورة التالية (الحدّ {limit} في الدورة)")
             continue
-        if not push_approved.has_prepush_tool(path):
+        root_scripts = root_prepush_scripts(path)  # D-499م R6: منصّةٌ أقدمُ من الأداة تُفحص بسكربتات الجذر في الحاوية
+        if not push_approved.has_prepush_tool(path) and root_scripts is None:
             ran += 1
             if not apply:
                 out.append(f"{cid}: يُشغَّل pytest tools/ إيصالاً بديلاً (حوكمة) للرأس {head[:8]} (عرض)")
@@ -737,7 +791,7 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             continue
         ran += 1
         name = f"prepush-{cid.lower()}-{head[:8]}"
-        code, log = run_with_db(docker, lambda net: prepush_command(path, gitdir.strip(), common.strip(), name, net), name, timeout)
+        code, log = run_with_db(docker, lambda net: prepush_command(path, gitdir.strip(), common.strip(), name, net, root_scripts), name, timeout)
         # شرطُ الإيصال: رمز 0، وسطرُ النجاح الكامل، وخلوُّ المخرَج من «غير مقيس»، وبقاءُ الرأس ونظافةُ الشجرة بعد التشغيل
         _, head_after = git(path, "rev-parse", "HEAD")
         _, dirty_after = git(path, "status", "--porcelain", "--untracked-files=no")
@@ -1277,6 +1331,43 @@ def _reruns() -> dict:
         return {}
 
 
+#: (W-20261028-021، D-499م R4) فحوصُ تدقيق التبعيّات: فشلُها على أساسٍ قديمٍ يعالجه تحديثُ الفرع من main لا إعادةُ التشغيل.
+AUDIT_CHECK = re.compile(r"pip[- ]audit|security summary|dependency audit", re.IGNORECASE)
+
+
+def audit_failures_stale_vs_main(bad: list[dict], sh) -> bool:
+    """كلُّ فحصٍ فاشلٍ تدقيقُ تبعيّاتٍ، وآخرُ تشغيلٍ بالاسم نفسه على main ناجح؟ (يُسأل GitHub عن check-runs رأسِ main؛ تعذّرُ السؤال = لا)."""
+    names = {str(c.get("name") or "") for c in bad}
+    if not names or not all(AUDIT_CHECK.search(n) for n in names):
+        return False
+    rc, raw = sh(["gh", "api", "repos/:owner/:repo/commits/main/check-runs?per_page=100", "--jq", ".check_runs | map({name, conclusion})"], ac.REPO_DIR)
+    if rc != 0:
+        return False
+    try:
+        runs = json.loads(raw)
+    except ValueError:
+        return False
+    by_name: dict[str, str] = {}
+    for r in runs:
+        by_name.setdefault(str(r.get("name")), str(r.get("conclusion")))  # الأحدثُ أوّلاً
+    return all(by_name.get(n) == "success" for n in names)
+
+
+#: (W-20261103-002) فحصُ اللقطات البصريّة الفاشل على رأسٍ له manifest نظيفٌ أو إعفاءٌ مسجَّل: الفرقُ مقصود، فيُوسَم الطلب «تغيير-بصريّ» (الفرقُ ملخّصٌ لا فشل) ويُعاد الفحصُ مرّةً.
+VISUAL_CHECK = re.compile(r"لقطات الهويّة")
+VISUAL_LABEL = "تغيير-بصريّ"
+
+
+def visual_evidence_for(cid: str, head: str, evidence=None) -> tuple[bool, str]:
+    """(ناجح؟، رسالة): أدلّةُ الرأس البصريّة أو إعفاؤه (visual_gate.evidence_status). تعذّرُ القراءة = لا."""
+    try:
+        import visual_gate  # noqa: PLC0415
+
+        return (evidence or visual_gate.evidence_status)(cid, head)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"تعذّرت قراءةُ الأدلّة: {type(exc).__name__}"
+
+
 def ci_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=None) -> list[str]:
     """(مرحلة CI العالق) لا رسائلَ بين الجلسات: فحصٌ فاشل/ملغى لطلبٍ معتمَد يُعاد مرّةً واحدة لكلّ رأس (`gh run rerun --failed`)،
     والمعلَّق أكثر من CI_STUCK_MIN دقيقة يُسجَّل ملاحظةً في الدفتر مرّةً واحدة؛ والمتكرّر فشلُه يُبلَّغ ولا يُعاد."""
@@ -1297,6 +1388,32 @@ def ci_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=
         key = f"{num}:{head}"
         bad = [c for c in checks if c.get("bucket") in ("fail", "cancel")]
         runs = sorted({m.group(1) for c in bad if (m := RUN_ID.search(c.get("link") or ""))})
+        if bad and runs and not done.get(key + ":updated") and audit_failures_stale_vs_main(bad, sh):
+            # أساسٌ قديم: تُدمج main في فرع الطلب (gh pr update-branch، دمجٌ لا rebase) ويُعاد الفحصُ بالرأس الجديد؛ لا تُحسب إعادةً ثانية،
+            # ويرث الرأسُ الجديد الاعتمادَ في waive_pass بدمج main النظيف (D-451م). محاولةٌ واحدةٌ لكلّ رأس؛ فإن لم تُجدِ سقطنا إلى الإعادة العاديّة.
+            if not apply:
+                out.append(f"{cid}: #{num} تدقيق تبعيّاتٍ فاشلٌ على أساسٍ قديم (main أخضر): يُحدَّث الفرع من main (عرض)")
+            else:
+                ok = sh(["gh", "pr", "update-branch", str(num)], ac.REPO_DIR)[0] == 0
+                done[key + ":updated"] = 1
+                RERUNS.write_text(json.dumps(done), encoding="utf-8")
+                out.append(f"{cid}: #{num} تدقيق تبعيّاتٍ على أساسٍ قديم (main أخضر): تحديثُ الفرع من main {'✔' if ok else '✘'}")
+            continue
+        if bad and runs and not done.get(key + ":visual") and any(VISUAL_CHECK.search(str(c.get("name") or "")) for c in bad):
+            ok_ev, ev_msg = visual_evidence_for(cid, head)
+            if ok_ev:
+                if not apply:
+                    out.append(f"{cid}: #{num} لقطاتُ الهويّة فاشلة والرأس {head} بأدلّةٍ/إعفاء: يُوسَم «{VISUAL_LABEL}» ويُغلق الطلب ويُعاد فتحه (عرض)")
+                else:
+                    done[key + ":visual"] = 1
+                    RERUNS.write_text(json.dumps(done), encoding="utf-8")
+                    lab = sh(["gh", "pr", "edit", str(num), "--add-label", VISUAL_LABEL], ac.REPO_DIR)[0] == 0
+                    # rerun لا يجدي: الوسمُ يُقرأ من حمولة حدث pull_request وإعادةُ التشغيل تحتفظ بالقديمة (أُثبت على #1320)؛
+                    # فيُغلق الطلبُ ويُعاد فتحُه ليُطلَق حدثٌ جديدٌ بحمولةٍ فيها الوسم.
+                    oks = [sh(["gh", "pr", "close", str(num)], ac.REPO_DIR)[0] == 0, sh(["gh", "pr", "reopen", str(num)], ac.REPO_DIR)[0] == 0] if lab else []
+                    ledger.add_note(cid, f"وسمُ «{VISUAL_LABEL}» على #{num} آلياً للرأس {head}: {ev_msg}"[:230], SENDER)
+                    out.append(f"{cid}: #{num} لقطاتُ الهويّة: وسمُ «{VISUAL_LABEL}» {'✔' if lab else '✘'} وإغلاقُ الطلب وإعادةُ فتحه {'✔' if oks and all(oks) else '✘'}")
+                continue
         if bad and runs:
             if done.get(key):
                 out.append(f"{cid}: #{num} فحصٌ فاشل بعد إعادةٍ سابقة للرأس {head} ({bad[0].get('name')}) — لا إعادة ثانية")

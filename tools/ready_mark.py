@@ -64,6 +64,18 @@ def declared_head(item: dict) -> str | None:
     return None
 
 
+def head_holders(items: dict, card: str, head8: str) -> list[str]:
+    """بطاقاتٌ حيّةٌ أخرى أعلنت الرأسَ نفسَه جاهزاً أو سُجّل لها اعتماداً/دفعاً به (W-20261028-020): رأسٌ واحدٌ لا يخدم بطاقتين."""
+    out = []
+    for cid, it in items.items():
+        if cid == card or it.get("state") in ledger.RELEASING_STATES:
+            continue
+        heads = {str(it.get("ready_head") or "")[:8], str(it.get("approved_head") or "")[:8]}
+        if head8 in heads:
+            out.append(cid)
+    return sorted(out)
+
+
 def auto_preflight_repo(repo: str, full: str) -> str | None:
     """شجرةُ الفحص المسبق تلقائياً: المستودعُ الذي وُجد فيه الرأس إن كان HEAD فيه هو الرأسَ نفسَه (فيفحص الفحصُ فرعَ البطاقة فعلاً).
     وإلا (رأسٌ في فرعٍ غير مُسحوب) لا شجرةَ تُفحص فيرجع None ويبقى الإعفاءُ المدوَّن القصير."""
@@ -72,7 +84,7 @@ def auto_preflight_repo(repo: str, full: str) -> str | None:
 
 def mark(card: str, head: str, by: str, repo: str, link: str = "", role: str = "", base: str = "origin/main",
          dry: bool = False, path=None, preflight_repo: str | None = None, waive_preflight: str | None = None,
-         premerge_sha: str | None = None) -> str:
+         premerge_sha: str | None = None, parent: str | None = None) -> str:
     items = ledger.reduce_state(ledger.load_events(path))
     if card not in items:
         raise ledger.LedgerError(f"بطاقةٌ غيرُ موجودة: {card}")
@@ -82,6 +94,12 @@ def mark(card: str, head: str, by: str, repo: str, link: str = "", role: str = "
     head8 = head[:8]
     if item["state"] not in FROM_STATES:
         raise ledger.LedgerError(f"«{item['state']}» لا تنتقل إلى ready_for_review بهذه الأداة (الحالات المقبولة: {sorted(FROM_STATES)})")
+    holders = head_holders(items, card, head8)
+    if holders and parent not in holders:  # D-499م R3: طلبٌ واحدٌ بعنوان بطاقتين تُرفضه المضخّة؛ التابعةُ تُربط بأمّها صراحةً
+        raise ledger.LedgerError(f"الرأس {head8} مسجَّلٌ لبطاقةٍ حيّةٍ أخرى ({', '.join(holders)}): لا يُعلَّم رأسٌ واحدٌ لبطاقتين. "
+                                 f"إن كانت {card} تابعةً لها فمرِّر --parent {holders[0]}، وإلا أودِع رأساً مستقلاً")
+    if parent and parent not in items:
+        raise ledger.LedgerError(f"--parent {parent}: بطاقةٌ غيرُ موجودة")
     repo, full = find_head(repo, head8)
     if not full:
         raise ledger.LedgerError(f"الرأس {head8} غيرُ موجودٍ في أيٍّ من: {'، '.join(candidate_repos(repo))} — أودِع أولاً أو مرِّر --repo <المستودع>")
@@ -105,6 +123,8 @@ def mark(card: str, head: str, by: str, repo: str, link: str = "", role: str = "
     # (كسرُ #46). هذه الأداةُ تعلّم الرأسَ فحسب ولا تُشغّل الفحص: فتُعلن ذلك بنصٍّ قصيرٍ صريحٍ بدل إنذارٍ طويل، ومن يملك الفحصَ يمرّره.
     ledger.move(card, "ready_for_review", path=path, note=note, by=by, head_now=head8, preflight_repo=preflight_repo,
                 waive_preflight=waive_preflight or (None if preflight_repo else NO_PREFLIGHT), premerge_sha=premerge_sha)
+    if parent:  # التابعةُ تُنشَر مع أمّها: علامةٌ مهيكلةٌ تقرؤها المضخّة (parent) وملاحظةٌ مقروءة
+        ledger.append_event("note", card, {"text": ledger.check_text("note", f"تابعةٌ لـ{parent} على الرأس {head8} (طلبٌ واحد)"), "parent": parent}, path)
     if extra:  # الرابطُ والدور في ملاحظةٍ لاحقةٍ: إنذاراتُ move تملأ حدَّ 240 حرفاً في ملاحظة الانتقال
         ledger.append_event("note", card, {"text": ledger.check_text("note", extra)}, path)
     return f"ok: {card} ← ready_for_review ({'؛ '.join(filter(None, [note, extra]))})"
@@ -122,6 +142,7 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--preflight-repo", default=None, help="شجرةُ الفحص المسبق؛ الافتراضيُّ مستودعُ الرأس")
     ap.add_argument("--waive-preflight", default=None, help="سببُ إعفاء الفحص المسبق")
+    ap.add_argument("--parent", default=None, help="بطاقةٌ حيّةٌ تشاركها الرأسَ نفسَه (طلبٌ واحد ببطاقتين): تُربط التابعةُ بها صراحةً")
     ap.add_argument("--premerge-sha", default=None, help="بصمةُ make premerge: <head8>:<sha16>")
     a = ap.parse_args(argv)
     path = ledger.ledger_path()
@@ -131,7 +152,7 @@ def main(argv=None) -> int:
         return 2
     try:
         print(mark(a.card, a.head, a.by, a.repo, a.link, a.role, a.base, a.dry_run, preflight_repo=a.preflight_repo,
-                   waive_preflight=a.waive_preflight, premerge_sha=a.premerge_sha))
+                   waive_preflight=a.waive_preflight, premerge_sha=a.premerge_sha, parent=a.parent))
     except ledger.LedgerError as e:
         print(f"✗ {e}", file=sys.stderr)
         return 2
