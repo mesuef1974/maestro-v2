@@ -600,14 +600,18 @@ def cached_num(sid: str, root: Path | None = None) -> str | None:
 
 
 def _log_injection(num: str, root: Path | None, verdict: str = "", issues: list[str] | None = None) -> None:
-    """حدثٌ في الدفتر على بطاقة تركيز الجلسة (أو أوّل بطاقةٍ تحجزها)؛ لا يُسقط الحقنَ إن فشل."""
+    """(W-20261027-015) سجلُّ تشغيلٍ في `ledger/stop_hook_calls.log` (سطرُ JSON) لا حدثٌ في الدفتر: كانت ملاحظةُ الحقن تضخّم
+    events.jsonl (171 ملاحظةً من 5810) فتُقرأ في كلّ أمر؛ لا يُسقط الحقنَ إن فشل."""
     try:
-        import ledger
-
         st = load_state(num, root) or {}
         card = ((st.get("work") or {}).get("focus") or {}).get("card") or next((h["id"] for h in st.get("held_cards", [])), None)
         if card:
-            ledger.add_note(card, (INJECT_MARK + (f"؛ {verdict}" if verdict else "") + (": " + "؛ ".join(issues or [])[:90] if issues else ""))[:230], num, main_root(root) / "ledger" / "events.jsonl")
+            log = main_root(root) / "ledger" / "stop_hook_calls.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            row = {"ts": datetime.now(DOHA).isoformat(timespec="seconds"), "num": num, "card": card,
+                   "mark": INJECT_MARK, "verdict": verdict, "issues": "؛ ".join(issues or [])[:90]}
+            with log.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + chr(10))
     except Exception:  # noqa: BLE001, S110
         pass
 

@@ -239,13 +239,18 @@ def _ctx(out):
     return json.loads(out)["hookSpecificOutput"]["additionalContext"]
 
 
-def test_injection_logged_in_ledger_without_staling_focus(tree):
+def test_injection_logged_beside_the_ledger_not_in_it(tree):
+    """(W-20261027-015) سجلُّ الحقن في stop_hook_calls.log؛ والدفترُ لا يتضخّم بملاحظاتِ تشغيل."""
     _ready(tree)
     ss.set_focus("0108", "W-1", 1, root=tree)
+    ledger_file = tree / "ledger" / "events.jsonl"
+    before = ledger_file.read_text(encoding="utf-8") if ledger_file.is_file() else ""
     assert ss.cmd_hook(HOOK, tree, NOW, lambda c, i: ("0108 · التقييم", []))
-    evs = [json.loads(x) for x in (tree / "ledger" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert any(e["kind"] == "note" and ss.INJECT_MARK in e["data"]["text"] for e in evs)
-    assert ss.focus_guard("0108", tree) == []  # ملاحظةُ الحقن لا تُبطل focus
+    after = ledger_file.read_text(encoding="utf-8") if ledger_file.is_file() else ""
+    assert after == before and ss.INJECT_MARK not in after
+    rows = [json.loads(x) for x in (tree / "ledger" / "stop_hook_calls.log").read_text(encoding="utf-8").splitlines()]
+    assert rows and rows[-1]["card"].startswith("W-") and rows[-1]["num"] == "0108" and rows[-1]["mark"] == ss.INJECT_MARK
+    assert ss.focus_guard("0108", tree) == []
 
 
 # ---- W-20261024-006: الواجباتُ الدائمة ----
