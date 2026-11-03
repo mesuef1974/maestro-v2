@@ -99,6 +99,34 @@ class ReadyMark(unittest.TestCase):
         with self.assertRaises(ledger.LedgerError):
             self.mark(head=other)
 
+    def _shared_head(self):
+        """رأسٌ يحمل رمزَي بطاقتين (طلبٌ واحد W-20261015-777 + W-20261015-888) وبطاقةٌ ثانية حيّة."""
+        (Path(self.repo) / "e").write_text("z", encoding="utf-8")
+        git(self.repo, "add", "e")
+        git(self.repo, "commit", "-q", "-m", "W-20261015-777 + W-20261015-888: عملٌ مشترك")
+        head = git(self.repo, "rev-parse", "--short=8", "HEAD")
+        ledger.append_event("created", "W-20261015-888", {"problem": "م", "state": "captured", "type": "ui", "files": ["templates/"]}, self.ledger)
+        ledger.append_event("state", "W-20261015-888", {"state": "in_progress", "by": "0702", "held_by": "0702"}, self.ledger)
+        return head
+
+    def test_a_head_already_declared_for_another_live_card_is_refused_without_parent(self):
+        head = self._shared_head()
+        self.mark(head=head)
+        with self.assertRaises(ledger.LedgerError) as cm:
+            rm.mark("W-20261015-888", head, "0702", self.repo, base="main", path=self.ledger)
+        self.assertIn("--parent", str(cm.exception))
+        self.assertEqual(ledger.reduce_state(ledger.load_events(self.ledger))["W-20261015-888"]["state"], "in_progress")
+
+    def test_parent_links_the_second_card_to_the_first(self):
+        head = self._shared_head()
+        self.mark(head=head)
+        rm.mark("W-20261015-888", head, "0702", self.repo, base="main", path=self.ledger, parent=self.card)
+        it = ledger.reduce_state(ledger.load_events(self.ledger))["W-20261015-888"]
+        self.assertEqual(it["state"], "ready_for_review")
+        self.assertTrue(any("تابعةٌ لـ" + self.card in n["text"] for n in it["notes"]))
+        with self.assertRaises(ledger.LedgerError):  # --parent لا يتجاوز رأساً لبطاقةٍ غير المذكورة
+            rm.mark("W-20261015-888", head, "0702", self.repo, base="main", path=self.ledger, parent="W-20261015-000")
+
     def test_the_repo_is_found_from_the_environment_without_repo_flag(self):
         old = os.environ.get("SCHOOLOS_REPO")
         os.environ["SCHOOLOS_REPO"] = self.repo
