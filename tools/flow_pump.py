@@ -542,7 +542,22 @@ def _image_present(docker) -> bool:
     return rc == 0
 
 
-def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str) -> list[str]:
+def root_prepush_scripts(tree: str, root_repo: str | None = None) -> str | None:
+    """(W-20261028-022، D-499م R6) شجرةُ منصّةٍ أقدمُ من أداة prepush (بلا scripts/prepush_check.py) تُفحص بسكربتات الجذر لا «غير مقيس (أداة غائبة)»:
+    يعيد مجلّد scripts للجذر إن كانت الشجرةُ منصّةً (manage.py) وفاقدةً للأداة وللجذر الأداةُ؛ وإلا None."""
+    root = Path(root_repo or ready_mark_default_repo())
+    if push_approved.has_prepush_tool(tree) or not (Path(tree) / "manage.py").is_file():
+        return None
+    return str(root / "scripts") if push_approved.has_prepush_tool(str(root)) else None
+
+
+def ready_mark_default_repo() -> str:
+    import ready_mark  # noqa: PLC0415
+
+    return ready_mark.DEFAULT_REPO
+
+
+def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str, root_scripts: str | None = None) -> list[str]:
     """أمرُ docker run: الشجرةُ و.git الرئيس للقراءة فقط، على شبكةٍ داخليّةٍ لا خارجَ لها (فيها قاعدةُ الاختبار وحدَها)؛ GIT_DIR نسبةً إلى
     المركَّب. الإيصالُ لا يُكتب من الحاوية."""
     rel = os.path.relpath(gitdir, common).replace("\\", "/")
@@ -554,6 +569,7 @@ def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str) ->
         "-v", f"{tree}:/src:ro", "-v", f"{common}:/gitmain:ro", "-v", f"{runner}:/runner:ro",
         "-e", f"PREPUSH_GIT_DIR={git_dir}", "-e", "GIT_OPTIONAL_LOCKS=0", "-e", "HOME=/tmp",
         "-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=*",
+        *(["-v", f"{root_scripts}:/rootscripts:ro", "-e", "PREPUSH_ROOT_SCRIPTS=/rootscripts"] if root_scripts else []),
         PREPUSH_IMAGE, "sh", "/runner/entry.sh",
     ]
 
@@ -711,7 +727,8 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
         if ran >= limit:
             out.append(f"{cid}: ⏸ prepush في الدورة التالية (الحدّ {limit} في الدورة)")
             continue
-        if not push_approved.has_prepush_tool(path):
+        root_scripts = root_prepush_scripts(path)  # D-499م R6: منصّةٌ أقدمُ من الأداة تُفحص بسكربتات الجذر في الحاوية
+        if not push_approved.has_prepush_tool(path) and root_scripts is None:
             ran += 1
             if not apply:
                 out.append(f"{cid}: يُشغَّل pytest tools/ إيصالاً بديلاً (حوكمة) للرأس {head[:8]} (عرض)")
@@ -737,7 +754,7 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             continue
         ran += 1
         name = f"prepush-{cid.lower()}-{head[:8]}"
-        code, log = run_with_db(docker, lambda net: prepush_command(path, gitdir.strip(), common.strip(), name, net), name, timeout)
+        code, log = run_with_db(docker, lambda net: prepush_command(path, gitdir.strip(), common.strip(), name, net, root_scripts), name, timeout)
         # شرطُ الإيصال: رمز 0، وسطرُ النجاح الكامل، وخلوُّ المخرَج من «غير مقيس»، وبقاءُ الرأس ونظافةُ الشجرة بعد التشغيل
         _, head_after = git(path, "rev-parse", "HEAD")
         _, dirty_after = git(path, "status", "--porcelain", "--untracked-files=no")
