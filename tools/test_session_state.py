@@ -113,11 +113,27 @@ def test_pii_rejected(tree):
 
 
 def test_verify_detects_drift(tree):
+    """انجرافٌ حقيقيّ: بطاقةٌ جديدةٌ تُحجز للجلسة بعد كتابة الملفّ."""
     ss.write_state("0108", _gen(tree), tree)
     assert ss.verify("0108", tree, NOW) == []
     with open(tree / "ledger" / "events.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps(_ev("2026-10-23T13:00:00+03:00", "W-1", "state", {"state": "merged", "by": "0108"}), ensure_ascii=False) + "\n")
+        f.write(json.dumps(_ev("2026-10-23T13:00:00+03:00", "W-9", "created", {"title": "جديدة"}), ensure_ascii=False) + chr(10))
+        f.write(json.dumps(_ev("2026-10-23T13:00:01+03:00", "W-9", "state", {"state": "in_progress", "by": "0108", "held_by": "0108"}), ensure_ascii=False) + chr(10))
     assert ss.verify("0108", tree, NOW)
+
+
+def test_verify_tolerates_ledger_movement_after_the_last_write(tree):
+    """(W-20261028-025) حركةُ دفترٍ بين الدور والخطّاف (تبدّلُ حالة بطاقةٍ محجوزة، حدثٌ جديد) لا تُسقط الحارسَ."""
+    ss.write_state("0108", _gen(tree), tree)
+    with open(tree / "ledger" / "events.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(_ev("2026-10-23T13:00:00+03:00", "W-1", "state", {"state": "merged", "by": "0108"}), ensure_ascii=False) + chr(10))
+        f.write(json.dumps(_ev("2026-10-23T13:00:05+03:00", "W-1", "note", {"text": "(0108) ملاحظة"}), ensure_ascii=False) + chr(10))
+    assert ss.verify("0108", tree, NOW) == []
+
+
+def test_label_with_colon_is_accepted_and_kept():
+    assert ss.LABEL_RE.match("0101 · الاعتماد: المراجعة")
+    assert ss._label_of("0101 · الاعتماد: المراجعة", "0101") == "0101 · الاعتماد: المراجعة"
 
 
 def test_hook_injects_after_clear_only(tree):
