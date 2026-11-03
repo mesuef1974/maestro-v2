@@ -42,7 +42,7 @@ NEXT_DUE = timedelta(hours=1)  # قاعدةٌ ثابتة: التقييمُ ال�
 SESSION_RE = re.compile(r"^\d{4}(-[ء-ي])?$")  # رقمٌ أو رقمٌ فرعيّ مثل 0101-أ
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
 TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?\+03:00$")
-LABEL_RE = re.compile(r"^[\w ·\-]{1,60}$")
+LABEL_RE = re.compile(r"^[\w ·:\-]{1,60}$")  # W-20261028-025: العنوانُ الحقيقيّ فيه «:» («0101 · الاعتماد: ...») فكان يسقط التوليدُ بصمت
 #: كلماتٌ ممنوعةٌ في أيّ قيمةٍ نصّيةٍ (الاعتماد والأوامر لا تُحمَل في الحالة)
 FORBIDDEN = re.compile(r"اعتمد|معتمد|approved|قال المالك|أمر المالك|owner said|password|token|secret|كلمة المرور", re.IGNORECASE)
 PII = re.compile(r"\b\d{9,}\b|[\w.+-]+@[\w-]+\.[\w.]+")
@@ -600,20 +600,24 @@ def cached_num(sid: str, root: Path | None = None) -> str | None:
 
 
 def _log_injection(num: str, root: Path | None, verdict: str = "", issues: list[str] | None = None) -> None:
-    """حدثٌ في الدفتر على بطاقة تركيز الجلسة (أو أوّل بطاقةٍ تحجزها)؛ لا يُسقط الحقنَ إن فشل."""
+    """(W-20261027-015) سجلُّ تشغيلٍ في `ledger/stop_hook_calls.log` (سطرُ JSON) لا حدثٌ في الدفتر: كانت ملاحظةُ الحقن تضخّم
+    events.jsonl (171 ملاحظةً من 5810) فتُقرأ في كلّ أمر؛ لا يُسقط الحقنَ إن فشل."""
     try:
-        import ledger
-
         st = load_state(num, root) or {}
         card = ((st.get("work") or {}).get("focus") or {}).get("card") or next((h["id"] for h in st.get("held_cards", [])), None)
         if card:
-            ledger.add_note(card, (INJECT_MARK + (f"؛ {verdict}" if verdict else "") + (": " + "؛ ".join(issues or [])[:90] if issues else ""))[:230], num, main_root(root) / "ledger" / "events.jsonl")
+            log = main_root(root) / "ledger" / "stop_hook_calls.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            row = {"ts": datetime.now(DOHA).isoformat(timespec="seconds"), "num": num, "card": card,
+                   "mark": INJECT_MARK, "verdict": verdict, "issues": "؛ ".join(issues or [])[:90]}
+            with log.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + chr(10))
     except Exception:  # noqa: BLE001, S110
         pass
 
 
 def _label_of(title: str, num: str) -> str:
-    lab = re.sub(r"[^\w ·\-]", "", title)[:60].strip()
+    lab = re.sub(r"[^\w ·:\-]", "", title)[:60].strip()
     return lab if LABEL_RE.match(lab) and not FORBIDDEN.search(lab) else num
 
 
@@ -622,6 +626,19 @@ def _stable(state: dict, with_git: bool = True) -> dict:
     if not with_git:  # git يتبدّل خارج الدفتر فلا يُقارَن عند verify
         s["work"] = {k: v for k, v in state["work"].items() if k != "git"}
     return s
+
+
+def _verify_view(state: dict) -> dict:
+    """(W-20261028-025) ما يقارنه verify: الثابتُ من هويّة الحالة لا المتحرّكُ مع كلّ حركةٍ في الدفتر. queue وwaiting وlast_action
+    وlast_measure وrecent وgit وحالةُ كلّ بطاقةٍ وتركيزٌ مستنتَج تتبدّل بين الدور والخطّاف فكانت تُسقط الحارسَ لجلسةٍ عاملة
+    (0101 سقطت 7 مرّات بين 185 و270 ألف رمز). يبقى: الهويّة والمصادر والواجبات والقواعد ومعرّفاتُ البطاقات المحجوزة وتركيزٌ معلَن."""
+    s = _stable(state, False)
+    work = s.get("work") or {}
+    focus = work.get("focus") or {}
+    out = {k: v for k, v in s.items() if k not in ("queue", "waiting", "last_action", "last_measure", "work", "held_cards")}
+    out["held_ids"] = sorted(h["id"] for h in s.get("held_cards", []))
+    out["focus"] = None if not focus or focus.get("inferred") else {"card": focus.get("card"), "step": focus.get("step")}
+    return out
 
 
 def fit_state(state: dict) -> dict:
@@ -680,7 +697,7 @@ def verify(num: str, root: Path | None = None, now: datetime | None = None, ledg
     if errs:
         return errs
     fresh = fit_state(derive(num, cur["session_label"], now, root, ledger_path))  # W-20261027-037: الملفُّ المكتوبُ مقصوصٌ بـfit_state فيُقارَن به
-    if _stable(fresh, False) != _stable(cur, False):
+    if _verify_view(fresh) != _verify_view(cur):
         return ["الملفُّ لا يطابق الدفترَ الآن؛ أعد generate"]
     return []
 

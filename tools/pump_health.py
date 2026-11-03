@@ -35,6 +35,8 @@ WAIT_STATES = {
     "routed": (None, "بطاقةٌ محالةٌ إليك بلا حركةٍ يومين: ابدأها (move in_progress) أو أعدها إلى 0101 بسبب"),
     "in_progress": (None, "جاريةٌ بلا حركةٍ يومين: أبلغ 0101 بالرأس الحاليّ أو العائق في سطر"),
 }
+#: «pushed» وطلبُها مفتوح (W-20261028-028): لا يصحّ «دُفع بلا طلب»؛ العائقُ عند الدمج لا عند الحامل فالفاعلُ 0601
+PR_WAIT = ("0601", "طلبُها #{pr} مفتوحٌ لم يندمج: راجع فحوصَه ونافذةَ الدمج (المضخّةُ تدمجه حين يخضرّ)")
 #: عتباتُ الدفع بالدقائق لكلّ حالة: (الأولى، الثانية)؛ المحالةُ والجاريةُ بيومين وأربعة
 NUDGE_LEVELS = {"routed": (1440, 2880), "in_progress": (1440, 2880)}
 #: أقدمُ من هذا (بالدقائق) تراكمٌ لا ركود: لا يُدفع (يبقى في تقرير 0101 اليوميّ) — وإلا غمر أوّلُ تشغيلٍ الصناديقَ بعشرات البطاقات القديمة
@@ -76,8 +78,16 @@ def _read_jsonl(path: Path) -> list[dict]:
     return out
 
 
-def plan_escalations(states: dict[str, dict], done: list[dict], now: datetime) -> list[dict]:
-    """[{card, level, state, state_ts, age, reason}] لم يُنفَّذ بعد؛ المفتاحُ (بطاقة، state_ts، مستوى) فلا تكرار."""
+def pr_of(cid: str, item: dict, open_prs: dict | None) -> int | None:
+    """رقمُ طلب البطاقة: من الطلبات المفتوحة الحيّة إن قُرئت، وإلا من الحقل `pr` المسجَّل في الدفتر عند الفتح."""
+    if open_prs is not None:
+        return open_prs.get(cid)
+    return item.get("pr") or None
+
+
+def plan_escalations(states: dict[str, dict], done: list[dict], now: datetime, open_prs: dict | None = None) -> list[dict]:
+    """[{card, level, state, state_ts, age, reason}] لم يُنفَّذ بعد؛ المفتاحُ (بطاقة، state_ts، مستوى) فلا تكرار.
+    open_prs: بطاقة ← رقم طلبها المفتوح (None = لم يُقرأ)؛ لبطاقة pushed بطلبٍ يُحمل `pr` في العنصر."""
     seen = {(d["card"], d["state_ts"], d["level"]) for d in done}
     out = []
     for cid, item in sorted(states.items()):
@@ -92,19 +102,25 @@ def plan_escalations(states: dict[str, dict], done: list[dict], now: datetime) -
         due = [lv for lv in (first, second) if age >= lv and (cid, item["state_ts"], lv) not in seen]
         if due:
             level = max(due)
-            out.append({"card": cid, "level": level, "state": state, "state_ts": item["state_ts"], "age": int(age),
-                        "held_by": item.get("held_by", ""), "first": level == first, "skipped": [lv for lv in due if lv != level]})
+            entry = {"card": cid, "level": level, "state": state, "state_ts": item["state_ts"], "age": int(age),
+                     "held_by": item.get("held_by", ""), "first": level == first, "skipped": [lv for lv in due if lv != level]}
+            if state == "pushed":
+                pr = pr_of(cid, item, open_prs)
+                if pr:
+                    entry["pr"] = pr
+            out.append(entry)
     return out
 
 
 def nudge_target(e: dict) -> str:
     """الفاعلُ التالي للبطاقة الراكدة: فاعلُ الحالة الثابت أو حاملُها؛ وبلا حاملٍ 0101."""
-    fixed, _ = WAIT_STATES[e["state"]]
+    fixed, _ = PR_WAIT if e.get("pr") else WAIT_STATES[e["state"]]
     return fixed or e.get("held_by") or PUMP_BY
 
 
 def nudge_text(e: dict) -> str:
-    _, step = WAIT_STATES[e["state"]]
+    _, step = PR_WAIT if e.get("pr") else WAIT_STATES[e["state"]]
+    step = step.replace("{pr}", str(e.get("pr", "")))
     return (f"[دفعُ المضخّة] {e['card']} راكدةٌ {e['age']} دقيقةً في «{e['state']}» — خطوتُك التالية: {step}. "
             f"لا تنتظر أمراً من المالك ولا من 0101؛ أبلغ 0101 بالعائق وحده إن وُجد.")
 
@@ -120,7 +136,7 @@ def _inbox_send(to: str, text: str) -> None:
     inbox.send(to, PUMP_BY, text)
 
 
-def escalation_pass(states: dict[str, dict], apply: bool, now: datetime | None = None, log=None, report=None, path=None, send=None) -> list[str]:
+def escalation_pass(states: dict[str, dict], apply: bool, now: datetime | None = None, log=None, report=None, path=None, send=None, open_prs: dict | None = None) -> list[str]:
     """الركودُ يُدفع برسالةِ صندوقٍ توقظ الفاعلَ التالي (D-512م): المستوى الأوّل للفاعل، والثاني للفاعل و0101 معاً مع سطرٍ في التقرير."""
     now = now or datetime.now(ledger.DOHA)
     log = log or _beside_ledger("pump_escalations.jsonl")
@@ -128,7 +144,7 @@ def escalation_pass(states: dict[str, dict], apply: bool, now: datetime | None =
     send = send or _inbox_send
     out = []
     per_target: dict[str, int] = {}
-    for e in plan_escalations(states, _read_jsonl(log), now):
+    for e in plan_escalations(states, _read_jsonl(log), now, open_prs):
         mark = f"{e['card']}: راكدةٌ {e['age']} دقيقةً في «{e['state']}»"
         to = nudge_target(e)
         if per_target.get(to, 0) >= NUDGES_PER_TARGET:

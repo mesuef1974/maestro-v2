@@ -171,3 +171,29 @@ def test_no_open_duty_means_no_wake_even_if_inbox_is_old(tmp_path):
 def test_dry_run_writes_and_sends_nothing(tmp_path):
     out, sent, notes = _dormant({"W-1": _st("merged", 10, "0421")}, 200, tmp_path, apply=False)
     assert out and "(عرض)" in out[0] and sent == [] and notes == [] and not (tmp_path / "d.jsonl").exists()
+
+
+def test_pushed_with_open_pr_is_not_called_pushed_without_pr(tmp_path):
+    """(W-20261028-028) pushed وطلبُها مفتوح: الدفعُ إلى 0601 بنصٍّ يذكر الطلب، لا «دُفع بلا طلبٍ مفتوح» إلى الحامل."""
+    lp = tmp_path / "e.jsonl"
+    ledger.append_event("created", "W-20261028-950", {"title": "x"}, lp)
+    texts = []
+    st = {"W-20261028-950": _st("pushed", 40, "0701")}
+    ph.escalation_pass(st, True, NOW, tmp_path / "esc.jsonl", tmp_path / "rep.txt", lp, lambda to, t: texts.append((to, t)), open_prs={"W-20261028-950": 1234})
+    assert [to for to, _ in texts] == ["0601"]
+    assert "#1234" in texts[0][1] and "بلا طلب" not in texts[0][1]
+
+
+def test_pushed_without_pr_keeps_the_original_message(tmp_path):
+    lp = tmp_path / "e.jsonl"
+    ledger.append_event("created", "W-20261028-951", {"title": "x"}, lp)
+    texts = []
+    ph.escalation_pass({"W-20261028-951": _st("pushed", 40, "0701")}, True, NOW, tmp_path / "esc.jsonl", tmp_path / "rep.txt", lp,
+                       lambda to, t: texts.append((to, t)), open_prs={})
+    assert texts[0][0] == "0701" and "بلا طلب" in texts[0][1]
+
+
+def test_recorded_pr_field_is_used_only_when_open_prs_were_not_read():
+    item = {"state": "pushed", "pr": 77}
+    assert ph.pr_of("W-1", item, None) == 77
+    assert ph.pr_of("W-1", item, {}) is None  # قُرئت الطلباتُ ولا طلبَ مفتوحاً (أُغلق بلا دمج)

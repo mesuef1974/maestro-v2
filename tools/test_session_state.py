@@ -113,11 +113,27 @@ def test_pii_rejected(tree):
 
 
 def test_verify_detects_drift(tree):
+    """انجرافٌ حقيقيّ: بطاقةٌ جديدةٌ تُحجز للجلسة بعد كتابة الملفّ."""
     ss.write_state("0108", _gen(tree), tree)
     assert ss.verify("0108", tree, NOW) == []
     with open(tree / "ledger" / "events.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps(_ev("2026-10-23T13:00:00+03:00", "W-1", "state", {"state": "merged", "by": "0108"}), ensure_ascii=False) + "\n")
+        f.write(json.dumps(_ev("2026-10-23T13:00:00+03:00", "W-9", "created", {"title": "جديدة"}), ensure_ascii=False) + chr(10))
+        f.write(json.dumps(_ev("2026-10-23T13:00:01+03:00", "W-9", "state", {"state": "in_progress", "by": "0108", "held_by": "0108"}), ensure_ascii=False) + chr(10))
     assert ss.verify("0108", tree, NOW)
+
+
+def test_verify_tolerates_ledger_movement_after_the_last_write(tree):
+    """(W-20261028-025) حركةُ دفترٍ بين الدور والخطّاف (تبدّلُ حالة بطاقةٍ محجوزة، حدثٌ جديد) لا تُسقط الحارسَ."""
+    ss.write_state("0108", _gen(tree), tree)
+    with open(tree / "ledger" / "events.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(_ev("2026-10-23T13:00:00+03:00", "W-1", "state", {"state": "merged", "by": "0108"}), ensure_ascii=False) + chr(10))
+        f.write(json.dumps(_ev("2026-10-23T13:00:05+03:00", "W-1", "note", {"text": "(0108) ملاحظة"}), ensure_ascii=False) + chr(10))
+    assert ss.verify("0108", tree, NOW) == []
+
+
+def test_label_with_colon_is_accepted_and_kept():
+    assert ss.LABEL_RE.match("0101 · الاعتماد: المراجعة")
+    assert ss._label_of("0101 · الاعتماد: المراجعة", "0101") == "0101 · الاعتماد: المراجعة"
 
 
 def test_hook_injects_after_clear_only(tree):
@@ -239,13 +255,18 @@ def _ctx(out):
     return json.loads(out)["hookSpecificOutput"]["additionalContext"]
 
 
-def test_injection_logged_in_ledger_without_staling_focus(tree):
+def test_injection_logged_beside_the_ledger_not_in_it(tree):
+    """(W-20261027-015) سجلُّ الحقن في stop_hook_calls.log؛ والدفترُ لا يتضخّم بملاحظاتِ تشغيل."""
     _ready(tree)
     ss.set_focus("0108", "W-1", 1, root=tree)
+    ledger_file = tree / "ledger" / "events.jsonl"
+    before = ledger_file.read_text(encoding="utf-8") if ledger_file.is_file() else ""
     assert ss.cmd_hook(HOOK, tree, NOW, lambda c, i: ("0108 · التقييم", []))
-    evs = [json.loads(x) for x in (tree / "ledger" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert any(e["kind"] == "note" and ss.INJECT_MARK in e["data"]["text"] for e in evs)
-    assert ss.focus_guard("0108", tree) == []  # ملاحظةُ الحقن لا تُبطل focus
+    after = ledger_file.read_text(encoding="utf-8") if ledger_file.is_file() else ""
+    assert after == before and ss.INJECT_MARK not in after
+    rows = [json.loads(x) for x in (tree / "ledger" / "stop_hook_calls.log").read_text(encoding="utf-8").splitlines()]
+    assert rows and rows[-1]["card"].startswith("W-") and rows[-1]["num"] == "0108" and rows[-1]["mark"] == ss.INJECT_MARK
+    assert ss.focus_guard("0108", tree) == []
 
 
 # ---- W-20261024-006: الواجباتُ الدائمة ----
