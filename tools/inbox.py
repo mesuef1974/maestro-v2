@@ -5,7 +5,7 @@
     python inbox.py send --to 0301 --from 0101 --text "…"        # أو --file مسار
     python inbox.py read 0301 [--peek]                            # الواردُ غيرُ المسلَّم (ويُسلَّم ما لم يكن --peek)
     python inbox.py pending                                       # الأرقامُ التي لها وارد غيرُ مسلَّم وعددُه
-    python inbox.py wait 0301 [--once] [--timeout ث]              # مراقبٌ: يطبع كلَّ وارد ويواصل؛ --once يخرج بأوّله
+    python inbox.py wait 0301 [--follow] [--timeout ث]            # مراقبٌ: ينتهي بأوّل وارد فيوقظ جلستَه (مهمّةٌ خلفيّةٌ تنتهي)؛ --follow يواصل بلا إيقاظ
     python inbox.py reap                                          # يوقف مراقباتِ الأرقام غير الحيّة (W-20261028-033)
     python inbox.py hook                                          # خطّاف PostToolUse (JSON على stdin): يحقن الواردَ في سياق الجلسة العاملة
 
@@ -325,9 +325,10 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("read")
     r.add_argument("num")
     r.add_argument("--peek", action="store_true")
-    w = sub.add_parser("wait", help="مراقبٌ لحظيّ: يطبع كلَّ وارد فور وصوله ويواصل (--once: يخرج بأوّل وارد)")
+    w = sub.add_parser("wait", help="مراقبٌ لحظيّ: ينتهي بأوّل وارد فيوقظ جلستَه (أمر المالك 2026-11-03)؛ --follow: يواصل الطباعة بلا إيقاظ")
     w.add_argument("num")
-    w.add_argument("--once", action="store_true", help="السلوكُ القديم: يخرج بأوّل وارد")
+    w.add_argument("--once", action="store_true", help=argparse.SUPPRESS)  # الافتراضيُّ الآن؛ يبقى مقبولاً للسطور القديمة
+    w.add_argument("--follow", action="store_true", help="السلوكُ القديم (W-20261027-006): يطبع كلَّ دفعةٍ ويواصل — لا يوقظ الجلسة لأنّ المهمّة لا تنتهي")
     w.add_argument("--timeout", type=float, default=None, help="ثوانٍ؛ بلا قيمة = بلا نهاية")
     w.add_argument("--sid", default="", help="معرّفُ جلسة CLI: النبضُ يُهمَل إن لم يطابق جلسةً حيّة (W-20261028-024)")
     sub.add_parser("pending")
@@ -352,13 +353,22 @@ def main(argv: list[str] | None = None) -> int:
         print(render(msgs) if msgs else "لا وارد")
         return 0
     if a.cmd == "wait":
-        if a.once:
-            msgs = wait(a.num, timeout=a.timeout, sid=a.sid, note=lambda t: print(t, flush=True))
-            print(render(msgs) if msgs else "انتهت المهلة بلا وارد")
+        if a.follow:
+            msgs = wait(a.num, timeout=a.timeout, once=False, sid=a.sid, emit=lambda m: print(render(m), flush=True), note=lambda t: print(t, flush=True))
+            if not msgs:
+                print("انتهت المهلة بلا وارد")
             return 0
-        msgs = wait(a.num, timeout=a.timeout, once=False, sid=a.sid, emit=lambda m: print(render(m), flush=True), note=lambda t: print(t, flush=True))
-        if not msgs:
-            print("انتهت المهلة بلا وارد")
+        # الإيقاظُ الوحيدُ الذي يراه التطبيق هو انتهاءُ مهمّةٍ خلفيّةٍ تابعةٍ للجلسة (أمر المالك 2026-11-03): المراقبُ ينتهي بأوّل وارد،
+        # والجلسةُ تقرأ بـread (الإقرارُ له وحده) ثمّ تعيد تشغيله. مراقبٌ آخر حيٌّ أو شيفرةٌ تغيّرت → سطرُ شرحٍ ورمزُ خروجٍ مميَّز.
+        notes: list[str] = []
+        msgs = wait(a.num, timeout=a.timeout, sid=a.sid, fingerprint=code_fingerprint, note=lambda t: (notes.append(t), print(t, flush=True)))
+        if msgs:
+            print(render(msgs))
+            print(f"[إيقاظ] {len(msgs)} وارد: اقرأه بـpython tools/inbox.py read {a.num} ثمّ أعد تشغيلي في الخلفيّة.")
+            return 0
+        if notes:
+            return 2 if "مراقبٌ آخر" in notes[-1] else 5  # 2: لا تُعِدني (لك مراقب)؛ 5: أعِدني بالشيفرة الجديدة
+        print("انتهت المهلة بلا وارد")
         return 0
     if a.cmd == "reap":
         import session_directory
