@@ -1336,6 +1336,21 @@ def audit_failures_stale_vs_main(bad: list[dict], sh) -> bool:
     return all(by_name.get(n) == "success" for n in names)
 
 
+#: (W-20261103-002) فحصُ اللقطات البصريّة الفاشل على رأسٍ له manifest نظيفٌ أو إعفاءٌ مسجَّل: الفرقُ مقصود، فيُوسَم الطلب «تغيير-بصريّ» (الفرقُ ملخّصٌ لا فشل) ويُعاد الفحصُ مرّةً.
+VISUAL_CHECK = re.compile(r"لقطات الهويّة")
+VISUAL_LABEL = "تغيير-بصريّ"
+
+
+def visual_evidence_for(cid: str, head: str, evidence=None) -> tuple[bool, str]:
+    """(ناجح؟، رسالة): أدلّةُ الرأس البصريّة أو إعفاؤه (visual_gate.evidence_status). تعذّرُ القراءة = لا."""
+    try:
+        import visual_gate  # noqa: PLC0415
+
+        return (evidence or visual_gate.evidence_status)(cid, head)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"تعذّرت قراءةُ الأدلّة: {type(exc).__name__}"
+
+
 def ci_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=None) -> list[str]:
     """(مرحلة CI العالق) لا رسائلَ بين الجلسات: فحصٌ فاشل/ملغى لطلبٍ معتمَد يُعاد مرّةً واحدة لكلّ رأس (`gh run rerun --failed`)،
     والمعلَّق أكثر من CI_STUCK_MIN دقيقة يُسجَّل ملاحظةً في الدفتر مرّةً واحدة؛ والمتكرّر فشلُه يُبلَّغ ولا يُعاد."""
@@ -1367,6 +1382,21 @@ def ci_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=
                 RERUNS.write_text(json.dumps(done), encoding="utf-8")
                 out.append(f"{cid}: #{num} تدقيق تبعيّاتٍ على أساسٍ قديم (main أخضر): تحديثُ الفرع من main {'✔' if ok else '✘'}")
             continue
+        if bad and runs and not done.get(key + ":visual") and any(VISUAL_CHECK.search(str(c.get("name") or "")) for c in bad):
+            ok_ev, ev_msg = visual_evidence_for(cid, head)
+            if ok_ev:
+                if not apply:
+                    out.append(f"{cid}: #{num} لقطاتُ الهويّة فاشلة والرأس {head} بأدلّةٍ/إعفاء: يُوسَم «{VISUAL_LABEL}» ويُغلق الطلب ويُعاد فتحه (عرض)")
+                else:
+                    done[key + ":visual"] = 1
+                    RERUNS.write_text(json.dumps(done), encoding="utf-8")
+                    lab = sh(["gh", "pr", "edit", str(num), "--add-label", VISUAL_LABEL], ac.REPO_DIR)[0] == 0
+                    # rerun لا يجدي: الوسمُ يُقرأ من حمولة حدث pull_request وإعادةُ التشغيل تحتفظ بالقديمة (أُثبت على #1320)؛
+                    # فيُغلق الطلبُ ويُعاد فتحُه ليُطلَق حدثٌ جديدٌ بحمولةٍ فيها الوسم.
+                    oks = [sh(["gh", "pr", "close", str(num)], ac.REPO_DIR)[0] == 0, sh(["gh", "pr", "reopen", str(num)], ac.REPO_DIR)[0] == 0] if lab else []
+                    ledger.add_note(cid, f"وسمُ «{VISUAL_LABEL}» على #{num} آلياً للرأس {head}: {ev_msg}"[:230], SENDER)
+                    out.append(f"{cid}: #{num} لقطاتُ الهويّة: وسمُ «{VISUAL_LABEL}» {'✔' if lab else '✘'} وإغلاقُ الطلب وإعادةُ فتحه {'✔' if oks and all(oks) else '✘'}")
+                continue
         if bad and runs:
             if done.get(key):
                 out.append(f"{cid}: #{num} فحصٌ فاشل بعد إعادةٍ سابقة للرأس {head} ({bad[0].get('name')}) — لا إعادة ثانية")
