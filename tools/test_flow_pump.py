@@ -1786,3 +1786,45 @@ def test_windows_resource_exhaustion_exit_is_an_env_failure():
     log = "FAILED tools/test_x.py::test_a - CalledProcessError: exit status 3221225794" + nl + "E   exit status 3221225794" + nl
     assert fp.failure_cond(1, log) == "prepush_env"
     assert fp.failure_cond(1, "FAILED tools/test_x.py::test_a - assert 1 == 2") == "prepush"
+
+
+class PartialEnvRerun(unittest.TestCase):
+    """W-20261103-004: إخفاقاتٌ كلُّها بيئيّة ⇒ تُعاد الفاشلةُ وحدَها؛ نجاحُها يكتب الإيصال، وإخفاقٌ غيرُ بيئيٍّ واحد يمنع الإعادة الجزئيّة."""
+
+    ENV = "FAILED tools/test_a.py::test_x - CalledProcessError: exit status 3221225794" + chr(10) + "E   exit status 3221225794" + chr(10) + "1 failed"
+
+    def _tree(self):
+        d = Path(tempfile.mkdtemp())
+        git = mock.Mock(side_effect=lambda path, *a: (0, str(d / ".git")) if a[0] == "rev-parse" and "--absolute-git-dir" in a else (0, "H" * 40) if a[0] == "rev-parse" else (0, ""))
+        (d / ".git").mkdir()
+        return d, git
+
+    def test_ids_are_parsed_from_failed_and_error_lines(self):
+        ids = fp.failed_test_ids("FAILED tools/test_a.py::test_x[p] - boom" + chr(10) + "ERROR tools/test_b.py::T::test_y - x" + chr(10) + "2 failed")
+        self.assertEqual(ids, ["tools/test_a.py::test_x[p]", "tools/test_b.py::T::test_y"])
+
+    def test_env_only_failures_rerun_failed_ids_and_write_receipt(self):
+        d, git = self._tree()
+        calls = []
+        with mock.patch.object(fp, "PREPUSH_ATTEMPTS", d / "att.json"), mock.patch.object(fp, "_log_once"):
+            out = fp.governance_receipt("W-1", str(d), "H" * 40, git, {}, lambda p, t: (1, self.ENV),
+                                        partial_run=lambda p, ids, t: (calls.append(ids) or (0, "ok")))
+        self.assertEqual(calls, [["tools/test_a.py::test_x"]])
+        self.assertIn("إعادة جزئيّة بيئيّة", out)
+        self.assertTrue((d / ".git" / fp.ledger.RECEIPT_NAME).is_file())
+
+    def test_partial_rerun_that_still_fails_writes_no_receipt(self):
+        d, git = self._tree()
+        with mock.patch.object(fp, "PREPUSH_ATTEMPTS", d / "att.json"), mock.patch.object(fp, "_log_once"):
+            out = fp.governance_receipt("W-1", str(d), "H" * 40, git, {}, lambda p, t: (1, self.ENV), partial_run=lambda p, ids, t: (1, "no"))
+        self.assertIn("✘", out)
+        self.assertFalse((d / ".git" / fp.ledger.RECEIPT_NAME).exists())
+
+    def test_one_non_env_failure_means_no_partial_rerun(self):
+        d, git = self._tree()
+        calls = []
+        log = self.ENV.replace("1 failed", "") + chr(10) + "FAILED tools/test_b.py::test_y - AssertionError" + chr(10) + "2 failed"
+        with mock.patch.object(fp, "PREPUSH_ATTEMPTS", d / "att.json"), mock.patch.object(fp, "_log_once"):
+            out = fp.governance_receipt("W-1", str(d), "H" * 40, git, {}, lambda p, t: (1, log), partial_run=lambda p, ids, t: calls.append(ids))
+        self.assertEqual(calls, [])
+        self.assertIn("✘", out)

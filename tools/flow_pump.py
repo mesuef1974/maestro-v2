@@ -643,7 +643,41 @@ def _pytest_run(path: str, timeout: int) -> tuple[int, str]:
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
-def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_run=None, timeout: int = GOV_PYTEST_TIMEOUT_S) -> str:
+#: (W-20261103-004) سقفُ ما يُعاد جزئيّاً: فوقه الفشلُ ليس عارضاً بل عيبٌ في التشغيل نفسه
+PARTIAL_RERUN_MAX = 120
+_FAILED_ID = re.compile(r"^(?:FAILED|ERROR) (\S+?::\S+?)(?: - .*)?$", re.M)
+
+
+def failed_test_ids(log: str) -> list[str]:
+    """معرّفاتُ pytest الفاشلة من سطور FAILED/ERROR في المخرَج (مرتّبةٌ بلا تكرار)؛ ملخّصٌ مقصوص يُسقط ما لا يُقرأ فيُعاد تشغيل الكلّ بدلاً."""
+    return sorted(dict.fromkeys(_FAILED_ID.findall(log or "")))
+
+
+def _pytest_ids_run(path: str, ids: list[str], timeout: int) -> tuple[int, str]:
+    """pytest بمعرّفاتٍ محدَّدة في شجرة الحوكمة (المهلةُ 124، تعذّرُ التشغيل 127) — كـ_pytest_run."""
+    try:
+        p = subprocess.run([console_python(), "-m", "pytest", *ids, "-q", "-p", "no:cacheprovider"], cwd=path,  # noqa: S603
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, "تجاوز المهلة"
+    except OSError as exc:
+        return 127, f"pytest غير متاح: {exc}"
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def partial_env_rerun(code: int, log: str, path: str, partial_run=None, timeout: int = GOV_PYTEST_TIMEOUT_S) -> tuple[bool, str]:
+    """(ناجحة؟، ملاحظة): كلُّ إخفاقات pytest بيئيّةٌ (failure_cond == prepush_env بمخرجٍ فيه FAILED/ERROR مقروءة) ⇒ تُعاد الفاشلةُ وحدَها بمعرّفاتها
+    مرّةً واحدة؛ نجاحُها يعني أنّ المجموعَ أخضر (ما عداها نجح في التشغيل الأوّل). إخفاقٌ غيرُ بيئيّ واحدٌ أو مهلةٌ أو معرّفاتٌ كثيرة ⇒ لا إعادة جزئيّة."""
+    if code != 1 or failure_cond(code, log) != "prepush_env":
+        return False, ""
+    ids = failed_test_ids(log)
+    if not ids or len(ids) > PARTIAL_RERUN_MAX:
+        return False, ""
+    rc, out = (partial_run or _pytest_ids_run)(path, ids, timeout)
+    return rc == 0, f"إعادة جزئيّة بيئيّة: {len(ids)} اختباراً فاشلاً أُعيد وحدَه ← {'أخضر' if rc == 0 else f'رمز {rc}'}"
+
+
+def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_run=None, timeout: int = GOV_PYTEST_TIMEOUT_S, partial_run=None) -> str:
     """(W-20261026-018) مستودعُ الحوكمة بلا scripts/prepush_check.py: الإيصالُ البديل pytest tools/ أخضرَ للرأس نفسه في الشجرة النظيفة.
     لا يُكتب إلا برمز خروج 0 وبقاءِ الرأس ونظافةِ الشجرة بعد التشغيل؛ والفشلُ يُسجَّل لرأسه بشرطه (record_failure).
     يعيد سطرَ النتيجة المطبوع."""
@@ -651,13 +685,16 @@ def governance_receipt(cid: str, path: str, head: str, git, tried: dict, pytest_
     if rc or not gitdir.strip():
         return f"{cid}: ✘ تعذّرت قراءةُ مجلّد git للشجرة — لا إيصال بديل"
     code, log = (pytest_run or _pytest_run)(path, timeout)
+    partial_ok, partial_note = partial_env_rerun(code, log, path, partial_run, timeout)  # W-20261103-004
+    if partial_ok:
+        code = 0
     _, head_after = git(path, "rev-parse", "HEAD")
     _, dirty_after = git(path, "status", "--porcelain", "--untracked-files=no")
     if code == 0 and head_after.strip() == head and not dirty_after.strip():
         (Path(gitdir.strip()) / ledger.RECEIPT_NAME).write_text(
             json.dumps({"head": head[:8], "ok": True, "kind": push_approved.GOV_RECEIPT_KIND}), encoding="utf-8")
-        _log_once(f"prepush-حوكمة: {cid} {head[:8]} ✔")
-        return f"{cid}: ✔ pytest tools/ أخضر للرأس {head[:8]} — كُتب الإيصال البديل (حوكمة)"
+        _log_once(f"prepush-حوكمة: {cid} {head[:8]} ✔" + (f" ({partial_note})" if partial_ok else ""))
+        return f"{cid}: ✔ pytest tools/ أخضر للرأس {head[:8]} — كُتب الإيصال البديل (حوكمة)" + (f" — {partial_note}" if partial_ok else "")
     why = ("الرأس أو الشجرة تغيّر أثناء الفحص" if code == 0 else "تجاوز المهلة" if code == 124 else f"رمز الخروج {code}")
     tail = " | ".join((log or "").strip().splitlines()[-3:])[:300]
     record_failure(tried, f"{cid}:{head[:8]}", why, "prepush_env" if code == 0 else failure_cond(code, log))
