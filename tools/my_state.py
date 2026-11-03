@@ -141,6 +141,24 @@ def role_wip_line(items: dict, session: str) -> str | None:
     return f"!! إنذار: للدور {role} {len(pending)} بطاقاتٍ غيرِ منشورة (الحدّ {ledger.role_wip_limit()}): " + "، ".join(i["id"] for i in pending)
 
 
+def red_rows_for(session: str, events: list[dict], now: datetime | None = None, rows=None) -> list[str]:
+    """(W-20261028-019، D-499م) سطورُ الأحمر في flow_watch الذي أملكه أو أُحيل إليّ: صاحبُ الصفّ (owner) أو حاملُ بطاقته (held_by).
+    من الدفتر وحده (بلا شبكة)؛ `rows` يحقن صفوفاً جاهزة للاختبار. لا يرفع استثناءً."""
+    try:
+        import flow_watch
+
+        now = now or datetime.now(ledger.DOHA)
+        rows = rows if rows is not None else flow_watch.collect(events, None, None, now, flow_watch.Thresholds(), cap=0)
+        held = {i["id"] for i in ledger.reduce_state(events).values() if i.get("held_by") == session}
+        out = []
+        for r in rows:
+            if r.severity == "red" and (r.owner == session or r.ref in held):
+                out.append(f"  {r.ref} (حالة {r.label}) {r.subject} — {r.action}" + (f" [{r.age_min} دقيقة]" if r.age_min is not None else ""))
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def report(session: str, events: list[dict], show_all: bool = False, now: datetime | None = None,
            check_remote: bool = False, remote_lookup=None) -> str:
     items = ledger.reduce_state(events)
@@ -171,6 +189,10 @@ def report(session: str, events: list[dict], show_all: bool = False, now: dateti
         lines.extend(f"  {i['id']} [{i.get('state', '?')}] {i.get('priority', '')} {str(i.get('problem', ''))[:60]}"
                      for i in sorted(held, key=ledger.order_key))
     empty = True
+    reds = red_rows_for(session, events, now)
+    if reds:
+        lines.append(f"\nالأحمر عليك في flow_watch ({len(reds)}):")
+        lines.extend(reds)
     for key, label in ACTIONS:
         if groups[key]:
             empty = False
