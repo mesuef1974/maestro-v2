@@ -128,3 +128,29 @@ def test_missed_window_preview_does_not_write(tmp_path):
     after = datetime(2026, 10, 30, 8, 0, tzinfo=ledger.DOHA)
     assert len(ph.missed_window_pass(False, after, state, rep)) == 1
     assert not rep.exists() and json.loads(state.read_text(encoding="utf-8"))["2026-10-29:2"]["alerted"] is False
+
+
+def test_pushed_with_open_pr_is_not_called_pushed_without_pr(tmp_path):
+    """(W-20261028-028) pushed وطلبُها مفتوح: الدفعُ إلى 0601 بنصٍّ يذكر الطلب، لا «دُفع بلا طلبٍ مفتوح» إلى الحامل."""
+    lp = tmp_path / "e.jsonl"
+    ledger.append_event("created", "W-20261028-950", {"title": "x"}, lp)
+    texts = []
+    st = {"W-20261028-950": _st("pushed", 40, "0701")}
+    ph.escalation_pass(st, True, NOW, tmp_path / "esc.jsonl", tmp_path / "rep.txt", lp, lambda to, t: texts.append((to, t)), open_prs={"W-20261028-950": 1234})
+    assert [to for to, _ in texts] == ["0601"]
+    assert "#1234" in texts[0][1] and "بلا طلب" not in texts[0][1]
+
+
+def test_pushed_without_pr_keeps_the_original_message(tmp_path):
+    lp = tmp_path / "e.jsonl"
+    ledger.append_event("created", "W-20261028-951", {"title": "x"}, lp)
+    texts = []
+    ph.escalation_pass({"W-20261028-951": _st("pushed", 40, "0701")}, True, NOW, tmp_path / "esc.jsonl", tmp_path / "rep.txt", lp,
+                       lambda to, t: texts.append((to, t)), open_prs={})
+    assert texts[0][0] == "0701" and "بلا طلب" in texts[0][1]
+
+
+def test_recorded_pr_field_is_used_only_when_open_prs_were_not_read():
+    item = {"state": "pushed", "pr": 77}
+    assert ph.pr_of("W-1", item, None) == 77
+    assert ph.pr_of("W-1", item, {}) is None  # قُرئت الطلباتُ ولا طلبَ مفتوحاً (أُغلق بلا دمج)

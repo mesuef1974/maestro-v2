@@ -1325,6 +1325,7 @@ class OpenPrPass(unittest.TestCase):
             mock.patch.object(fp, "approval_ok", return_value=approved),
             mock.patch.object(fp, "approval_line", return_value=line),
             mock.patch.object(fp.ledger, "add_note") as note,
+            mock.patch.object(fp.ledger, "append_event") as self.pr_event,
             mock.patch.object(fp.ac, "security_approved", return_value=None),
         ):
             lines = fp.openpr_pass(states or self.states, list(prs), apply, git=git or self.git(), sh=sh, platform=str(self.tmp), **kw)
@@ -1356,6 +1357,8 @@ class OpenPrPass(unittest.TestCase):
         note.assert_called_once()
         self.assertIn("#321", note.call_args.args[1])
         self.assertIn("✔", lines[0])
+        # (W-20261028-028) رقمُ الطلب حقلٌ مهيكلٌ على البطاقة لا ملاحظةٌ فقط
+        self.pr_event.assert_called_once_with("update", "W-5", {"pr": 321, "pr_repo": "sh-school/shschool_mvp"})
 
     def test_never_merges_or_arms_auto_merge(self):
         _, sh, _ = self.run_pass()
@@ -1365,6 +1368,7 @@ class OpenPrPass(unittest.TestCase):
         lines, sh, note = self.run_pass(apply=False)
         self.assertEqual(self.creates(sh), [])
         note.assert_not_called()
+        self.pr_event.assert_not_called()
         self.assertIn("(عرض)", lines[0])
 
     def test_a_governance_card_opens_its_pr_in_maestro_v2_not_the_platform(self):
