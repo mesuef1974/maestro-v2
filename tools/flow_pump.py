@@ -1349,14 +1349,16 @@ def ci_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=
             ok_ev, ev_msg = visual_evidence_for(cid, head)
             if ok_ev:
                 if not apply:
-                    out.append(f"{cid}: #{num} لقطاتُ الهويّة فاشلة والرأس {head} بأدلّةٍ/إعفاء: يُوسَم «{VISUAL_LABEL}» ويُعاد الفحص (عرض)")
+                    out.append(f"{cid}: #{num} لقطاتُ الهويّة فاشلة والرأس {head} بأدلّةٍ/إعفاء: يُوسَم «{VISUAL_LABEL}» ويُغلق الطلب ويُعاد فتحه (عرض)")
                 else:
                     done[key + ":visual"] = 1
                     RERUNS.write_text(json.dumps(done), encoding="utf-8")
                     lab = sh(["gh", "pr", "edit", str(num), "--add-label", VISUAL_LABEL], ac.REPO_DIR)[0] == 0
-                    oks = [sh(["gh", "run", "rerun", r, "--failed"], ac.REPO_DIR)[0] == 0 for r in runs] if lab else []
+                    # rerun لا يجدي: الوسمُ يُقرأ من حمولة حدث pull_request وإعادةُ التشغيل تحتفظ بالقديمة (أُثبت على #1320)؛
+                    # فيُغلق الطلبُ ويُعاد فتحُه ليُطلَق حدثٌ جديدٌ بحمولةٍ فيها الوسم.
+                    oks = [sh(["gh", "pr", "close", str(num)], ac.REPO_DIR)[0] == 0, sh(["gh", "pr", "reopen", str(num)], ac.REPO_DIR)[0] == 0] if lab else []
                     ledger.add_note(cid, f"وسمُ «{VISUAL_LABEL}» على #{num} آلياً للرأس {head}: {ev_msg}"[:230], SENDER)
-                    out.append(f"{cid}: #{num} لقطاتُ الهويّة: وسمُ «{VISUAL_LABEL}» {'✔' if lab else '✘'} وإعادةُ الفحص {'✔' if oks and all(oks) else '✘'}")
+                    out.append(f"{cid}: #{num} لقطاتُ الهويّة: وسمُ «{VISUAL_LABEL}» {'✔' if lab else '✘'} وإغلاقُ الطلب وإعادةُ فتحه {'✔' if oks and all(oks) else '✘'}")
                 continue
         if bad and runs:
             if done.get(key):

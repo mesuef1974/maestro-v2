@@ -1587,7 +1587,8 @@ class CiPass(unittest.TestCase):
         with mock.patch.object(fp, "visual_evidence_for", lambda c, h: (True, "أدلةٌ كاملة")):
             out, calls, note = self._run(self.VIS)
             self.assertIn(["gh", "pr", "edit", "7", "--add-label", "تغيير-بصريّ"], calls)
-            self.assertIn(["gh", "run", "rerun", "77", "--failed"], calls)
+            self.assertFalse(any(c[:3] == ["gh", "run", "rerun"] for c in calls))  # rerun يحتفظ بحمولة الحدث القديمة
+            self.assertLess(calls.index(["gh", "pr", "close", "7"]), calls.index(["gh", "pr", "reopen", "7"]))
             note.assert_called_once()
             out2, calls2, _ = self._run(self.VIS, done={"7:aaaaaaaa:visual": 1})
             self.assertFalse(any(c[:3] == ["gh", "pr", "edit"] for c in calls2))  # مرّةٌ لكلّ رأس: ثم الإعادة العاديّة
