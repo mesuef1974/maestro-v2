@@ -25,6 +25,22 @@ AGE_STATES = ("ready_for_review", *STAGES)
 REREFER_MIN = 30
 REPORT_MIN = 90
 PUMP_BY = "0101"
+#: (D-512م، أمر المالك 2026-11-03 «لا يزال المالك يصدر الأوامر») مراحلُ انتظارٍ لفاعلٍ معيَّن: الركودُ فيها يُدفع برسالةِ صندوقٍ
+#: توقظ الفاعلَ التالي بخطوته (لا ملاحظةَ دفترٍ لا يقرؤها أحد ولا رسالةً للمالك). المفتاحُ (بطاقة، state_ts، مستوى) فلا تكرار.
+WAIT_STATES = {
+    "ready_for_review": ("0101", "راجعي الفرق واعتمدي الرأس (ledger.py move <id> approved --head) أو أعيديها بملاحظة"),
+    "approved": (None, "رأسُك المعتمَد لم يُدفع: إن كانت واجهةً فاطلب تثبيتَ 8500 من 0501 ثمّ visual_gate.py run؛ وإلا فإيصال prepush على الرأس ليدفعه الآليّ"),
+    "pushed": (None, "دُفع بلا طلبٍ مفتوح: افتح الطلب أو أبلغ 0101 بالعائق"),
+    "merged": ("0601", "مدموجٌ غيرُ منشور: النشر في النافذة التالية ثمّ verify_deploy وتسجيل published"),
+    "routed": (None, "بطاقةٌ محالةٌ إليك بلا حركةٍ يومين: ابدأها (move in_progress) أو أعدها إلى 0101 بسبب"),
+    "in_progress": (None, "جاريةٌ بلا حركةٍ يومين: أبلغ 0101 بالرأس الحاليّ أو العائق في سطر"),
+}
+#: عتباتُ الدفع بالدقائق لكلّ حالة: (الأولى، الثانية)؛ المحالةُ والجاريةُ بيومين وأربعة
+NUDGE_LEVELS = {"routed": (1440, 2880), "in_progress": (1440, 2880)}
+#: أقدمُ من هذا (بالدقائق) تراكمٌ لا ركود: لا يُدفع (يبقى في تقرير 0101 اليوميّ) — وإلا غمر أوّلُ تشغيلٍ الصناديقَ بعشرات البطاقات القديمة
+BACKLOG_MIN = 7 * 1440
+#: أقصى دفعاتٍ لفاعلٍ واحدٍ في الدورة؛ الباقي في الدورة التالية
+NUDGES_PER_TARGET = 3
 #: (W-20261028-006، D-429م) نافذتا الدمج الآليّ بتوقيت الدوحة: (الدفعة، البداية، النهاية) بالدقائق من منتصف الليل؛ البدايةُ مشمولةٌ والنهايةُ لا
 MERGE_WINDOWS = ((1, 14 * 60 + 30, 16 * 60 + 30), (2, 19 * 60, 21 * 60))
 PASS_STATES = ("pushed", "merged", "published")
@@ -60,16 +76,32 @@ def plan_escalations(states: dict[str, dict], done: list[dict], now: datetime) -
     seen = {(d["card"], d["state_ts"], d["level"]) for d in done}
     out = []
     for cid, item in sorted(states.items()):
-        if item.get("state") not in STAGES:
+        state = item.get("state")
+        if state not in WAIT_STATES:
             continue
         age = age_minutes(item, now)
-        if age is None or age < REREFER_MIN:
+        first, second = NUDGE_LEVELS.get(state, (REREFER_MIN, REPORT_MIN))
+        if age is None or age < first or age >= BACKLOG_MIN:
             continue
-        for level, floor in ((REREFER_MIN, REREFER_MIN), (REPORT_MIN, REPORT_MIN)):
-            if age >= floor and (cid, item["state_ts"], level) not in seen:
-                out.append({"card": cid, "level": level, "state": item["state"], "state_ts": item["state_ts"], "age": int(age),
-                            "held_by": item.get("held_by", "")})
+        # مستوىً واحدٌ في الدورة: الأعلى المستحقُّ غيرُ المنفَّذ (فلا رسالتان لبطاقةٍ واحدةٍ دفعةً واحدة)
+        due = [lv for lv in (first, second) if age >= lv and (cid, item["state_ts"], lv) not in seen]
+        if due:
+            level = max(due)
+            out.append({"card": cid, "level": level, "state": state, "state_ts": item["state_ts"], "age": int(age),
+                        "held_by": item.get("held_by", ""), "first": level == first, "skipped": [lv for lv in due if lv != level]})
     return out
+
+
+def nudge_target(e: dict) -> str:
+    """الفاعلُ التالي للبطاقة الراكدة: فاعلُ الحالة الثابت أو حاملُها؛ وبلا حاملٍ 0101."""
+    fixed, _ = WAIT_STATES[e["state"]]
+    return fixed or e.get("held_by") or PUMP_BY
+
+
+def nudge_text(e: dict) -> str:
+    _, step = WAIT_STATES[e["state"]]
+    return (f"[دفعُ المضخّة] {e['card']} راكدةٌ {e['age']} دقيقةً في «{e['state']}» — خطوتُك التالية: {step}. "
+            f"لا تنتظر أمراً من المالك ولا من 0101؛ أبلغ 0101 بالعائق وحده إن وُجد.")
 
 
 def _beside_ledger(name: str) -> Path:
@@ -77,27 +109,46 @@ def _beside_ledger(name: str) -> Path:
     return ledger.ledger_path(None).parent / name
 
 
-def escalation_pass(states: dict[str, dict], apply: bool, now: datetime | None = None, log=None, report=None, path=None) -> list[str]:
+def _inbox_send(to: str, text: str) -> None:
+    import inbox  # noqa: PLC0415
+
+    inbox.send(to, PUMP_BY, text)
+
+
+def escalation_pass(states: dict[str, dict], apply: bool, now: datetime | None = None, log=None, report=None, path=None, send=None) -> list[str]:
+    """الركودُ يُدفع برسالةِ صندوقٍ توقظ الفاعلَ التالي (D-512م): المستوى الأوّل للفاعل، والثاني للفاعل و0101 معاً مع سطرٍ في التقرير."""
     now = now or datetime.now(ledger.DOHA)
     log = log or _beside_ledger("pump_escalations.jsonl")
     report = report or _beside_ledger("pump_report_0101.txt")
+    send = send or _inbox_send
     out = []
+    per_target: dict[str, int] = {}
     for e in plan_escalations(states, _read_jsonl(log), now):
         mark = f"{e['card']}: راكدةٌ {e['age']} دقيقةً في «{e['state']}»"
-        if e["level"] == REREFER_MIN:
-            out.append(f"{mark} — إعادةُ إحالةٍ آليّةٌ واحدة" + ("" if apply else " (عرض)"))
+        to = nudge_target(e)
+        if per_target.get(to, 0) >= NUDGES_PER_TARGET:
+            out.append(f"{mark} — مؤجَّلةٌ للدورة التالية (سقف {NUDGES_PER_TARGET} دفعاتٍ لـ{to})")
+            continue
+        per_target[to] = per_target.get(to, 0) + 1
+        if e["first"]:
+            out.append(f"{mark} — إعادةُ إحالةٍ آليّةٌ واحدة: دفعٌ إلى {to}" + ("" if apply else " (عرض)"))
             if apply:
-                ledger.add_note(e["card"], f"إعادةُ إحالةٍ آليّة: {e['age']} دقيقةً في «{e['state']}» بلا حركة", PUMP_BY, path)
+                ledger.add_note(e["card"], f"إعادةُ إحالةٍ آليّة: {e['age']} دقيقةً في «{e['state']}» بلا حركة؛ دُفعت إلى {to}", PUMP_BY, path)
+                send(to, nudge_text(e))
         else:
-            out.append(f"{mark} — يدخل تقرير 0101" + ("" if apply else " (عرض)"))
+            out.append(f"{mark} — يدخل تقرير 0101 ويُدفع إلى {to} ثانيةً" + ("" if apply else " (عرض)"))
             if apply:
                 report.parent.mkdir(parents=True, exist_ok=True)
                 with report.open("a", encoding="utf-8") as f:
-                    f.write(f"{now.isoformat(timespec='minutes')} {e['card']} {e['state']} {e['age']}د حامل={e['held_by'] or '—'}: ركودٌ فوق {REPORT_MIN} دقيقةً بعد إعادة الإحالة\n")
+                    f.write(f"{now.isoformat(timespec='minutes')} {e['card']} {e['state']} {e['age']}د حامل={e['held_by'] or '—'}: ركودٌ فوق {e['level']} دقيقةً بعد إعادة الإحالة\n")
+                send(to, nudge_text(e))
+                if to != PUMP_BY:
+                    send(PUMP_BY, f"[ركود] {e['card']} {e['age']} د في «{e['state']}» عند {to} بعد دفعتين؛ تدخّلي إن كان عائقاً.")
         if apply:
             log.parent.mkdir(parents=True, exist_ok=True)
             with log.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({"card": e["card"], "level": e["level"], "state_ts": e["state_ts"], "ts": now.isoformat(timespec="seconds")}, ensure_ascii=False) + "\n")
+                for lv in (e["level"], *e.get("skipped", [])):  # المستوياتُ الأدنى المتجاوَزة تُختم أيضاً فلا تُرسَل لاحقاً
+                    f.write(json.dumps({"card": e["card"], "level": lv, "state_ts": e["state_ts"], "ts": now.isoformat(timespec="seconds")}, ensure_ascii=False) + "\n")
     return out
 
 
