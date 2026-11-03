@@ -1659,6 +1659,8 @@ def _run(argv=None) -> int:
         st = ledger.reduce_state(evs)
         for line in pump_health.escalation_pass({c: v for c, v in st.items() if c not in a.skip}, a.apply):
             print("تصعيد: " + line)
+        for line in pump_health.dormant_pass({c: v for c, v in st.items() if c not in a.skip}, a.apply, open_prs=({c: p["number"] for c, p in card_prs(st, prs)[0].items()} if prs_ok else None)):
+            print("خمول: " + line)
         for line in pump_health.missed_window_pass(a.apply, path=MERGE_WINDOW_STATE):
             print("نافذة: " + line)
         if a.apply and pump_health.write_daily(st, evs):
