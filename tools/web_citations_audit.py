@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -36,7 +37,11 @@ REQUIRED_FIELDS = {
 
 URL_RE = re.compile(r"https?://[^\s<>)\]»\"'`،؛]+")
 #: روابطُ ليست «ويباً خارجيّاً» بحثيّاً: المحلّيّ والمستودع وأدوات الجلسات.
-IGNORED_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "github.com", "claude.ai", "claude.com", "anthropic.com", "railway.app", "example.com", "fonts.googleapis.com", "fonts.gstatic.com", "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "unpkg.com")
+IGNORED_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "github.com", "claude.ai", "claude.com", "anthropic.com", "railway.app", "example.com", "fonts.googleapis.com", "fonts.gstatic.com", "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "unpkg.com", "evil.example", "mcp.sentry.dev")
+#: مضيفُ الإنتاج يُقرأ من متغيّر بيئة (المستودع عامّ؛ لا عنوانَ حرفيّاً هنا)، وافتراضيُّه المضيفُ المعروف في أدوات النشر.
+PRODUCTION_HOST = os.environ.get("SCHOOLOS_PRODUCTION_HOST", "shschoolmvp-production.up.railway.app")
+#: فضاءاتُ أسماءٍ لا روابطَ بحث: تُستثنى بالمسار لا بالمضيف كلّه (w3.org وحده قد يحوي استشهاداً حقيقياً).
+IGNORED_PATH_PREFIXES = ("www.w3.org/2000/", "w3.org/1999/xhtml")
 
 
 def normalize(url: str) -> str:
@@ -47,7 +52,11 @@ def normalize(url: str) -> str:
 
 def is_external(url: str) -> bool:
     host = re.sub(r"^https?://", "", url, flags=re.I).split("/")[0].split(":")[0].lower()
-    return not any(host == h or host.endswith("." + h) for h in IGNORED_HOSTS)
+    bare = re.sub(r"^https?://", "", url, flags=re.I).lower()
+    if any(bare.startswith(pre) for pre in IGNORED_PATH_PREFIXES):
+        return False
+    hosts = IGNORED_HOSTS + (PRODUCTION_HOST.lower(),)
+    return not any(host == h or host.endswith("." + h) for h in hosts)
 
 
 def iter_text_files(paths):
