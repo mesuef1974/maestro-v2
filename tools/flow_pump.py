@@ -1277,6 +1277,28 @@ def _reruns() -> dict:
         return {}
 
 
+#: (W-20261028-021، D-499م R4) فحوصُ تدقيق التبعيّات: فشلُها على أساسٍ قديمٍ يعالجه تحديثُ الفرع من main لا إعادةُ التشغيل.
+AUDIT_CHECK = re.compile(r"pip[- ]audit|security summary|dependency audit", re.IGNORECASE)
+
+
+def audit_failures_stale_vs_main(bad: list[dict], sh) -> bool:
+    """كلُّ فحصٍ فاشلٍ تدقيقُ تبعيّاتٍ، وآخرُ تشغيلٍ بالاسم نفسه على main ناجح؟ (يُسأل GitHub عن check-runs رأسِ main؛ تعذّرُ السؤال = لا)."""
+    names = {str(c.get("name") or "") for c in bad}
+    if not names or not all(AUDIT_CHECK.search(n) for n in names):
+        return False
+    rc, raw = sh(["gh", "api", "repos/:owner/:repo/commits/main/check-runs?per_page=100", "--jq", ".check_runs | map({name, conclusion})"], ac.REPO_DIR)
+    if rc != 0:
+        return False
+    try:
+        runs = json.loads(raw)
+    except ValueError:
+        return False
+    by_name: dict[str, str] = {}
+    for r in runs:
+        by_name.setdefault(str(r.get("name")), str(r.get("conclusion")))  # الأحدثُ أوّلاً
+    return all(by_name.get(n) == "success" for n in names)
+
+
 def ci_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=None) -> list[str]:
     """(مرحلة CI العالق) لا رسائلَ بين الجلسات: فحصٌ فاشل/ملغى لطلبٍ معتمَد يُعاد مرّةً واحدة لكلّ رأس (`gh run rerun --failed`)،
     والمعلَّق أكثر من CI_STUCK_MIN دقيقة يُسجَّل ملاحظةً في الدفتر مرّةً واحدة؛ والمتكرّر فشلُه يُبلَّغ ولا يُعاد."""
@@ -1297,6 +1319,17 @@ def ci_pass(states: dict[str, dict], prs: list[dict], apply: bool, sh=None, now=
         key = f"{num}:{head}"
         bad = [c for c in checks if c.get("bucket") in ("fail", "cancel")]
         runs = sorted({m.group(1) for c in bad if (m := RUN_ID.search(c.get("link") or ""))})
+        if bad and runs and not done.get(key + ":updated") and audit_failures_stale_vs_main(bad, sh):
+            # أساسٌ قديم: تُدمج main في فرع الطلب (gh pr update-branch، دمجٌ لا rebase) ويُعاد الفحصُ بالرأس الجديد؛ لا تُحسب إعادةً ثانية،
+            # ويرث الرأسُ الجديد الاعتمادَ في waive_pass بدمج main النظيف (D-451م). محاولةٌ واحدةٌ لكلّ رأس؛ فإن لم تُجدِ سقطنا إلى الإعادة العاديّة.
+            if not apply:
+                out.append(f"{cid}: #{num} تدقيق تبعيّاتٍ فاشلٌ على أساسٍ قديم (main أخضر): يُحدَّث الفرع من main (عرض)")
+            else:
+                ok = sh(["gh", "pr", "update-branch", str(num)], ac.REPO_DIR)[0] == 0
+                done[key + ":updated"] = 1
+                RERUNS.write_text(json.dumps(done), encoding="utf-8")
+                out.append(f"{cid}: #{num} تدقيق تبعيّاتٍ على أساسٍ قديم (main أخضر): تحديثُ الفرع من main {'✔' if ok else '✘'}")
+            continue
         if bad and runs:
             if done.get(key):
                 out.append(f"{cid}: #{num} فحصٌ فاشل بعد إعادةٍ سابقة للرأس {head} ({bad[0].get('name')}) — لا إعادة ثانية")
