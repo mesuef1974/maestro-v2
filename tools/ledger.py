@@ -155,6 +155,12 @@ def append_event(kind: str, item_id: str, data: dict | None = None, path=None) -
     p = ledger_path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     event = {"ts": now_doha(), "id": item_id, "kind": kind, "data": data or {}}
+    if kind == "approval" and event["data"].get("by") in ("0101",) and event["data"].get("via") == DELEGATION_VIA:
+        import approval_seal  # noqa: PLC0415 — ختمُ هويّة 0101 (W-20261103-011)
+
+        sealed = approval_seal.seal(item_id, str(event["data"].get("head") or ""), str(event["data"]["by"]), event["ts"])
+        if sealed:
+            event["data"] = {**event["data"], "seal": sealed}
     line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
     with _file_lock(p):
         daily_backup(p)
@@ -1572,14 +1578,31 @@ DELEGATION_GOVERNING_RE = (
 )
 
 
-def delegation_blockers(changed: list[str]) -> list[str]:
+#: (W-20261103-011) ملفّاتُ قاعدة الاعتماد نفسِها: تفويضٌ عليها يلزمه سطرُ مالكٍ حرفيٌّ في owner_confirmations (لا يكفي ادّعاءُ 0101)
+DELEGATION_AUTH_RULE_RE = (
+    r"^tools/(approval_check|approval_seal|ledger|flow_pump|push_approved)[.]py$", r"^decisions[.]md$",
+)
+
+
+def delegation_blockers(changed: list[str], owner_quote: str | None = None) -> list[str]:
     """أسبابُ رفض التفويض آلياً لقائمة الملفّات؛ فارغةٌ دائماً (D-506م: «المالك في الخطوة الأولى فقط»).
     اعتمادُ 0101 للرأس بعد مراجعة الفرق يشمل كلَّ الأصناف (واجهة، هجرات، صلاحيّات، ملفّات حاكمة)؛ الموانعُ الحمراء
-    (حذفٌ دائم، مال، بيانات إنتاج) ليست مساراتٍ في الفرق بل أوامرُ تنفيذٍ يحرسها 0601 وgit guard. الدالّةُ باقيةٌ لاستدعاءاتها."""
-    return []
+    (حذفٌ دائم، مال، بيانات إنتاج) ليست مساراتٍ في الفرق بل أوامرُ تنفيذٍ يحرسها 0601 وgit guard.
+    الاستثناءُ الوحيد (W-20261103-011): ملفّاتُ قاعدة الاعتماد نفسِها (DELEGATION_AUTH_RULE_RE) تلزمها `owner_quote` تثبت حرفيّاً في owner_confirmations."""
+    hits = [f for f in changed if any(re.match(pat, f) for pat in DELEGATION_AUTH_RULE_RE)]
+    if not hits:
+        return []
+    if owner_quote:
+        try:
+            find_owner_order(owner_quote)
+            return []
+        except LedgerError as exc:
+            return [f"{f}: قاعدةُ الاعتماد نفسُها — {exc}" for f in hits]
+    return [f"{f}: قاعدةُ الاعتماد نفسُها لا تُفوَّض — يلزم سطرُ مالكٍ حرفيّ (--owner-quote)" for f in hits]
 
 
-def record_delegation(item_id: str, head: str, by: str, path=None, repo: str | None = None, changed: list[str] | None = None) -> list[str]:
+def record_delegation(item_id: str, head: str, by: str, path=None, repo: str | None = None, changed: list[str] | None = None,
+                      owner_quote: str | None = None) -> list[str]:
     """يسجّل اعتمادَ 0101 بالتفويض على الرأس: الفرقُ الفعليّ عن origin/main اتّحاداً مع الممرَّر (كما في الوثائق)، ويرفض الموانع.
     يكتب حدثَ approval (by، via، head، files) ثمّ حالةَ approved بالرأس. يعيد الملفّات."""
     if by not in DELEGATION_BY:
@@ -1600,10 +1623,13 @@ def record_delegation(item_id: str, head: str, by: str, path=None, repo: str | N
     files = list(dict.fromkeys([*(changed or []), *real]))
     if not files:
         raise LedgerError("فرقٌ فارغٌ عن origin/main (fetch أوّلاً؟) — لا تفويضَ على لا شيء")
-    bad = delegation_blockers(files)
+    bad = delegation_blockers(files, owner_quote)
     if bad:
         raise LedgerError(f"مانعُ تفويض: {bad[:6]}")
-    append_event("approval", item_id, {"by": by, "via": DELEGATION_VIA, "head": head[:8], "n": len(files), "files": sorted(files)[:DELEGATION_FILES_MAX]}, path)
+    data = {"by": by, "via": DELEGATION_VIA, "head": head[:8], "n": len(files), "files": sorted(files)[:DELEGATION_FILES_MAX]}
+    if owner_quote:
+        data["owner_quote"] = check_text("note", owner_quote)
+    append_event("approval", item_id, data, path)
     append_event("state", item_id, {"state": "approved", "by": by, "head": head[:8]}, path)
     return files
 
@@ -1720,6 +1746,7 @@ def main() -> None:
     dg.add_argument("--head", required=True)
     dg.add_argument("--by", required=True)
     dg.add_argument("--repo")
+    dg.add_argument("--owner-quote", help="نصُّ قول المالك الحرفيّ المسجَّل في owner_confirmations؛ يلزم لتفويضٍ على ملفّات قاعدة الاعتماد")
     ra = sub.add_parser("reapprove", help="اعتمادُ المالك المباشر لرأسٍ جديدٍ على بطاقةٍ معتمَدةٍ أصلاً (0501/0101)")
     ra.add_argument("id"); ra.add_argument("--head", required=True); ra.add_argument("--by", required=True); ra.add_argument("--note", required=True)
     ls = sub.add_parser("list"); ls.add_argument("--state")
@@ -1757,7 +1784,7 @@ def main() -> None:
         elif args.cmd == "reapprove":
             reapprove(args.id, args.head, args.by, args.note); print("ok")
         elif args.cmd == "delegate":
-            print(f"ok: {len(record_delegation(args.id, args.head, args.by, repo=args.repo))} ملفاً")
+            print(f"ok: {len(record_delegation(args.id, args.head, args.by, repo=args.repo, owner_quote=args.owner_quote))} ملفاً")
         elif args.cmd == "waive-head":
             waive_head(args.id, args.head, args.by, args.reason, kind=args.kind, repo=args.repo, reviewed_by=args.reviewed_by); print("ok")
         elif args.cmd == "tag":
