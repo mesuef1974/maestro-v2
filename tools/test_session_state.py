@@ -543,7 +543,7 @@ class TestUnifiedGuardAndFocusRenewal:
         assert ss.clear_guard("0108", tree, NOW) == []
 
     def test_guard_command_calls_clear_guard(self, monkeypatch, capsys):
-        monkeypatch.setattr(ss, "clear_guard", lambda num: ["فحصٌ موحَّد"])
+        monkeypatch.setattr(ss, "clear_guard", lambda num, **kw: ["فحصٌ موحَّد"])
         assert ss.main(["guard", "0108"]) == 5
         assert "فشل: فحصٌ موحَّد" in capsys.readouterr().out
 

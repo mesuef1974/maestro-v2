@@ -62,3 +62,4 @@ tmp/
 handover_notes/session_title_cache.json
 handover_notes/session_title_cache.*.tmp
 handover_notes/bell_*.stamp
+ledger/session_records/

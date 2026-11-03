@@ -188,6 +188,11 @@ def _rows(num: str, root: Path | None = None) -> list[dict]:
     return out
 
 
+def last_message_id(num: str, root: Path | None = None) -> int:
+    """أعلى رقمِ رسالةٍ وصلت صندوقَ `num` (مقروءةً أو لا): ختمُ سجلّ الجلسة (D-510م)."""
+    return max((int(r["id"]) for r in _rows(num, root) if r.get("k") == "msg" and str(r.get("id", "")).isdigit()), default=0)
+
+
 def _append(num: str, row: dict, root: Path | None = None) -> None:
     p = _path(num, root)
     p.parent.mkdir(parents=True, exist_ok=True)
