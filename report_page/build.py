@@ -8,6 +8,7 @@ d = {
     "plan": (base / "plan_recommendations_2026-10-21.md").read_text(encoding="utf-8"),
     "platform": (base / "swot_platform_2026-10-21.md").read_text(encoding="utf-8"),
     "flow": (base / "swot_flow_2026-10-21.md").read_text(encoding="utf-8"),
+    "automation": (base.parent / "docs" / "automation_status_2026-11-03.md").read_text(encoding="utf-8"),
 }
 data = (
     json.dumps(d, ensure_ascii=False)
