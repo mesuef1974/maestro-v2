@@ -543,7 +543,7 @@ class TestUnifiedGuardAndFocusRenewal:
         assert ss.clear_guard("0108", tree, NOW) == []
 
     def test_guard_command_calls_clear_guard(self, monkeypatch, capsys):
-        monkeypatch.setattr(ss, "clear_guard", lambda num: ["فحصٌ موحَّد"])
+        monkeypatch.setattr(ss, "clear_guard", lambda num, **kw: ["فحصٌ موحَّد"])
         assert ss.main(["guard", "0108"]) == 5
         assert "فشل: فحصٌ موحَّد" in capsys.readouterr().out
 
@@ -666,20 +666,25 @@ def test_restore_rederives_from_ledger_not_stale_saved_state(tree, monkeypatch, 
     assert "W-9" in capsys.readouterr().out
 
 
-def test_stop_hook_blocks_once_per_undelivered_inbox_batch(tree):
-    """W-20261026-015: واردٌ غيرُ مسلَّم يمنع الإنهاءَ مرّةً واحدةً لكلّ دفعة ومحتواه في سبب المنع."""
+def test_stop_hook_never_blocks_for_inbox_content(tree):
+    """W-20261101-006 بند 5: الواردُ لا يمنع Stop (يصل مع رسالة المستخدم التالية أو بالخطّاف)؛ ولا يُسلَّم هنا."""
     import inbox
 
     hook = json.dumps({"cwd": "D:/w", "session_id": "s"})
     titles = lambda c, i: ("0108 · التقييم", [])  # noqa: E731
-    assert ss.cmd_stop_hook(hook, tree, titles) == ""
+    inbox.beat("0108", tree)  # مراقبٌ حيّ: لا جرس
     inbox.send("0108", "0101", "نفّذ الخطوة 2", tree)
-    out = json.loads(ss.cmd_stop_hook(hook, tree, titles))
-    assert out["decision"] == "block" and "نفّذ الخطوة 2" in out["reason"] and "من 0101" in out["reason"]
-    assert ss.cmd_stop_hook(hook, tree, titles) == ""  # سُلِّمت: لا حلقةَ منع
-    active = json.dumps({"cwd": "D:/w", "session_id": "s", "stop_hook_active": True})
-    inbox.send("0108", "0101", "أخرى", tree)
-    assert ss.cmd_stop_hook(active, tree, titles) == ""  # stop_hook_active لا يُمنع ثانيةً
+    assert ss.cmd_stop_hook(hook, tree, titles) == ""
+    assert len(inbox.pending("0108", tree)) == 1  # لم يُسلَّم ولم يُقرّ
+
+
+def test_bell_for_missing_watcher_fires_once_per_window(tree):
+    """W-20261101-006 بند 4: جرسٌ واحد لكلّ نافذة، لا في كلّ Stop."""
+    t0 = ss._now()
+    assert ss.bell_due("0108", tree, t0) is True
+    assert ss.bell_due("0108", tree, t0 + timedelta(minutes=ss.BELL_REPEAT_MIN - 1)) is False
+    assert ss.bell_due("0108", tree, t0 + timedelta(minutes=ss.BELL_REPEAT_MIN + 1)) is True
+    assert ss.bell_due("0109", tree, t0) is True  # رقمٌ آخر مستقلّ
 
 
 def _fat_state():

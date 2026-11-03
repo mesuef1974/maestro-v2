@@ -257,3 +257,39 @@ def test_W20261028_024_root_cwd_unmatched_id_is_not_counted_as_a_number(tmp_path
     title, _ = si.app_title(ROOT_CWD, "wake-sweeper-unknown", tmp_path, wait_s=0)
     assert title is None
     assert si.app_title(ROOT_CWD, "live-0101", tmp_path, wait_s=0) == ("0101 · خفيفة", [])
+
+
+def test_title_cache_serves_second_lookup_without_scanning_sessions(tmp_path, monkeypatch):
+    """W-20261101-006 بند 7: الاستدعاءُ الثاني بالمعرّف نفسه يقرأ الذاكرةَ لا ملفّاتِ الجلسات."""
+    monkeypatch.setattr(si, "TITLE_CACHE", tmp_path / "cache.json")
+    monkeypatch.setattr(si, "SESSIONS", tmp_path / "sessions")
+    _session(tmp_path / "sessions", "1", "local_1", "0101 · خفيفة", ROOT_CWD, cli="live-0101")
+    assert si.app_title(ROOT_CWD, "live-0101", None, wait_s=0) == ("0101 · خفيفة", [])
+    monkeypatch.setattr(si, "_resolve", lambda *a: (_ for _ in ()).throw(AssertionError("مسحٌ غير لازم")))
+    assert si.app_title(ROOT_CWD, "live-0101", None, wait_s=0) == ("0101 · خفيفة", [])
+
+
+def test_title_cache_expires_and_is_not_written_for_unmatched_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(si, "TITLE_CACHE", tmp_path / "cache.json")
+    monkeypatch.setattr(si, "SESSIONS", tmp_path / "sessions")
+    _session(tmp_path / "sessions", "1", "local_1", "0101 · خفيفة", ROOT_CWD, cli="live-0101")
+    si.app_title(ROOT_CWD, "live-0101", None, wait_s=0)
+    assert si._cache_read("live-0101", __import__("time").time() + si.TITLE_CACHE_TTL_S + 5) is None
+    si.app_title(ROOT_CWD, "unknown-id", None, wait_s=0)
+    assert si._cache_read("unknown-id", __import__("time").time()) is None
+
+
+def test_start_message_orders_a_background_watcher_with_the_session_id():
+    """W-20261101-006 قرار 0101: الخطّافُ لا يشغّل المراقب؛ الرسالةُ تأمر بتشغيله مهمّةً خلفيّة بمعرّف الجلسة."""
+    m = si.message("0701 · الجودة", None, "sid-123")
+    assert "run_in_background" in m and "inbox.py wait 0701 --sid sid-123" in m
+    assert "inbox.py wait" not in si.message("0701 · الجودة", None, "")
+
+
+def test_compact_start_prints_one_short_identity_line(monkeypatch, capsys):
+    monkeypatch.setattr(si, "app_title", lambda *a, **k: ("0701 · الجودة", []))
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(json.dumps({"cwd": "D:/shschool_mvp", "session_id": "s", "source": "compact"})))
+    monkeypatch.setattr("sys.argv", ["session_identity.py"])
+    assert si.main() == 0
+    out = capsys.readouterr().out
+    assert "0701" in out and len(out.encode()) < 250

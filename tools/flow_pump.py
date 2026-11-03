@@ -121,7 +121,8 @@ COND_TEXT = {
 }
 
 #: علاماتُ الفشل البيئيّ في مخرَج prepush: لا عيبَ في شيفرة البطاقة، فمالكُه الأتمتة لا الحامل
-ENV_FAIL_MARKS = ("WinError", "The handle is invalid", "غير مقيس", "غير متاح", "Executable doesn't exist", "BrowserType.launch")
+ENV_FAIL_MARKS = ("WinError", "The handle is invalid", "غير مقيس", "غير متاح", "Executable doesn't exist", "BrowserType.launch",
+                  "0xC0000142", "3221225794")  # W-20261101-006: انهيارُ git الفرعيّ باستنفاد موارد ويندوز (003، 11-02)
 
 
 def failure_cond(code: int, log: str) -> str:
