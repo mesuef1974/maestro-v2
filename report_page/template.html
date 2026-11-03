@@ -267,7 +267,7 @@ details.app>.tw{margin-inline:18px}
 
 <div class="srch" id="srch" hidden role="dialog" aria-modal="true" aria-label="بحث في التقارير">
   <div class="srch-p">
-    <div class="srch-h"><input id="q" type="search" placeholder="ابحث في التقارير الأربعة، مثل: RLS أو المضخّة أو DPIA" autocomplete="off" aria-label="كلمة البحث"><button class="ib" id="qx" type="button" aria-label="إغلاق البحث">إغلاق</button></div>
+    <div class="srch-h"><input id="q" type="search" placeholder="ابحث في التقارير الخمسة، مثل: RLS أو المضخّة أو DPIA" autocomplete="off" aria-label="كلمة البحث"><button class="ib" id="qx" type="button" aria-label="إغلاق البحث">إغلاق</button></div>
     <div class="srch-b" id="qr" role="listbox"><div class="srch-m">اكتب كلمتين أو أكثر من حرفين لبدء البحث. يتجاهل البحث التشكيل وتنويعات الألف.</div></div>
   </div>
 </div>
@@ -293,8 +293,8 @@ const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelect
 const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 
-const VIEWS=[["overview","نظرة عامة"],["rating","التقييم"],["plan","الخطة"],["platform","المنصّة"],["flow","الفلو"]];
-const DOCNAME={rating:"التقييم من 100: المنصّة والفلو",plan:"الخطة الزمنية للتوصيات",platform:"تقرير SWOT: منصّة SchoolOS",flow:"تقرير SWOT: الفلو المؤتمت"};
+const VIEWS=[["overview","نظرة عامة"],["rating","التقييم"],["plan","الخطة"],["platform","المنصّة"],["flow","الفلو"],["automation","الأتمتة"]];
+const DOCNAME={rating:"التقييم من 100: المنصّة والفلو",plan:"الخطة الزمنية للتوصيات",platform:"تقرير SWOT: منصّة SchoolOS",flow:"تقرير SWOT: الفلو المؤتمت",automation:"حالة الأتمتة: قياس فعلي في 2026-11-03"};
 
 /* ---------- بيانات نظرة عامة ---------- */
 const SCORE={
@@ -382,12 +382,13 @@ function buildOverview(){
   <section class="sec bleed"><div class="in"><h2>قراراتك</h2><p class="lead">اختر ما تراه. يحفظ المتصفح اختياراتك، ويصوغ لك الملخص أسفل الأسئلة لتلصقه في المحادثة.</p>
     <div class="dec">${dec}</div>
     <div class="dout"><pre id="decOut" aria-live="polite"></pre><div class="row-b"><button class="btn" id="decCopy" type="button">نسخ قراراتي</button><button class="btn ghost" id="decReset" type="button">مسح الاختيارات</button><span class="st" id="decSt" role="status"></span></div></div></div></section>
-  <section class="sec bleed pad-b"><div class="in"><h2>اقرأ بالتفصيل</h2><p class="lead">أربعة مستندات تحتويها الصفحة، ويشملها البحث.</p>
+  <section class="sec bleed pad-b"><div class="in"><h2>اقرأ بالتفصيل</h2><p class="lead">خمسة مستندات تحتويها الصفحة، ويشملها البحث.</p>
     <div class="cards">
       <a class="dc" href="#rating"><b>التقييم من 100</b><span>السلّم والأوزان والدليل لكل محور، وما يرفع الدرجة.</span></a>
       <a class="dc" href="#plan"><b>الخطة الزمنية</b><span>الموجات والاعتماديات والمخاطر، مع تحديثات ما بعد ردّك.</span></a>
       <a class="dc" href="#platform"><b>SWOT المنصّة</b><span>ملخص تنفيذي وخمسة ملاحق: الأمن، الجودة، المعمارية، التجربة، المجال، والأداء.</span></a>
-      <a class="dc" href="#flow"><b>SWOT الفلو</b><span>العملية والحوكمة، والأداء المقيس، والأدوات البرمجية.</span></a></div>
+      <a class="dc" href="#flow"><b>SWOT الفلو</b><span>العملية والحوكمة، والأداء المقيس، والأدوات البرمجية.</span></a>
+      <a class="dc" href="#automation"><b>حالة الأتمتة</b><span>ما يعمل فعلاً من المضخة والدفع والدمج، ونسبة العبور اليومية، وما بقي يدوياً.</span></a></div>
     <h2 style="margin-top:32px;font-size:1.15rem">سلّم الدرجات</h2>
     <div class="scale"><div><b>90 فأكثر</b>الأفضل عالمياً، قابل للاعتماد المؤسسي</div><div><b>75 إلى 89</b>ناضج بفجوات محدودة معروفة</div><div><b>60 إلى 74</b>جيّد لمرحلة نموّ، بدين تقني يجب سدّه قبل التوسّع</div><div><b>40 إلى 59</b>واعد، يعتمد على المشغّلين أكثر من الضوابط</div><div><b>دون 40</b>غير جاهز</div></div>
     <ul class="limits"><li>قراءة ساكنة للشيفرة. لم تُشغَّل الاختبارات ولم تُفحص قاعدة الإنتاج، وقيم أعلام الإنتاج غير معلومة.</li><li>الدرجات حكم مهني مرتكز على الأدلة، وأوزان المحاور اجتهاد معلن. أرقام «ما يرفع الدرجة» تقديرات لا وعود.</li><li>محورا الأداء وأدوات الفلو فحصهما محلّلان على نموذج أرخص، فيُراجَعان قبل أي قرار مكلف مبنيّ عليهما.</li></ul>
