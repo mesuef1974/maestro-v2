@@ -1038,6 +1038,10 @@ def openpr_pass(states: dict[str, dict], prs: list[dict], apply: bool, git=None,
         except ledger.LedgerError as exc:
             out.append(f"{cid}: #{m.group(1)} فُتح ✔ لكنّ تسجيلَه في الدفتر ✘ {str(exc)[:100]}")
             continue
+        try:
+            ledger.append_event("update", cid, {"pr": int(m.group(1)), "pr_repo": slug})  # حقلٌ مهيكل: تنبيهُ الركود يميّز pushed بطلبٍ من pushed بلا طلب
+        except ledger.LedgerError as exc:
+            out.append(f"{cid}: رقمُ الطلب #{m.group(1)} لم يُسجَّل حقلاً ✘ {str(exc)[:100]}")
         out.append(f"{cid}: #{m.group(1)} فُتح من {branch} بالرأس {want[:8]} ✔")
         _log_once(f"طلب: {cid} #{m.group(1)} ✔")
     return out
@@ -1657,7 +1661,8 @@ def _run(argv=None) -> int:
     try:
         evs = ledger.load_events()
         st = ledger.reduce_state(evs)
-        for line in pump_health.escalation_pass({c: v for c, v in st.items() if c not in a.skip}, a.apply):
+        live_prs = {c: p["number"] for c, p in card_prs(st, prs)[0].items()} if prs_ok else None
+        for line in pump_health.escalation_pass({c: v for c, v in st.items() if c not in a.skip}, a.apply, open_prs=live_prs):
             print("تصعيد: " + line)
         for line in pump_health.missed_window_pass(a.apply, path=MERGE_WINDOW_STATE):
             print("نافذة: " + line)
