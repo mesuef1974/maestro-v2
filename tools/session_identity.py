@@ -63,10 +63,51 @@ def _newest_first(base: Path) -> list[Path]:
 #: W-20261028-011: 3 ثوانٍ لم تكفِ (0101 عُرّفت 0104 يوم 10-28)؛ نصبر حتى 15 ثانيةً ثمّ نقول «لا أعرف» ولا نخمّن
 ID_WAIT_S = 15.0
 ID_POLL_S = 0.5
+#: (W-20261101-006 بند 7) ذاكرةُ session_id←عنوان: كلُّ أداةٍ كانت تمسح ~469 ملفَّ جلسةٍ (2.3 ث و4.2 GB قرص)؛ العنوانُ المطابَقُ
+#: بالمعرّف يُحفظ دقائق فتقرؤه الأدواتُ التالية من ملفٍّ صغير. صلاحيّتُه قصيرةٌ لأنّ الجلسة قد تُعاد تسميتُها.
+TITLE_CACHE = ROOT / "handover_notes" / "session_title_cache.json"
+TITLE_CACHE_TTL_S = 600
+TITLE_CACHE_MAX = 40
+
+
+def _cache_read(session_id: str, now: float) -> str | None:
+    try:
+        row = json.loads(TITLE_CACHE.read_text(encoding="utf-8")).get(session_id) or {}
+        if now - float(row.get("t", 0)) <= TITLE_CACHE_TTL_S and NUM.match(str(row.get("title", ""))):
+            return str(row["title"])
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    return None
+
+
+def _cache_write(session_id: str, title: str, now: float) -> None:
+    try:
+        try:
+            data = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
+            data = data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            data = {}
+        data.pop(session_id, None)
+        data[session_id] = {"title": title, "t": now}
+        for old in list(data)[:-TITLE_CACHE_MAX]:
+            data.pop(old, None)
+        TITLE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = TITLE_CACHE.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, TITLE_CACHE)
+    except OSError:
+        pass
+
+
 def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: float = ID_WAIT_S,
               sleep=time.sleep) -> tuple[str | None, list[str]]:
     """(العنوانُ الحيّ، المرشَّحون) كما في `_resolve`؛ مع معرّفِ جلسةٍ لم يُطابَق بعدُ نعيد قراءةَ الملفّات حتى `wait_s` ثانيةً
-    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook)."""
+    قبل السقوط إلى الشجرة (التطبيقُ يكتب cliSessionId بعد الـhook). مع المسار الافتراضيّ (base=None) تُستعمل ذاكرةُ العنوان."""
+    use_cache = bool(session_id) and base is None
+    if use_cache:
+        hit = _cache_read(session_id, time.time())
+        if hit:
+            return hit, []
     waited = 0.0
     while True:
         title, candidates, by_id = _resolve(cwd, session_id, base)
@@ -74,6 +115,8 @@ def app_title(cwd: str, session_id: str = "", base: Path | None = None, wait_s: 
             break
         sleep(ID_POLL_S)
         waited += ID_POLL_S
+    if use_cache and by_id and title:
+        _cache_write(session_id, title, time.time())
     return title, candidates
 
 
@@ -146,6 +189,14 @@ def ambiguous_message(where: str, candidates: list[str]) -> str:
             "وإن تعذّر فاسأل 0101 ولا تفترض.")
 
 
+def watcher_line(num: str, sid: str) -> str:
+    """(W-20261101-006 قرار 0101) الخطّافُ لا يشغّل المراقب (عمليةٌ منفصلةٌ لا توقظ الجلسة)؛ يأمر بتشغيله مهمّةً خلفيّة تابعةً للجلسة."""
+    if not sid:
+        return ""
+    return (f" [المراقب] أوّلَ ما تبدأ شغّل في الخلفيّة (Bash run_in_background): "
+            f"python C:/Users/mesue/delivery_manager_work/tools/inbox.py wait {num} --sid {sid}")
+
+
 def message(title: str | None, tree: str | None, sid: str = "") -> str:
     if title is None:
         return ("[هويّة الجلسة] لم أجد اسمَ هذه الشجرة (" + str(tree) + ") في session_names.json — "
@@ -163,9 +214,10 @@ def message(title: str | None, tree: str | None, sid: str = "") -> str:
             else "role_cards/04.md (المرنة) ثمّ ledger.py show <رمز بطاقتك>") if flexible else f"role_cards/{num}.md"
     return (f"[هويّة الجلسة] أنت «{title}» — رقمُك {num}. "
             f"اقرأ بطاقتك `C:/Users/mesue/delivery_manager_work/{card}` ثمّ شغّل "
-            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ (اكتب وصفَ أداة Bash بالعربيّة، مثل «قراءة حالة جلستي»، وإلا رفضه lang_guard). "
+            f"`python C:/Users/mesue/delivery_manager_work/tools/my_state.py {num}` قبل أيّ ردّ (وصفُ أداة Bash بالعربيّة). "
             + ("" if flexible else "لا تفترض أنّك مرنة 04SS. ")
-            + "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل.")
+            + "إن رأيت ما يناقض هذا فاسأل 0101 ولا تُكمل."
+            + watcher_line(num, sid))
 
 
 #: إيداع ترقية مهارة الهويّة البصريّة (#897) على main؛ غيابُه من سلف الشجرة = مهارةٌ قديمة
@@ -179,8 +231,8 @@ def directory_lines(num: str | None = None) -> list[str]:
         import session_directory
 
         d = {k: v for k, v in session_directory.entries().items() if k in (num, "0101")}  # معرّفُ الجلسة نفسها و0101 فقط؛ لغيرهما session_directory.py (W-20261026-002)
-        out.append("[المراسلة بين الجلسات] ما تريده من المالك يُرفع إلى 0101 وهي وحدَها تطرحه بأداة ask (D-495م)؛ قاعدةُ المالك ومتابعةُ الإحالة وعناوينُ الجلسات: `C:/Users/mesue/delivery_manager_work/role_cards/PROCEDURES.md` قسم «المراسلة بين الجلسات» (اقرأه قبل أول إرسال). "
-                   "المعرّفاتُ الحيّة (تتبدّل عند إعادة التشغيل؛ للتحقّق `python C:/Users/mesue/delivery_manager_work/tools/session_directory.py <الرقم>`): "
+        out.append("[المراسلة بين الجلسات] ما تريده من المالك يُرفع إلى 0101 وهي وحدَها تطرحه بأداة ask (D-495م)؛ التفصيل: role_cards/PROCEDURES.md قسم «المراسلة بين الجلسات» (اقرأه قبل أول إرسال). "
+                   "المعرّفات الحيّة (للتحقّق session_directory.py <الرقم>): "
                    + "؛ ".join(f"{k}={v['id']}" for k, v in d.items()))
     except Exception:  # noqa: BLE001
         return []
@@ -233,6 +285,18 @@ def prompt_identity(raw: str, root: Path | None = None, resolver=None, now: date
         return []
 
 
+def prompt_inbox(raw: str, root: Path | None = None) -> str:
+    """(W-20261101-006 بند 5) الواردُ يُحقن مع رسالة المستخدم التالية (UserPromptSubmit) بدل منع Stop: لا دورةَ كاملةً لنصّ 226 B.
+    يعيد النصَّ أو "" ؛ ويُسلِّم الواردَ (inbox.hook). لا يرفع استثناءً."""
+    try:
+        import inbox
+
+        out = inbox.hook(raw, root)
+        return json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
+    except Exception:  # noqa: BLE001 — الخطّاف لا يُسقط الجلسة
+        return ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--cwd")
@@ -240,17 +304,30 @@ def main() -> int:
     args = ap.parse_args()
     if args.prompt:
         sys.stdout.reconfigure(encoding="utf-8")
-        for line in prompt_identity(sys.stdin.read()):
+        raw = sys.stdin.read()
+        for line in prompt_identity(raw):
             print(line)
+        inbox_text = prompt_inbox(raw)
+        if inbox_text:
+            print(inbox_text)
         return 0
     cwd = args.cwd
-    session_id = ""
+    session_id, source = "", ""
     if not cwd:
         try:
             hook = json.loads(sys.stdin.read() or "{}")
-            cwd, session_id = hook.get("cwd", ""), str(hook.get("session_id", ""))
+            cwd, session_id, source = hook.get("cwd", ""), str(hook.get("session_id", "")), str(hook.get("source", ""))
         except Exception:  # noqa: BLE001 — الـhook لا يسقط الجلسة أبداً
             cwd = ""
+    if source == "compact":  # W-20261101-006 بند 2: بعد الضغط لا يُعاد حقنُ 10K؛ سطرٌ واحد للهويّة فقط
+        sys.stdout.reconfigure(encoding="utf-8")
+        try:
+            live, _ = app_title(cwd, session_id, wait_s=0)
+        except Exception:  # noqa: BLE001
+            live = None
+        if live:
+            print(f"[هويّة الجلسة] أنت «{live}» — رقمُك {_num_of(live)}؛ بطاقتك وحالتك كما قرأتهما قبل الضغط.")
+        return 0
     if cwd and ROOT_NAME in cwd.replace("\\", "/").lower() and PLATFORM not in cwd.replace("\\", "/"):
         # جلساتُ مجلّد delivery_manager_work (0101/0104/0108/0109/0110): لا شجرةَ منصّةٍ لها فالهويّةُ من عنوان الجلسة الحيّ بمعرّفها (واقعةُ 2026-10-24: صمتُ الـhook بعد الكلير)
         sys.stdout.reconfigure(encoding="utf-8")

@@ -26,6 +26,8 @@ from pathlib import Path
 
 LIMIT = 600  # قرار المالك 2026-10-22 (كان 300 D-447م، وقبله 150 D-414م)
 WARN_AT = 80  # عند هذا العدد يُنبَّه إلى اقتراب الحدّ
+#: (W-20261101-006 بند 10) السطرُ الكامل عند عبور هذه النسب من الحدّ فقط؛ وما بينها سطرٌ قصير لا يُكلّف توكناً.
+THRESHOLDS = (0.5, 0.8, 0.95)
 STATE = Path(__file__).resolve().parent.parent / "msg_counter.json"
 
 
@@ -51,6 +53,12 @@ def _save(data: dict) -> None:
         except OSError:
             time.sleep(0.2 * (attempt + 1))
     raise SystemExit("تعذّرت كتابةُ العدّاد بعد عدّة محاولات")
+
+
+def crossed(before: int, after: int, limit: int) -> bool:
+    """هل عبر العدّادُ في هذه الزيادة إحدى العتبات (50% و80% و95% من الحدّ) أو بلغ الحدّ؟"""
+    marks = [int(limit * t) for t in THRESHOLDS] + [limit]
+    return any(before < m <= after for m in marks)
 
 
 def _line(num: str, row: dict, limit: int) -> str:
@@ -165,11 +173,12 @@ def hook(raw: str) -> int:
     data = _load()
     data["limit"] = LIMIT
     row = data["sessions"].setdefault(num, {"count": 0, "since": data["started"]})
+    before = row["count"]
     row["count"] += 1
     row["last"] = _now()
     _save(data)
     notes = []
-    if row["count"] >= WARN_AT:
+    if crossed(before, row["count"], LIMIT):
         notes.append(_line(num, row, LIMIT))
     since = sends_since_owner(str(payload.get("transcript_path", "")), str(payload.get("tool_use_id", "")))
     if since >= APP_WARN_AT:
@@ -199,10 +208,11 @@ def main(argv: list[str]) -> int:
         num = argv[2]
         n = int(argv[3]) if len(argv) > 3 else 1
         row = sessions.setdefault(num, {"count": 0, "since": data["started"]})
+        before = row["count"]
         row["count"] += n
         row["last"] = _now()
         _save(data)
-        print(_line(num, row, limit))
+        print(_line(num, row, limit) if crossed(before, row["count"], limit) else f"{num}: {row['count']}/{limit}")
         return 0 if row["count"] < limit else 1
 
     if cmd == "status":
