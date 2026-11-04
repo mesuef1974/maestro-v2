@@ -23,7 +23,9 @@ def _no_git(monkeypatch):
 def test_blockers_are_empty_for_every_class_under_d506():
     """D-506م: اعتمادُ 0101 بعد مراجعة الفرق يشمل الواجهةَ والهجراتِ والصلاحيّاتِ والملفّاتِ الحاكمة."""
     assert ledger.delegation_blockers(["templates/a.html", "static/css/x.css", "core/migrations/0001.py", "core/permissions.py",
-                                       "CLAUDE.md", ".claude/rules/a.md", "role_cards/COMMON.md", "tools/ledger.py", "decisions.md"]) == []
+                                       "CLAUDE.md", ".claude/rules/a.md", "role_cards/COMMON.md"]) == []
+    # استثناء W-20261103-011 بقول المالك: ملفّاتُ قاعدة الاعتماد نفسِها تلزمها --owner-quote (انظر test_approval_seal)
+    assert ledger.delegation_blockers(["tools/ledger.py", "decisions.md"])
     assert ledger.delegation_blockers(["tools/session_state.py", "docs/a.md", "tests/test_x.py"]) == []
 
 
