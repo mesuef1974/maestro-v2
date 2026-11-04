@@ -130,6 +130,49 @@ def test_missed_window_preview_does_not_write(tmp_path):
     assert not rep.exists() and json.loads(state.read_text(encoding="utf-8"))["2026-10-29:2"]["alerted"] is False
 
 
+# ---- W-20261028-004: صاحبُ واجبٍ مفتوح وصندوقُه غيرُ مقروء ----
+def _pending(minutes_ago, msg_id=7):
+    ts = (NOW - timedelta(minutes=minutes_ago)).isoformat(timespec="seconds")
+    return lambda holder: [{"k": "msg", "id": msg_id, "ts": ts, "from": "0101", "text": "x"}] if holder == "0601" else []
+
+
+def _dormant(states, minutes_ago, tmp_path, apply=True, open_prs=None, msg_id=7):
+    sent, notes = [], []
+    out = ph.dormant_pass(states, apply, NOW, open_prs, tmp_path / "d.jsonl", tmp_path / "rep.txt",
+                          lambda to, t: sent.append((to, t)), _pending(minutes_ago, msg_id), lambda c, t, by: notes.append((c, t)))
+    return out, sent, notes
+
+
+def test_under_an_hour_unread_does_nothing(tmp_path):
+    out, sent, _ = _dormant({"W-1": _st("merged", 10, "0421")}, 59, tmp_path)
+    assert out == [] and sent == []
+
+
+def test_after_an_hour_one_wake_message_only_once(tmp_path):
+    st = {"W-1": _st("merged", 10, "0421")}
+    out, sent, notes = _dormant(st, 61, tmp_path)
+    assert [to for to, _ in sent] == ["0601"] and notes == [] and "إيقاظ" in sent[0][1]
+    out2, sent2, _ = _dormant(st, 62, tmp_path)
+    assert out2 == [] and sent2 == []  # المفتاحُ (صاحب، رسالة، مستوى) فلا تكرار
+
+
+def test_after_three_hours_duty_moves_to_backup_with_notes_and_report(tmp_path):
+    st = {"W-1": _st("merged", 10, "0421"), "W-2": _st("pushed", 10, "0421")}
+    out, sent, notes = _dormant(st, 181, tmp_path, open_prs={"W-2": 55})
+    assert [to for to, _ in sent] == ["0701"] and "W-1" in sent[0][1] and "W-2" in sent[0][1] and "D-513م" in sent[0][1]
+    assert sorted(c for c, _ in notes) == ["W-1", "W-2"] and "نُقل الدمجُ" in (tmp_path / "rep.txt").read_text(encoding="utf-8")
+
+
+def test_no_open_duty_means_no_wake_even_if_inbox_is_old(tmp_path):
+    out, sent, _ = _dormant({"W-1": _st("pushed", 10, "0421"), "W-2": _st("approved", 10)}, 500, tmp_path, open_prs={})
+    assert out == [] and sent == []  # pushed بلا طلبٍ مفتوح ليس واجبَ دمج
+
+
+def test_dry_run_writes_and_sends_nothing(tmp_path):
+    out, sent, notes = _dormant({"W-1": _st("merged", 10, "0421")}, 200, tmp_path, apply=False)
+    assert out and "(عرض)" in out[0] and sent == [] and notes == [] and not (tmp_path / "d.jsonl").exists()
+
+
 def test_pushed_with_open_pr_is_not_called_pushed_without_pr(tmp_path):
     """(W-20261028-028) pushed وطلبُها مفتوح: الدفعُ إلى 0601 بنصٍّ يذكر الطلب، لا «دُفع بلا طلبٍ مفتوح» إلى الحامل."""
     lp = tmp_path / "e.jsonl"

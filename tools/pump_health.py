@@ -47,6 +47,11 @@ NUDGES_PER_TARGET = 3
 MERGE_WINDOWS = ((1, 14 * 60 + 30, 16 * 60 + 30), (2, 19 * 60, 21 * 60))
 PASS_STATES = ("pushed", "merged", "published")
 COUNTER = ROOT / "msg_counter.json"
+#: (W-20261028-004، D-504م الجذر 4) جلسةٌ لها واجبٌ مفتوحٌ (دمجٌ أو نشر) وصندوقها غيرُ مقروء: إيقاظٌ واحدٌ بعد ساعة،
+#: وبعد ثلاث ساعاتٍ ينتقل واجبُ الدمج إلى البديل بتفويضٍ دائمٍ مسجَّلٍ في decisions.md (D-513م) ويعود لصاحبته فور قراءتها.
+DUTY_HOLDERS = {"0601": "0701"}
+DORMANT_WAKE_MIN = 60
+DORMANT_TRANSFER_MIN = 180
 
 
 def _ts(value: str) -> datetime | None:
@@ -165,6 +170,74 @@ def escalation_pass(states: dict[str, dict], apply: bool, now: datetime | None =
             with log.open("a", encoding="utf-8") as f:
                 for lv in (e["level"], *e.get("skipped", [])):  # المستوياتُ الأدنى المتجاوَزة تُختم أيضاً فلا تُرسَل لاحقاً
                     f.write(json.dumps({"card": e["card"], "level": lv, "state_ts": e["state_ts"], "ts": now.isoformat(timespec="seconds")}, ensure_ascii=False) + "\n")
+    return out
+
+
+def duty_cards(holder: str, states: dict[str, dict], open_prs: dict | None = None) -> list[str]:
+    """بطاقاتٌ واجبُها الآنَ عند `holder`: مدموجةٌ تنتظر النشر، أو pushed بطلبٍ مفتوحٍ ينتظر الدمج (0601)."""
+    out = []
+    for cid, item in sorted(states.items()):
+        state = item.get("state")
+        if WAIT_STATES.get(state, (None,))[0] == holder and state == "merged":
+            out.append(cid)
+        elif holder == "0601" and state == "pushed" and ((open_prs or {}).get(cid) if open_prs is not None else item.get("pr")):
+            out.append(cid)
+    return out
+
+
+def oldest_unread(holder: str, now: datetime, pending=None) -> tuple[int, float] | None:
+    """(رقمُ أقدمِ رسالةٍ غير مقروءة، عمرُها بالدقائق) أو None إن لم يكن في الصندوق معلَّق."""
+    if pending is None:
+        import inbox  # noqa: PLC0415
+
+        pending = inbox.pending
+    rows = pending(holder)
+    ages = [(int(r["id"]), (now - t).total_seconds() / 60) for r in rows if (t := _ts(r.get("ts", ""))) is not None]
+    return min(ages, key=lambda x: x[0]) if ages else None
+
+
+def dormant_pass(states: dict[str, dict], apply: bool, now: datetime | None = None, open_prs: dict | None = None,
+                 log=None, report=None, send=None, pending=None, note=None) -> list[str]:
+    """صاحبُ واجبٍ مفتوحٍ وصندوقُه غيرُ مقروء: ≥60 د إيقاظٌ واحد (رسالةُ صندوق)، ≥180 د ينتقل واجبُ بطاقاته إلى البديل (ملاحظةٌ على
+    كلّ بطاقة + رسالةٌ للبديل وللتقرير). المفتاحُ (صاحب، رقمُ أقدمِ رسالةٍ، مستوى) فلا تكرار؛ قراءةُ الصندوق تُنهي الحالةَ فيعود الواجبُ."""
+    now = now or datetime.now(ledger.DOHA)
+    log = log or _beside_ledger("pump_dormant.jsonl")
+    report = report or _beside_ledger("pump_report_0101.txt")
+    send = send or _inbox_send
+    out: list[str] = []
+    seen = {(d["holder"], d["msg"], d["level"]) for d in _read_jsonl(log)}
+    for holder, backup in DUTY_HOLDERS.items():
+        cards = duty_cards(holder, states, open_prs)
+        got = oldest_unread(holder, now, pending) if cards else None
+        if got is None:
+            continue
+        msg, age = got
+        level = DORMANT_TRANSFER_MIN if age >= DORMANT_TRANSFER_MIN else DORMANT_WAKE_MIN if age >= DORMANT_WAKE_MIN else 0
+        if not level or (holder, msg, level) in seen:
+            continue
+        listing = "، ".join(cards[:8]) + (f" (+{len(cards) - 8})" if len(cards) > 8 else "")
+        mark = f"{holder}: صندوقٌ غيرُ مقروء منذ {int(age)} د (#{msg}) وواجبُها مفتوحٌ على {len(cards)} بطاقة"
+        if level == DORMANT_WAKE_MIN:
+            out.append(f"{mark} — إيقاظٌ واحد" + ("" if apply else " (عرض)"))
+            if apply:
+                send(holder, f"[إيقاظ المضخّة] صندوقك غيرُ مقروء منذ {int(age)} دقيقةً ولك واجبُ دمجٍ/نشرٍ مفتوح: {listing}. اقرأه وتابِع؛ بعد {DORMANT_TRANSFER_MIN} دقيقةً ينتقل الدمجُ إلى {backup} (D-513م).")
+        else:
+            out.append(f"{mark} — ينتقل واجبُ الدمج إلى {backup} (D-513م)" + ("" if apply else " (عرض)"))
+            if apply:
+                add = note or ledger.add_note
+                for cid in cards:
+                    try:
+                        add(cid, f"واجبُ الدمج/النشر منقولٌ من {holder} إلى {backup} (D-513م): صندوقُها غيرُ مقروء {int(age)} د", PUMP_BY)
+                    except ledger.LedgerError:
+                        pass
+                send(backup, f"[نقل واجب] {holder} لم تقرأ صندوقها منذ {int(age)} دقيقةً: واجبُ الدمج/النشر لـ{listing} عندك بالتفويض الدائم D-513م (الشروطُ نفسُها: رأسٌ معتمَدٌ وCI أخضر ونافذةُ الدمج). تعودُ لـ{holder} فور قراءتها صندوقَها.")
+                report.parent.mkdir(parents=True, exist_ok=True)
+                with report.open("a", encoding="utf-8") as f:
+                    f.write(f"{now.isoformat(timespec='minutes')} {holder} خاملة {int(age)}د: نُقل الدمجُ إلى {backup} ({len(cards)} بطاقة)" + chr(10))
+        if apply:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with log.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"holder": holder, "msg": msg, "level": level, "ts": now.isoformat(timespec="seconds"), "cards": len(cards)}, ensure_ascii=False) + chr(10))
     return out
 
 
