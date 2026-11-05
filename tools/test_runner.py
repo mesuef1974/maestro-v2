@@ -814,3 +814,9 @@ def test_attachment_copied_into_the_diff_stops_the_card(tmp_path):
     card = {"attachments": [{"name": "s.png", "sha256": hashlib.sha256(data).hexdigest()}]}
     assert runner.attachment_leak(str(tree), ["a.py", "static/x.png", "gone.py"], card) == ["static/x.png"]
     assert runner.attachment_leak(str(tree), ["a.py"], {}) == []
+
+
+def test_prepush_env_skips_structure_and_keeps_extra_tests():
+    assert runner.prepush_env([]) == ["-e", "PREPUSH_STRUCTURE_NESTED=1"]
+    assert runner.prepush_env(["tests/a.py", "tests/b.py"])[-1] == "PREPUSH_EXTRA_TESTS=tests/a.py tests/b.py"
+

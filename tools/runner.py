@@ -179,6 +179,13 @@ def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
     return ready[0] if ready else None
 
 
+def prepush_env(extra: list[str]) -> list[str]:
+    """متغيّراتُ حاوية prepush. حرّاسُ البنية 310 ثوانٍ من 378 (قياس 2026-11-05) وهي ضمن pytest الكامل في CI،
+    فتُتخطّى هنا بقرار المالك بالمتغيّر الذي يعرفه prepush_check؛ والمعدَّلُ يُختبر بـPREPUSH_EXTRA_TESTS."""
+    env = ["-e", "PREPUSH_STRUCTURE_NESTED=1"]
+    return env + (["-e", "PREPUSH_EXTRA_TESTS=" + " ".join(extra)] if extra else [])
+
+
 def review_prompt(card: dict, files: list[str], diff: str) -> str:
     """نصُّ الفرق بياناتٌ لا تعليمات؛ وما لا يظهر في فرقٍ (نجاحُ الاختبارات) يحكم فيه prepush وCI لا المراجع."""
     acc = card.get("accept")
@@ -436,9 +443,8 @@ class Effects:
 
         def cmd_for(net: str) -> list[str]:
             cmd = fp.prepush_command(tree, gitdir, common, name, net, fp.root_prepush_scripts(tree))
-            if extra:  # تُشغَّل في الحاوية نفسها بعد prepush (run_prepush.py يقرأ المتغيّر)
-                i = cmd.index(fp.PREPUSH_IMAGE)
-                cmd[i:i] = ["-e", "PREPUSH_EXTRA_TESTS=" + " ".join(extra)]
+            i = cmd.index(fp.PREPUSH_IMAGE)
+            cmd[i:i] = prepush_env(extra)
             return cmd
 
         started = time.monotonic()
