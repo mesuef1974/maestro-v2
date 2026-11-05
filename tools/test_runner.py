@@ -820,3 +820,42 @@ def test_prepush_env_skips_structure_and_keeps_extra_tests():
     assert runner.prepush_env([]) == ["-e", "PREPUSH_STRUCTURE_NESTED=1"]
     assert runner.prepush_env(["tests/a.py", "tests/b.py"])[-1] == "PREPUSH_EXTRA_TESTS=tests/a.py tests/b.py"
 
+
+class TurnsGreen(Fake):
+    def run_model(self, tree, prompt, model, budget):
+        self.ci = "green"
+        return super().run_model(tree, prompt, model, budget)
+
+
+def test_waiting_card_is_published_between_rounds_of_the_other(env):
+    lp, lock = env
+    _card(lp, "W-20261104-901")
+    fx = TurnsGreen()
+    fx.run_model = lambda *a: Fake.run_model(fx, *a)
+    fx.ci = "pending"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    _card(lp, "W-20261104-902")
+    fx.run_model = lambda *a: TurnsGreen.run_model(fx, *a)
+    fx.ci = "pending"
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert _state(lp, "W-20261104-901")["state"] == "published"
+
+
+def test_a_broken_follow_up_does_not_fail_the_running_card(env, monkeypatch):
+    lp, lock = env
+    _card(lp, "W-20261104-901")
+    fx = Fake()
+    fx.ci = "pending"
+    runner.run_cycle(CFG, fx, lp, lock)
+    calls = []
+
+    def boom(card, cfg, fx_, lpath=None):
+        calls.append(card["id"])
+        raise ValueError("عطل")
+
+    monkeypatch.setattr(runner, "resume", boom)
+    runner.advance_others("W-20261104-902", CFG, fx, lp)
+    assert calls == ["W-20261104-901"]
+    notes = [e for e in ledger.load_events(lp) if e["kind"] == "note" and "تعذّرت المتابعة" in e["data"].get("text", "")]
+    assert len(notes) == 1
+

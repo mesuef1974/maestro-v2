@@ -759,6 +759,18 @@ def _tiers(cfg: dict, card: dict) -> list[tuple[str, int, float]]:
     return tiers
 
 
+def advance_others(cid: str, cfg: dict, fx: Effects, lpath=None) -> None:
+    """بين جولات البطاقة تتقدّم البطاقةُ الأخرى في الدورة نفسها وتحت القفل نفسِه، فلا ينتظر تسجيلُ نشرها أو دمجُها جولاتٍ طويلة.
+    عطلُ المتابعة يُكتب ملاحظةً على صاحبها ولا يُسقط البطاقةَ الجارية."""
+    for other in inflight(ledger.reduce_state(ledger.load_events(lpath))):
+        if other["id"] == cid:
+            continue
+        try:
+            resume(other, cfg, fx, lpath)
+        except Exception as exc:  # noqa: BLE001
+            ledger.append_event("note", other["id"], {"text": f"[مشغّل] تعذّرت المتابعة: {exc}"[:300], "by": BY}, lpath)
+
+
 def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     """بطاقةٌ واحدة من أوّلها إلى آخرها؛ عابرٌ يُعاد مرّة، وفشلُ النموذج يتصاعد هايكو←سونيت بسقف كلّيّ 3$ ثمّ يُغلق بتقرير (D-521م)."""
     cid = card["id"]
@@ -780,6 +792,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     spent += res.cost
                     if not res.ok or spent >= TOTAL_CAP_USD:  # سقفُ الأدوار لا يحكم؛ الفحصُ والميزانيةُ هما الحماية
                         break  # فشل النموذج: التصعيد إلى الأعلى مسموحُ السلّم
+                    advance_others(cid, cfg, fx, lpath)
                     fx.autoformat(tree)  # ما تصلحه الأداةُ لا يُعاد إلى النموذج
                     ok, log = fx.verify(tree)
                     if ok and not fx.changed(tree):
