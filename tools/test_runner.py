@@ -569,3 +569,20 @@ def test_direct_card_treats_a_red_approval_check_as_a_real_failure(env):
     fx = Fake()
     fx.ci, fx.failed = "red", [runner.APPROVAL_CHECK]
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
+
+
+def test_gate_script_comes_from_main_not_from_the_branch(tmp_path):
+    """فرعٌ يعدّل البوّابةَ في ملفّه لا يحكم نفسَه: تُقرأ نسخةُ main (cfg['base'])، وإن خلت main منها فنسخةُ الشجرة."""
+    import subprocess
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "auto_merge_gate.py").write_text("print('main-gate')\n", encoding="utf-8")
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "x"], check=True, env={**__import__("os").environ, **env})
+    cfg = {**CFG, "repo": str(repo), "base": "main"}
+    path = runner.Effects(cfg).gate_script(str(tmp_path))
+    assert path != "scripts/auto_merge_gate.py" and Path(path).read_text(encoding="utf-8") == "print('main-gate')\n"
+    cfg_none = {**CFG, "repo": str(repo), "base": "main~0:nonexistent"}
+    assert runner.Effects(cfg_none).gate_script(str(tmp_path)) == "scripts/auto_merge_gate.py"

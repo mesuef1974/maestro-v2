@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -365,12 +366,28 @@ class Effects:
     def pr_body_of(self, tree: str, pr: int) -> str:
         return sh(["gh", "pr", "view", str(pr), "--json", "body", "-q", ".body"], tree).stdout
 
+    def gate_script(self, tree: str) -> str:
+        """بوّابةُ الدمج بنسخة main لا بنسخة فرع الطلب (2026-11-05).
+
+        قبلها كانت تُشغَّل من الشجرة، ففرعٌ يعدّل `scripts/auto_merge_gate.py` في ملفّه يقبل نفسَه ويدمجه المشغّل (ثغرة)؛
+        وبطاقةٌ على فرعٍ أقدمَ من إصلاحٍ في البوّابة تُرفض بنسخةٍ عفا عنها main (#1338). الحَكَمُ main؛ وإن خلت منها
+        البوّابةُ فنسخةُ الشجرة. تُكتب إلى ملفٍّ مؤقّتٍ خارجَ الشجرة وتعمل بـcwd الشجرة ليجد gh المستودع.
+        """
+        repo, base = self.cfg["repo"], self.cfg["base"]
+        sh(["git", "fetch", "-q", "origin", "main"], repo)
+        p = sh(["git", "show", f"{base}:scripts/auto_merge_gate.py"], repo)
+        if p.returncode or not p.stdout.strip():
+            return "scripts/auto_merge_gate.py"
+        out = Path(tempfile.gettempdir()) / f"auto_merge_gate_main_{os.getpid()}.py"
+        out.write_text(p.stdout, encoding="utf-8")
+        return str(out)
+
     def gate_reasons(self, tree: str, pr: int) -> str:
-        p = sh([sys.executable, "scripts/auto_merge_gate.py", str(pr)], tree)
+        p = sh([sys.executable, self.gate_script(tree), str(pr)], tree)
         return " | ".join(ln.strip(" -") for ln in p.stdout.splitlines()[1:6])[:300] or "؟"
 
     def gate_allows(self, tree: str, pr: int) -> bool:
-        return sh([sys.executable, "scripts/auto_merge_gate.py", str(pr)], tree).returncode == 0
+        return sh([sys.executable, self.gate_script(tree), str(pr)], tree).returncode == 0
 
     def remote_head(self, branch: str) -> str:
         out = sh(["git", "ls-remote", "origin", f"refs/heads/{branch}"], self.cfg["repo"]).stdout.split()
