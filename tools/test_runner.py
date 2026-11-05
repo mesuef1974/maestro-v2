@@ -504,3 +504,19 @@ def test_autoformat_formats_only_changed_python_files(tmp_path):
 
 def test_brief_tells_the_model_to_format():
     assert "ruff format" in runner.brief({"id": "W-1", "accept": ["x"]}, [])
+
+
+def test_referenced_tests_find_users_of_changed_modules_and_templates(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_uses_module.py").write_text("from quality.presentation import signature_stamps\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_uses_template.py").write_text("html = render('quality/_pdf_e_sign.html')\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_unrelated.py").write_text("assert 1\n", encoding="utf-8")
+    changed = ["quality/presentation.py", "templates/quality/_pdf_e_sign.html", "tests/test_changed_itself.py"]
+    assert runner.referenced_tests(str(tmp_path), changed) == [
+        "tests/test_changed_itself.py", "tests/test_uses_module.py", "tests/test_uses_template.py",
+    ]
+    assert runner.referenced_tests(str(tmp_path), ["docs/x.md"]) == []
+
+
+def test_brief_tells_the_model_to_hunt_other_users_in_tests():
+    assert "tests/" in runner.brief({"id": "W-1", "accept": ["x"]}, [])

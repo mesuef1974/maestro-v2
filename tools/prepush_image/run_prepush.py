@@ -54,4 +54,15 @@ import git_open_prs  # noqa: E402 — بجوار هذا الملف (/runner)
 pc.check_migration_collisions = lambda: git_open_prs.check(pc, cmc)  # صورةٌ بلا gh: فروعُ git بدل gh pr list (W-20261026-014)
 pc.check_pre_commit_hook = _direct_ruff
 pc.write_receipt = lambda: None
-sys.exit(pc.main(sys.argv[1:]))
+rc = pc.main(sys.argv[1:])
+# اختباراتٌ تذكر ما عدّله النموذج (PREPUSH_EXTRA_TESTS من runner.referenced_tests): بعد نجاح prepush وفي الحاوية نفسها؛
+# فشلُها فشلُ الفحص (رمز 1) لا «غير مقيس». prepush وحده ثابتٌ فلا يرى كسرَ مستعمِلٍ لم يُفتح (#1338).
+extra = os.environ.get("PREPUSH_EXTRA_TESTS", "").split()
+if rc == 0 and extra:
+    print(f"… اختباراتٌ تذكر المعدَّل ({len(extra)})", flush=True)
+    proc = subprocess.run([sys.executable, "-m", "pytest", *extra, "-q", "-p", "no:cacheprovider", "--no-header"],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    sys.stdout.write((proc.stdout + proc.stderr)[-4000:])
+    if proc.returncode != 0:
+        rc = 1
+sys.exit(rc)

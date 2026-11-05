@@ -129,6 +129,34 @@ def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
     return ready[0] if ready else None
 
 
+def referenced_tests(tree: str, changed: list[str]) -> list[str]:
+    """اختباراتٌ تذكر وحدةً معدَّلة (`quality.presentation` أو `quality/presentation.py`) أو اسمَ قالبٍ/أصلٍ معدَّل، مع ملفّات
+    الاختبار المعدَّلة نفسِها: تُشغَّل في الحاوية بعد prepush.
+
+    prepush ثابتٌ لا يختار بحسب التعديل، فكسرُ مستعمِلٍ لم يلمسه النموذج (ثلاثةُ اختباراتٍ في ملفّين لم يُفتحا) اجتاز
+    الحاويةَ وظهر في CI وحده فأُغلقت البطاقة بتقرير (#1338، 2026-11-05). المطابقةُ نصّيّةٌ على مستوى الملفّ: أوسع
+    من اللازم أحياناً، ولا تفوّت مستعمِلاً.
+    """
+    keys: set[str] = set()
+    direct: list[str] = []
+    for f in changed:
+        p = Path(f)
+        if f.startswith("tests/") and p.suffix == ".py":
+            direct.append(f)
+        elif p.suffix == ".py":
+            keys.add(".".join(p.with_suffix("").parts))
+            keys.add(f)
+        elif p.suffix in (".html", ".js", ".css", ".txt", ".json", ".yml", ".yaml"):
+            keys.add(p.name)
+    hits = []
+    if keys:
+        for t in sorted((Path(tree) / "tests").rglob("test_*.py")):
+            txt = t.read_text(encoding="utf-8", errors="replace")
+            if any(k in txt for k in keys):
+                hits.append(t.relative_to(tree).as_posix())
+    return sorted(set(direct) | set(hits))
+
+
 def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> str:
     """موجزٌ من قالب: المواصفةُ والمعايير والقواعدُ ذات الصلة فقط، لا تاريخ ولا رسائل."""
     acc = card.get("accept")
@@ -141,6 +169,7 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         f"معايير القبول:\n{acc_txt}",
         "قواعد: عدّل الملفّات واكتب الاختبارات وشغّلها فقط. لا git ولا دفع ولا نشر. التعليقات بالعربيّة.",
         "قبل أن تنتهي: `ruff format <الملفّات المعدَّلة>` ثمّ `ruff check <الملفّات المعدَّلة>`؛ فحصُ الدمج يرفض ملفّاً غيرَ منسَّق.",
+        "غيّرتَ سلوكَ دالّةٍ أو قالب؟ ابحث (Grep) في tests/ عن كلّ مستعمِلٍ له وحدّث اختباراته وشغّلها؛ اختبارٌ لم تفتحه يكسر CI.",
     ]
     parts += rules
     if fail_log:
@@ -263,7 +292,16 @@ class Effects:
         if rc or rc2:
             raise RunnerError("بيئةٌ: تعذّرت قراءةُ مجلّد git للشجرة")
         name = f"runner-{Path(tree).name.lower()}"
-        code, log = fp.run_with_db(fp._docker, lambda net: fp.prepush_command(tree, gitdir, common, name, net, fp.root_prepush_scripts(tree)), name, 3600)
+        extra = referenced_tests(tree, self.changed(tree))
+
+        def cmd_for(net: str) -> list[str]:
+            cmd = fp.prepush_command(tree, gitdir, common, name, net, fp.root_prepush_scripts(tree))
+            if extra:  # تُشغَّل في الحاوية نفسها بعد prepush (run_prepush.py يقرأ المتغيّر)
+                i = cmd.index(fp.PREPUSH_IMAGE)
+                cmd[i:i] = ["-e", "PREPUSH_EXTRA_TESTS=" + " ".join(extra)]
+            return cmd
+
+        code, log = fp.run_with_db(fp._docker, cmd_for, name, 3600)
         if "غير مقيس" in log or "تعذّر إنشاء" in log or "تعذّر" in log[:200]:
             raise RunnerError("بيئةٌ: الفحص غير مقيس في الحاوية — " + log.strip()[-160:])
         return code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
