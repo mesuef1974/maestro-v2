@@ -355,9 +355,15 @@ class Effects:
             return "pending"
         return "red" if "fail" in out else "green"
 
-    def failed_checks(self, tree: str, pr: int) -> str:
+    def failed_names(self, tree: str, pr: int) -> list[str]:
         out = sh(["gh", "pr", "checks", str(pr)], tree).stdout
-        return "، ".join(ln.split("	")[0] for ln in out.splitlines() if "	fail" in ln)[:300] or "؟"
+        return [ln.split("\t")[0] for ln in out.splitlines() if "\tfail" in ln]
+
+    def failed_checks(self, tree: str, pr: int) -> str:
+        return "، ".join(self.failed_names(tree, pr))[:300] or "؟"
+
+    def pr_body_of(self, tree: str, pr: int) -> str:
+        return sh(["gh", "pr", "view", str(pr), "--json", "body", "-q", ".body"], tree).stdout
 
     def gate_reasons(self, tree: str, pr: int) -> str:
         p = sh([sys.executable, "scripts/auto_merge_gate.py", str(pr)], tree)
@@ -460,15 +466,25 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     st = fx.checks_state(tree, pr)
     if st == "pending":
         return "waiting_ci"
-    if st != "green":
-        raise RunnerError(f"فحوصُ CI حمراء على الطلب {pr}: {fx.failed_checks(tree, pr)}")
-    if card.get("approval") == "معاينة" and not card.get("preview_approved"):
-        if not card.get("preview_noted"):  # سطرٌ واحد في طابور المالك لا كلَّ دورة
-            refer(card["id"], f"جاهز للمعاينة على 8500: الطلب #{pr} — بعد اعتمادك يُدمج (preview_approved)", None)
-            ledger.append_event("update", card["id"], {"preview_noted": True}, lpath)
-        return "waiting_preview"
-    if card.get("approval") == "معاينة":  # بعد اعتماد المعاينة: يُكتب سطرُ الاعتماد المرتبط بالرأس في وصف الطلب
-        fx.set_pr_body(tree, pr, pr_body(card, head))
+    preview = card.get("approval") == "معاينة"
+    failed = fx.failed_names(tree, pr) if st != "green" else []
+    # بطاقةُ المعاينة: فحصُ «سطر الاعتماد» أحمرُ بطبيعته حتى يُكتب السطرُ بعد اعتماد المالك، فليس فشلاً. قبل 2026-11-05 كان
+    # يُعدّ فشلَ CI فتُغلق كلُّ بطاقة معاينةٍ بتقرير قبل أن تبلغ المعاينةَ أصلاً (W-20261105-001 مرّتين).
+    real = [f for f in failed if not (preview and APPROVAL_CHECK in f)]
+    if real:
+        raise RunnerError(f"فحوصُ CI حمراء على الطلب {pr}: {'، '.join(real)[:300]}")
+    if preview:
+        if not card.get("preview_approved"):
+            if not card.get("preview_noted"):  # سطرٌ واحد في طابور المالك لا كلَّ دورة
+                refer(card["id"], f"جاهز للمعاينة على 8500: الطلب #{pr} — بعد اعتمادك يُدمج (preview_approved)", None)
+                ledger.append_event("update", card["id"], {"preview_noted": True}, lpath)
+            return "waiting_preview"
+        body = pr_body(card, head)
+        if fx.pr_body_of(tree, pr).strip() != body.strip():  # يُكتب مرّةً؛ فحصُ السطر يُعاد عند edited فيخضرّ في الدورة التالية
+            fx.set_pr_body(tree, pr, body)
+            return "waiting_ci"
+        if failed:  # السطرُ مكتوبٌ وفحصُه لم يُعَد بعد
+            return "waiting_ci"
     if not fx.gate_allows(tree, pr):
         raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {fx.gate_reasons(tree, pr)}")
     if fx.remote_head(branch) != head:
@@ -478,6 +494,7 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     return merge_and_publish(card, fx, lpath, tree, pr, r_stage="merge")
 
 
+APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
 MERGE_WAIT_S = 60 * 60
 DEPLOY_WAIT_S = 120 * 60
 

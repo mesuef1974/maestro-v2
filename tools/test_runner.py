@@ -50,6 +50,8 @@ class Fake(runner.Effects):
     def close_old_prs(self, tree, cid, new): return self.old_prs
     def checks_state(self, tree, pr): return self.ci
     def failed_checks(self, tree, pr): return "Ruff"
+    def failed_names(self, tree, pr): return list(getattr(self, "failed", ["Ruff"])) if self.ci == "red" else []
+    def pr_body_of(self, tree, pr): return (getattr(self, "pr_bodies", None) or [""])[-1]
     def gate_reasons(self, tree, pr): return "سبب"
     def gate_allows(self, tree, pr): return self.gate
     def remote_head(self, branch): return "h1"
@@ -520,3 +522,50 @@ def test_referenced_tests_find_users_of_changed_modules_and_templates(tmp_path):
 
 def test_brief_tells_the_model_to_hunt_other_users_in_tests():
     assert "tests/" in runner.brief({"id": "W-1", "accept": ["x"]}, [])
+
+
+# ───────────────────────── علاجُ 2026-11-05: بطاقةُ المعاينة وفحصُ «سطر الاعتماد» ─────────────────────────
+def _preview_card(lp):
+    _card(lp, approval="معاينة", source="owner")
+
+
+def test_preview_card_waits_for_owner_when_only_the_approval_check_is_red(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    fx.ci, fx.failed = "red", [runner.APPROVAL_CHECK]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_preview"
+    assert _state(lp)["state"] == "in_progress" and not fx.removed and not fx.merged
+
+
+def test_preview_card_with_a_real_red_check_still_closes(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    fx.ci, fx.failed = "red", [runner.APPROVAL_CHECK, "pytest shard 1/4"]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred"
+    assert "pytest shard 1/4" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+    assert runner.APPROVAL_CHECK not in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_approved_preview_card_writes_the_line_once_then_waits_for_its_check_then_merges(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    fx.ci, fx.failed = "red", [runner.APPROVAL_CHECK]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_preview"
+    ledger.append_event("update", "W-20261104-901", {"preview_approved": True}, lp)
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    assert "اعتُمد من المالك على 8500" in fx.pr_bodies[-1] and "الرأس h1" in fx.pr_bodies[-1]
+    n = len(fx.pr_bodies)
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and len(fx.pr_bodies) == n  # لا يُكتب ثانيةً
+    fx.ci, fx.failed = "green", []
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.merged
+
+
+def test_direct_card_treats_a_red_approval_check_as_a_real_failure(env):
+    lp, lock = env
+    _card(lp, source="owner")
+    fx = Fake()
+    fx.ci, fx.failed = "red", [runner.APPROVAL_CHECK]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
