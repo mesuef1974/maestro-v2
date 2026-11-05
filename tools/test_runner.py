@@ -68,6 +68,13 @@ class Fake(runner.Effects):
         self.rolled_to = sha
         return self.can_rollback
     def remove_tree(self, tree): self.removed = True
+    def review(self, tree, card, budget):
+        self.reviews = getattr(self, "reviews", 0) + 1
+        q = getattr(self, "review_q", [[]])
+        missing = q.pop(0) if len(q) > 1 else q[0]
+        if missing is None:
+            return runner.Result(False, "جواب غير مقروء"), []
+        return runner.Result(True, "", 0.02, 1), missing
 
 
 @pytest.fixture()
@@ -725,3 +732,41 @@ def test_failed_criterion_goes_back_to_the_model_then_passes(env):
 def test_pr_body_keeps_criteria_line_after_preview_rewrite():
     card = {"id": "W-1", "source": "owner", "approval": "معاينة", "preview_approved": True, "criteria_line": "معايير آليّة: ✔ لا هجرات"}
     assert "✔ لا هجرات" in runner.pr_body(card, "abcdef123")
+
+
+def test_review_gap_sends_the_model_back_and_passes_after_fix(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.review_q = [["حذف الخطّاف"], []]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.runs == 2 and fx.reviews == 2
+
+
+def test_review_gap_that_never_closes_is_closed_without_a_pr(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.review_q = [["حذف الخطّاف"]]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
+    assert "حذف الخطّاف" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_unreadable_review_never_opens_a_pr(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.review_q = [None]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
+
+
+def test_parse_review_accepts_only_the_expected_shape():
+    assert runner.parse_review('تحليل\n{"missing": ["أ"]}') == ["أ"]
+    assert runner.parse_review('{"missing": []}') == []
+    assert runner.parse_review("كل شيء جيد") is None
+    assert runner.parse_review('{"missing": "أ"}') is None
+
+
+def test_review_prompt_marks_truncated_diff():
+    card = {"problem": "م", "impact": "أ", "accept": ["ق"]}
+    assert "قُطع" not in runner.review_prompt(card, ["a.py"], "x")
+    assert "قُطع" in runner.review_prompt(card, ["a.py"], "x" * (runner.REVIEW_DIFF_CHARS + 1))
