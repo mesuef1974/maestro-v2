@@ -50,7 +50,7 @@ OWNER_QUEUE = ROOT / "owner_queue.md"
 REQUESTS = ROOT / "requests"
 BY = "runner"
 MAX_FIX_RUNS = 2  # جولاتُ الإصلاح لنموذجٍ يليه أعلى منه
-MAX_ROUNDS = 5  # جولاتُ البطاقة كلّها؛ والسقفُ الماليّ TOTAL_CAP_USD يحكم معها، أيّهما أولاً
+MAX_ROUNDS = 5  # جولاتُ البطاقة كلّها؛ ولا سقفَ ماليّاً لها بقرار المالك 2026-11-05، وسقفُ التشغيل الواحد في `sizes`
 CI_FIX_MAX = 2  # جولاتُ إصلاحٍ بعد أحمر CI على الطلب نفسه قبل الإغلاق
 LOCK_STALE_S = 3 * 3600
 MAX_INFLIGHT = 2  # بطاقتان معاً في أقصى حدّ؛ الدمجُ والنشرُ واحدةٌ تلو الأخرى (deploy_busy)
@@ -126,12 +126,10 @@ LIGHT_GUARDS = (
 )
 FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير المالك
 FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
-DAILY_CAP_USD = 10.0  # قرار المالك 2026-11-05، يُراجَع بعد أسبوع: تقديرٌ يحمي حصّة الاشتراك لا فاتورة API
 REVIEW_SIZES = ("متوسط", "كبير", "تصميم")  # البطاقةُ الصغيرة تكفيها الفحوص
 COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول|بذر المعاينة): كلفة=([\d.]+)\$")
 # نصوصُ claude 2.1.312 المستخرجة من البرنامج نفسه؛ لا يدخل فيها «Budget limit» فهو سقفُ التشغيل --max-budget-usd
 USAGE_LIMIT = re.compile(r"usage limit reached|you(?:'|’)ve hit your|out of extra usage", re.I)
-TOTAL_CAP_USD = 3.0  # السقفُ الكلّيّ للبطاقة عبر كلّ التشغيلات (D-521م)
 ESCALATE = {"haiku": "sonnet"}  # الأعلى لا يُستعمل آليّاً أبداً
 
 
@@ -370,7 +368,8 @@ def referenced_tests(tree: str, changed: list[str]) -> list[str]:
     for f in changed:
         p = Path(f)
         if f.startswith("tests/") and p.suffix == ".py":
-            direct.append(f)
+            if (Path(tree) / f).is_file():  # المحذوفُ يُسقط pytest بخطأ مسارٍ لا بفشل اختبار
+                direct.append(f)
         elif p.suffix == ".py":
             keys.add(".".join(p.with_suffix("").parts))
             keys.add(f)
@@ -925,26 +924,6 @@ def record_run(card_id: str, label: str, res: Result, path=None) -> None:
     ledger.append_event("note", card_id, {**data, "usage": usage} if usage else data, path)
 
 
-def daily_spend(lpath=None, now: datetime | None = None) -> float:
-    """كلفةُ اليوم بتوقيت UTC؛ و`ts` في الدفتر بتوقيت الدوحة فيُحوَّل قبل حدّ اليوم."""
-    today = (now or datetime.now(timezone.utc)).date()
-    total = 0.0
-    for e in ledger.load_events(lpath):
-        m = COST_NOTE.match(e["data"].get("text", "")) if e["kind"] == "note" else None
-        if m and datetime.fromisoformat(e["ts"]).astimezone(timezone.utc).date() == today:
-            total += float(m.group(1))
-    return total
-
-
-def report_budget(spent: float, queue: Path | None = None) -> str:
-    """سطرٌ واحدٌ في اليوم؛ والبطاقاتُ الجارية تُستأنف قبل هذا الحارس بلا كلفة نموذج."""
-    queue = queue or OWNER_QUEUE
-    mark = f"سقف يومي {datetime.now(timezone.utc):%Y-%m-%d}"
-    if not (queue.is_file() and mark in queue.read_text(encoding="utf-8")):
-        refer("RUNNER", f"{mark}: بلغت الكلفة {spent:.2f}$ من {DAILY_CAP_USD}$، ولا بطاقات جديدة حتى اليوم التالي بتوقيت UTC", queue)
-    return "waiting_budget"
-
-
 # ───────────────────────── الدورة ─────────────────────────
 CHECK_NAMES = {"tests_in_diff": "اختبار يغطّي الحالة", "scope_only": "لا ملفّ خارج النطاق", "no_migrations": "لا هجرات"}
 
@@ -1198,7 +1177,7 @@ def rerun_infra(card: dict, fx: Effects, lpath, tree: str, pr: int, infra: dict[
 
 
 def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, pr: int, failed: list[str]) -> str:
-    """أحمرُ CI يعود إلى النموذج على الطلب نفسه بدل إغلاق البطاقة؛ بعد CI_FIX_MAX جولةً أو بلوغ السقف تُغلق بتقرير."""
+    """أحمرُ CI يعود إلى النموذج على الطلب نفسه بدل إغلاق البطاقة؛ بعد CI_FIX_MAX جولةً تُغلق بتقرير."""
     cid = card["id"]
     r = dict(card.get("runner_resume") or {})
     done, spent = int(r.get("ci_fixes") or 0), float(r.get("spent") or 0)
@@ -1206,15 +1185,13 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
     if r.get("ci_fp") == fp and r.get("ci_fp_head") != head_now:  # دُفع إصلاحٌ وبقيت الفحوصُ نفسُها حمراء
         save_fail_diff(cid, fx.branch_diff(tree))
         raise RunnerError(f"الفشل نفسه مرتين: فحوصُ CI حمراء على الطلب {pr}: {'، '.join(failed)[:300]}")
-    if done >= CI_FIX_MAX or spent >= TOTAL_CAP_USD:
+    if done >= CI_FIX_MAX:
         save_fail_diff(cid, fx.branch_diff(tree))
         raise RunnerError(f"فحوصُ CI حمراء على الطلب {pr}: {'، '.join(failed)[:300]}")
-    if daily_spend(lpath) >= DAILY_CAP_USD:
-        return "waiting_budget"
     model, _, budget = _tiers(cfg, card)[-1]
     rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
     log = fx.ci_log(tree, pr) or "، ".join(failed)
-    res = fx.run_model(tree, brief(card, rules, log, fx.branch_diff(tree)), model, min(budget, TOTAL_CAP_USD - spent))
+    res = fx.run_model(tree, brief(card, rules, log, fx.branch_diff(tree)), model, budget)
     record_run(cid, f"{model} إصلاح CI {done + 1}", res, lpath)
     r.update(ci_fixes=done + 1, spent=spent + res.cost, ci_fp=fp, ci_fp_head=head_now)
     card["runner_resume"] = r
@@ -1384,12 +1361,12 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     if rounds >= MAX_ROUNDS:
                         break
                     rounds += 1
-                    res = fx.run_model(tree, prompt, model, min(budget, TOTAL_CAP_USD - spent))
+                    res = fx.run_model(tree, prompt, model, budget)
                     record_run(cid, f"{model} تشغيل {attempt + 1}", res, lpath)
                     spent += res.cost
                     if not res.ok:
                         log = res.out or log
-                    if not res.ok or spent >= TOTAL_CAP_USD:  # سقفُ الأدوار لا يحكم؛ الفحصُ والميزانيةُ هما الحماية
+                    if not res.ok:  # سقفُ الأدوار لا يحكم؛ الفحصُ والميزانيةُ هما الحماية
                         break  # فشل النموذج: التصعيد إلى الأعلى مسموحُ السلّم
                     advance_others(cid, cfg, fx, lpath)
                     fx.autoformat(tree)  # ما تصلحه الأداةُ لا يُعاد إلى النموذج
@@ -1400,7 +1377,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         ok, log = fx.verify(tree)
                         fp = () if ok else failure_fingerprint(log)
                     if fp and fp == last_fp:
-                        raise give_up(cid, f"الفشل نفسه مرتين: {'، '.join(fp)[:300]}؛ كلفة={spent:.2f}$ من {TOTAL_CAP_USD}$", log, fx, tree, lpath)
+                        raise give_up(cid, f"الفشل نفسه مرتين: {'، '.join(fp)[:300]}؛ كلفة={spent:.2f}$", log, fx, tree, lpath)
                     last_fp = fp
                     if ok and not fx.changed(tree):
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
@@ -1412,7 +1389,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     if ok and norm_size(card.get("runner_size", "")) not in REVIEW_SIZES:
                         break
                     if ok:
-                        rev, missing = fx.review(tree, card, min(REVIEW_BUDGET_USD, TOTAL_CAP_USD - spent))
+                        rev, missing = fx.review(tree, card, REVIEW_BUDGET_USD)
                         record_run(cid, "مراجعة القبول", rev, lpath)
                         spent += rev.cost
                         if not rev.ok:
@@ -1423,12 +1400,12 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         log = "معايير قبول لم تتحقّق:\n" + "\n".join(f"- {m}" for m in missing)
                     ledger.append_event("note", cid, {"text": f"[مشغّل] جولة {rounds} فشلت: {failure_summary(mask(log))}", "by": BY}, lpath)
                     prompt = brief(card, rules, log, fx.diff(tree))
-                if ok or spent >= TOTAL_CAP_USD:
+                if ok:
                     break
             if not ok:
                 lack = f"؛ معايير ناقصة: {'، '.join(gaps)[:200]}" if gaps else ""
                 why = f": {failure_summary(mask(log))}" if log else ""
-                raise give_up(cid, f"فشل النموذج بعد السلّم الكامل{why}؛ كلفة={spent:.2f}$ من {TOTAL_CAP_USD}${lack}", log, fx, tree, lpath)
+                raise give_up(cid, f"فشل النموذج بعد السلّم الكامل{why}؛ كلفة={spent:.2f}${lack}", log, fx, tree, lpath)
             files = fx.changed(tree)
             if not files:
                 raise RunnerError("لم يُحدث النموذجُ أيَّ تغيير")
@@ -1573,9 +1550,6 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
             items = ledger.reduce_state(ledger.load_events(lpath))
             if len(inflight(items)) >= MAX_INFLIGHT:
                 return out
-            spent = daily_spend(lpath)
-            if spent >= DAILY_CAP_USD:
-                return report_budget(spent)
             card = pick_card(items, cfg)
             if not card:
                 return out

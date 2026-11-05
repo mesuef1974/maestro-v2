@@ -577,6 +577,7 @@ def test_referenced_tests_find_users_of_changed_modules_and_templates(tmp_path):
     (tmp_path / "tests" / "test_uses_module.py").write_text("from quality.presentation import signature_stamps\n", encoding="utf-8")
     (tmp_path / "tests" / "test_uses_template.py").write_text("html = render('quality/_pdf_e_sign.html')\n", encoding="utf-8")
     (tmp_path / "tests" / "test_unrelated.py").write_text("assert 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_changed_itself.py").write_text("", encoding="utf-8")
     changed = ["quality/presentation.py", "templates/quality/_pdf_e_sign.html", "tests/test_changed_itself.py"]
     assert runner.referenced_tests(str(tmp_path), changed) == [
         "tests/test_changed_itself.py", "tests/test_uses_module.py", "tests/test_uses_template.py",
@@ -1205,37 +1206,6 @@ def _spent(lp, cid, cost, ts=None, label="[مشغّل] sonnet تشغيل 1"):
         lp.write_text(raw, encoding="utf-8")
 
 
-def test_daily_spend_uses_the_utc_day_of_doha_timestamps(env):
-    from datetime import datetime, timezone
-    lp, _ = env
-    _spent(lp, "W-1", 1.0, "2026-11-05T02:00:00+03:00")  # 11-04 23:00 UTC: أمس
-    _spent(lp, "W-1", 2.0, "2026-11-05T04:00:00+03:00")  # 11-05 01:00 UTC
-    _spent(lp, "W-1", 0.5, "2026-11-05T05:00:00+03:00", "[مشغّل] مراجعة القبول")
-    _spent(lp, "W-1", 0.25, "2026-11-05T06:00:00+03:00", "[مشغّل] sonnet إصلاح CI 1")
-    now = datetime(2026, 11, 5, 12, tzinfo=timezone.utc)
-    assert runner.daily_spend(lp, now) == 2.75
-
-
-def test_daily_cap_stops_new_cards_but_resumes_running_ones(env):
-    lp, lock = env
-    _card(lp, "W-20261104-901")
-    fx = Fake()
-    fx.ci = "pending"
-    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
-    _card(lp, "W-20261104-902")
-    _spent(lp, "W-1", runner.DAILY_CAP_USD)
-    fx.ci = "green"
-    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_budget"
-    assert _state(lp, "W-20261104-901")["state"] == "published"
-    assert _state(lp, "W-20261104-902")["state"] == "routed" and fx.runs == 1
-    runner.run_cycle(CFG, fx, lp, lock)
-    assert runner.OWNER_QUEUE.read_text(encoding="utf-8").count("سقف يومي") == 1
-
-
-def test_poll_keeps_going_on_waiting_budget():
-    assert _poll_with(["waiting_budget"]) == 5
-
-
 def test_usage_limit_returns_the_card_to_the_queue(env):
     lp, lock = env
     _card(lp)
@@ -1784,3 +1754,42 @@ def test_release_refuses_a_card_that_is_not_held(env):
     lp, lock = env
     _card(lp)
     assert not runner.release_merge("W-20261104-901", lp)[0]
+
+
+def test_a_card_past_three_dollars_is_not_closed_for_cost(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake(verify=(False, True), cost=4.0)
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.runs == 2
+
+
+def test_ci_repair_past_three_dollars_still_runs_the_model(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake(cost=4.0)
+    fx.ci = "red"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2
+
+
+def test_a_heavy_day_does_not_stop_new_cards(env):
+    lp, lock = env
+    _spent(lp, "W-1", 500.0)
+    _card(lp)
+    assert runner.run_cycle(CFG, Fake(), lp, lock) == "published"
+
+
+def test_the_single_run_cap_stays(env):
+    lp, lock = env
+    _card(lp)
+    seen = []
+    fx = Fake()
+    real = fx.run_model
+    fx.run_model = lambda tree, prompt, model, budget: seen.append(budget) or real(tree, prompt, model, budget)
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert seen and seen[0] == runner._tiers(CFG, _state(lp))[0][2]
+
+
+def test_a_deleted_test_is_not_handed_to_pytest(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_kept.py").write_text("", encoding="utf-8")
+    assert runner.referenced_tests(str(tmp_path), ["tests/test_kept.py", "tests/test_gone.py"]) == ["tests/test_kept.py"]
