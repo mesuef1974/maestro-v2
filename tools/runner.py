@@ -730,6 +730,10 @@ class Effects:
         p = sh(["docker", "exec", "-i", f"schoolos-main-preview-{st}-web-1", "python", "manage.py", "shell"], ".", 300, SEED_GUARD + script)
         return p.returncode == 0 and "Traceback" not in p.stderr, (p.stdout + p.stderr)[-3000:]
 
+    def check_seed(self, path: str, account: str) -> tuple[bool, str]:
+        ok, log = self.run_seed(SEED_CHECK.format(path=path, account=account))
+        return ok and "PREVIEW_STATUS=200" in log, log
+
     def preview_slot(self) -> str:
         p = sh(["git", "-C", str(self._preview_script().parent.parent), "rev-parse", "--absolute-git-dir"], ".")
         f = Path(p.stdout.strip()) / "preview-state" / "slot"
@@ -979,7 +983,7 @@ def seed_prompt(card: dict, info: dict, error: str = "") -> str:
     """ما يُعايَن يحتاج بيانات: قاعدةُ 8500 خلت من الزيارات يوم #1347 فلم يكن هناك ما يُفتح."""
     again = f"\n\nالمحاولة السابقة فشلت بهذا الخطأ، فأصلحها:\n{error[-1500:]}" if error else ""
     return "\n\n".join([
-        "اكتب سكربت Python يُشغَّل في `manage.py shell` ليبذر أقلّ بيانات تجعل هذا التعديل قابلاً للمعاينة بالعين. اقرأ النماذج والعروض في هذه الشجرة ولا تعدّل شيئاً.",
+        "اكتب سكربت Python يُشغَّل في `manage.py shell` ليبذر كلَّ ما تحتاجه معاينةُ هذا التعديل بالعين: كلُّ بندٍ مما سيتحقق منه المالك يجب أن يظهر في بيانات حقيقيّة الشكل، بكلّ حالاته. اقرأ النماذج والعروض في هذه الشجرة ولا تعدّل شيئاً.",
         f"التعديل: {card.get('problem', '')}\n{card.get('impact', '')}",
         "ما سيتحقق منه المالك:\n" + "\n".join(f"- {c}" for c in info["checks"]),
         f"الدخول بحساب رقمه الوظيفي {info['account']} ({info['role']}): اربط البيانات بمدرسته ونطاقه حتى يراها، وابحث عنه بالرقم الوظيفي.",
@@ -996,7 +1000,7 @@ def seed_body(text: str) -> str:
 
 
 def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, str]:
-    """يعيد (المسار، سبب الفشل). فشلُ البذر لا يوقف المعاينة، بل يُقال في الرسالة صراحة."""
+    """يعيد (المسار، سبب الفشل). البذرُ شرطٌ للمعاينة: ينجح إذا فُتح الرابطُ بالحساب الوهميّ لا إذا انتهى السكربت."""
     cid, tree, error = card["id"], card["runner_resume"]["tree"], ""
     for _ in range(SEED_ATTEMPTS):
         res = fx.seed_script(tree, seed_prompt(card, info, error))
@@ -1007,16 +1011,19 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
             continue
         ok, log = fx.run_seed(body)
         path = re.findall(r"PREVIEW_PATH=(/\S*)", log)
-        if ok and path:
+        if not (ok and path):
+            error = log or "لم يطبع السكربت PREVIEW_PATH"
+            continue
+        opened, check_log = fx.check_seed(path[-1], info["account"])
+        if opened:
             return path[-1], ""
-        error = log or "لم يطبع السكربت PREVIEW_PATH"
+        error = f"الرابط {path[-1]} لم يُفتح بالحساب {info['account']}:\n{check_log}"
     return "", failure_summary(mask(error))[:200]
 
 
 def preview_message(card: dict, info: dict) -> str:
     cid = card["id"]
-    data = f"لم تُبذر بيانات: {info['seed_error']} — " if info.get("seed_error") else ""
-    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — {data}افتح {info['url']} — ادخل بالرقم {info['account']} ({info['role']})، "
+    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — افتح {info['url']} — ادخل بالرقم {info['account']} ({info['role']})، "
             f"وكلمة المرور في {info['password_at']} — تحقّق من: {'؛ '.join(str(c) for c in info['checks'])[:300]} — "
             f"للاعتماد: python tools/runner.py --approve {cid} — للرفض: python tools/runner.py --reject {cid} --reason \"السبب\" — الطلب #{info['pr']}")
 
@@ -1031,10 +1038,14 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
         if not live and not st.get("pin_request") and not st.get("pin_in_progress"):  # خانةٌ واحدة، والأقدمُ يُستأنف أوّلاً
             fx.preview_pin(tree)
         return "waiting_preview"
-    if card.get("preview_seen") != head:
+    if card.get("preview_seen") != head and card.get("preview_seed_failed") != head:
         info = preview_info(card, pr)
-        path, info["seed_error"] = seed_preview(card, info, fx, lpath)
-        info["url"] = PREVIEW_URL + path if path else info["url"]
+        path, error = seed_preview(card, info, fx, lpath)
+        if not path:  # لا «جاهز» بلا بيانات، ولا اعتماد؛ ويُعاد برأسٍ جديد أو --reseed فلا تتكرّر الكلفة كلَّ دورة
+            ledger.append_event("update", cid, {"preview_seed_failed": head}, lpath)
+            refer(cid, f"تعذّرت المعاينة: لم يكتمل البذر للطلب #{pr}: {error} — للإعادة: python tools/runner.py --reseed {cid}")
+            return "waiting_preview"
+        info["url"] = PREVIEW_URL + path
         ledger.append_event("update", cid, {"preview_seen": head, "preview_info": info}, lpath)
         refer(cid, preview_message(card, info))
     return "waiting_preview"
@@ -1154,7 +1165,14 @@ PREVIEW_PIN_MINUTES = 720  # تبقى حتى قرار المالك لا 30 دق�
 PREVIEW_HB_STALE_S = 600
 SEED_MODEL = "sonnet"
 SEED_BUDGET_USD = 0.40
-SEED_ATTEMPTS = 2
+SEED_ATTEMPTS = 3
+SEED_CHECK = (  # الرابطُ يُفتح بالحساب الوهميّ نفسه قبل أن يصل المالك
+    "from django.contrib.auth import get_user_model as _u\n"
+    "from django.test import Client as _C\n"
+    "_cl = _C(raise_request_exception=False)\n"
+    "_cl.force_login(_u().objects.get(employee_number={account!r}))\n"
+    "print('PREVIEW_STATUS=%s' % _cl.get({path!r}, HTTP_HOST='localhost').status_code)\n"
+)
 SEED_GUARD = (  # يسبق كلَّ سكربت: قاعدةُ التثبيت المنسوخة وحدها، لا قاعدة المعاينة المشتركة ولا غيرها
     "from django.db import connection as _c\n"
     "import re as _re\n"
@@ -1486,7 +1504,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--approve", metavar="CARD", help="اعتماد المعاينة المعروضة على 8500")
     ap.add_argument("--reject", metavar="CARD", help="رفض المعاينة، ومعه --reason")
     ap.add_argument("--reason", default="")
+    ap.add_argument("--reseed", metavar="CARD", help="إعادة بذر المعاينة بعد فشلها")
     a = ap.parse_args(argv)
+    if a.reseed:
+        ledger.append_event("update", a.reseed, {"preview_seed_failed": ""})
+        print(f"{a.reseed}: يُعاد البذر في الدورة التالية")
+        return 0
     if a.approve or a.reject:
         ok, text = decide_preview(a.approve or a.reject, bool(a.approve), a.reason)
         print(text)

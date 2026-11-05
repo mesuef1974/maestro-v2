@@ -62,6 +62,10 @@ class Fake(runner.Effects):
         q = getattr(self, "seed_runs", [(True, "PREVIEW_PATH=/quality/observations/1/pdf/view/")])
         return q.pop(0) if len(q) > 1 else q[0]
 
+    def check_seed(self, path, account):
+        q = getattr(self, "seed_checks", [(True, "PREVIEW_STATUS=200")])
+        return q.pop(0) if len(q) > 1 else q[0]
+
     def preview_tick(self): self.ticks = getattr(self, "ticks", 0) + 1
     def preview_release(self): self.releases = getattr(self, "releases", 0) + 1
     def close_pr(self, tree, pr): self.closed_pr = pr
@@ -1531,7 +1535,6 @@ def test_seeded_record_link_reaches_the_owner_and_its_cost_counts(env):
     lp, lock = env
     line = _shown(lp, lock, Fake())
     assert "http://localhost:8500/quality/observations/1/pdf/view/" in line and "لم تُبذر" not in line
-    assert _state(lp)["preview_info"]["seed_error"] == ""
     assert runner.COST_NOTE.match("[مشغّل] بذر المعاينة: كلفة=0.0500$ أدوار=3")
 
 
@@ -1543,13 +1546,36 @@ def test_seed_error_goes_back_to_the_model_once(env):
     assert len(fx.seed_prompts) == 2 and "NameError: Foo" in fx.seed_prompts[1]
 
 
-def test_failed_seed_is_said_plainly_and_does_not_block_the_preview(env):
+def test_failed_seed_blocks_ready_and_approval_and_is_not_retried_each_cycle(env):
     lp, lock = env
     fx = Fake()
     fx.seed_runs = [(False, "NameError: Foo")]
     line = _shown(lp, lock, fx)
-    assert "لم تُبذر بيانات" in line and "http://localhost:8500/quality/" in line and "جاهز للمعاينة" in line
+    assert "تعذّرت المعاينة" in line and "جاهز للمعاينة" not in line and "--reseed" in line
     assert len(fx.seed_prompts) == runner.SEED_ATTEMPTS
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert len(fx.seed_prompts) == runner.SEED_ATTEMPTS and _queue().count("تعذّرت المعاينة") == 1
+    assert not runner.decide_preview("W-20261104-901", True, lpath=lp)[0]
+
+
+def test_reseed_tries_again(env, monkeypatch):
+    lp, lock = env
+    fx = Fake()
+    fx.seed_runs = [(False, "x")]
+    _shown(lp, lock, fx)
+    monkeypatch.setattr(runner.ledger, "append_event", lambda *a, _f=runner.ledger.append_event: _f(*a, lp) if len(a) == 3 else _f(*a))
+    assert runner.main(["--reseed", "W-20261104-901"]) == 0
+    fx.seed_runs = [(True, "PREVIEW_PATH=/ok/")]
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert "http://localhost:8500/ok/" in _queue()
+
+
+def test_link_that_the_account_cannot_open_goes_back_to_the_model(env):
+    lp, lock = env
+    fx = Fake()
+    fx.seed_checks = [(False, "PREVIEW_STATUS=403"), (True, "PREVIEW_STATUS=200")]
+    assert "جاهز للمعاينة" in _shown(lp, lock, fx)
+    assert len(fx.seed_prompts) == 2 and "PREVIEW_STATUS=403" in fx.seed_prompts[1] and "99900001" in fx.seed_prompts[1]
 
 
 def test_no_script_in_the_answer_never_runs_anything(env):
@@ -1557,7 +1583,15 @@ def test_no_script_in_the_answer_never_runs_anything(env):
     fx = Fake()
     fx.seed_q = ["لا أستطيع"]
     fx.run_seed = lambda s: pytest.fail("شُغّل نصٌّ ليس سكربتاً")
-    assert "لم تُبذر بيانات" in _shown(lp, lock, fx)
+    assert "تعذّرت المعاينة" in _shown(lp, lock, fx)
+
+
+def test_check_needs_status_200(monkeypatch):
+    fx = runner.Effects(CFG)
+    seen = []
+    monkeypatch.setattr(fx, "run_seed", lambda s: seen.append(s) or (True, "PREVIEW_STATUS=302"))
+    assert fx.check_seed("/a/", "99900001")[0] is False
+    assert "employee_number='99900001'" in seen[0] and "'/a/'" in seen[0]
 
 
 def test_seed_guard_runs_first_and_accepts_only_a_pin_copy(monkeypatch):
