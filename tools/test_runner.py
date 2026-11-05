@@ -62,6 +62,10 @@ class Fake(runner.Effects):
         q = getattr(self, "seed_runs", [(True, "PREVIEW_PATH=/quality/observations/1/pdf/view/")])
         return q.pop(0) if len(q) > 1 else q[0]
 
+    def map_rls(self, account):
+        self.mapped = account
+        return getattr(self, "map_result", (True, ""))
+
     def check_seed(self, path, account):
         q = getattr(self, "seed_checks", [(True, "PREVIEW_STATUS=200")])
         return q.pop(0) if len(q) > 1 else q[0]
@@ -1586,12 +1590,33 @@ def test_no_script_in_the_answer_never_runs_anything(env):
     assert "تعذّرت المعاينة" in _shown(lp, lock, fx)
 
 
-def test_check_needs_status_200(monkeypatch):
+def test_check_goes_through_the_real_server_and_needs_200(monkeypatch):
+    seen = []
+    monkeypatch.setattr(runner, "open_as", lambda account, path: seen.append((account, path)) or 404)
+    ok, log = runner.Effects(CFG).check_seed("/a/", "99900001")
+    assert not ok and "404" in log and seen == [("99900001", "/a/")]
+
+
+def test_rls_mapping_failure_stops_before_any_model_cost(env):
+    lp, lock = env
+    fx = Fake()
+    fx.map_result = (False, "لا مدرسة")
+    assert "تعذّرت المعاينة" in _shown(lp, lock, fx) and not getattr(fx, "seed_prompts", [])
+
+
+def test_rls_is_mapped_for_the_preview_account_first(env):
+    lp, lock = env
+    fx = Fake()
+    _shown(lp, lock, fx)
+    assert fx.mapped == "99900001"
+
+
+def test_rls_statement_runs_behind_the_pin_guard(monkeypatch):
     fx = runner.Effects(CFG)
     seen = []
-    monkeypatch.setattr(fx, "run_seed", lambda s: seen.append(s) or (True, "PREVIEW_STATUS=302"))
-    assert fx.check_seed("/a/", "99900001")[0] is False
-    assert "employee_number='99900001'" in seen[0] and "'/a/'" in seen[0]
+    monkeypatch.setattr(fx, "run_seed", lambda s: seen.append(s) or (True, ""))
+    fx.map_rls("99900001")
+    assert "app_rls_role_school" in seen[0] and "employee_number='99900001'" in seen[0]
 
 
 def test_seed_guard_runs_first_and_accepts_only_a_pin_copy(monkeypatch):

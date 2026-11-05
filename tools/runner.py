@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.cookiejar
 import json
 import os
 import re
@@ -25,6 +26,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -730,9 +734,13 @@ class Effects:
         p = sh(["docker", "exec", "-i", f"schoolos-main-preview-{st}-web-1", "python", "manage.py", "shell"], ".", 300, SEED_GUARD + script)
         return p.returncode == 0 and "Traceback" not in p.stderr, (p.stdout + p.stderr)[-3000:]
 
+    def map_rls(self, account: str) -> tuple[bool, str]:
+        return self.run_seed(SEED_RLS.format(account=account))
+
     def check_seed(self, path: str, account: str) -> tuple[bool, str]:
-        ok, log = self.run_seed(SEED_CHECK.format(path=path, account=account))
-        return ok and "PREVIEW_STATUS=200" in log, log
+        """دخولٌ حقيقيّ عبر 8500: `manage.py shell` يتصل بدورٍ يتجاوز RLS فيرى ما لا يراه الخادم (نجاحٌ كاذب يوم #1347)."""
+        code = open_as(account, path)
+        return code == 200, f"HTTP {code} بدخول حقيقي عبر {PREVIEW_URL}"
 
     def preview_slot(self) -> str:
         p = sh(["git", "-C", str(self._preview_script().parent.parent), "rev-parse", "--absolute-git-dir"], ".")
@@ -979,6 +987,21 @@ def preview_info(card: dict, pr: int) -> dict:
             "password_at": PREVIEW_PASSWORD_AT, "checks": checks or [card.get("problem", "")], "pr": pr}
 
 
+def open_as(account: str, path: str) -> int:
+    """حالةُ الصفحة كما يراها المالك؛ كلمةُ المرور تُقرأ هنا ولا تُكتب في سجلّ."""
+    env = (ROOT / PREVIEW_PASSWORD_AT).read_text(encoding="utf-8")
+    password = re.search(r"^PREVIEW_ACCOUNTS_PASSWORD=[\"']?(.*?)[\"']?\s*$", env, re.M).group(1)
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    login = PREVIEW_URL + "/auth/login/"
+    token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', opener.open(login, timeout=30).read().decode("utf-8")).group(1)
+    form = urllib.parse.urlencode({"csrfmiddlewaretoken": token, "identifier": account, "password": password}).encode("utf-8")
+    opener.open(urllib.request.Request(login, form, {"Referer": login}), timeout=30)
+    try:
+        return opener.open(PREVIEW_URL + path, timeout=60).status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+
+
 def seed_prompt(card: dict, info: dict, error: str = "") -> str:
     """ما يُعايَن يحتاج بيانات: قاعدةُ 8500 خلت من الزيارات يوم #1347 فلم يكن هناك ما يُفتح."""
     again = f"\n\nالمحاولة السابقة فشلت بهذا الخطأ، فأصلحها:\n{error[-1500:]}" if error else ""
@@ -1002,6 +1025,9 @@ def seed_body(text: str) -> str:
 def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, str]:
     """يعيد (المسار، سبب الفشل). البذرُ شرطٌ للمعاينة: ينجح إذا فُتح الرابطُ بالحساب الوهميّ لا إذا انتهى السكربت."""
     cid, tree, error = card["id"], card["runner_resume"]["tree"], ""
+    mapped, log = fx.map_rls(info["account"])
+    if not mapped:
+        return "", failure_summary(mask(log))[:200]
     for _ in range(SEED_ATTEMPTS):
         res = fx.seed_script(tree, seed_prompt(card, info, error))
         record_run(cid, "بذر المعاينة", res, lpath)
@@ -1023,7 +1049,7 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
 
 def preview_message(card: dict, info: dict) -> str:
     cid = card["id"]
-    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — افتح {info['url']} — سجّل الخروج أولًا إن كنت داخلًا بحساب آخر (السجلّ لا يُفتح من مدرسة أخرى) ثم ادخل بالرقم {info['account']} ({info['role']})، "
+    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — افتح {info['url']} — ادخل بالرقم {info['account']} ({info['role']})، "
             f"وكلمة المرور في {info['password_at']} — تحقّق من: {'؛ '.join(str(c) for c in info['checks'])[:300]} — "
             f"للاعتماد: python tools/runner.py --approve {cid} — للرفض: python tools/runner.py --reject {cid} --reason \"السبب\" — الطلب #{info['pr']}")
 
@@ -1166,12 +1192,12 @@ PREVIEW_HB_STALE_S = 600
 SEED_MODEL = "sonnet"
 SEED_BUDGET_USD = 0.40
 SEED_ATTEMPTS = 3
-SEED_CHECK = (  # الرابطُ يُفتح بالحساب الوهميّ نفسه قبل أن يصل المالك
+SEED_RLS = (  # الخادمُ يتصل بدور shschool_app، وRLS يخفي عنه كلَّ شيء ما لم يُربط الدور بمدرسة الحساب
     "from django.contrib.auth import get_user_model as _u\n"
-    "from django.test import Client as _C\n"
-    "_cl = _C(raise_request_exception=False)\n"
-    "_cl.force_login(_u().objects.get(employee_number={account!r}))\n"
-    "print('PREVIEW_STATUS=%s' % _cl.get({path!r}, HTTP_HOST='localhost').status_code)\n"
+    "_s = _u().objects.get(employee_number={account!r}).get_school()\n"
+    "_k = _c.cursor()\n"
+    "_k.execute('INSERT INTO app_rls_role_school (db_role, school_id) VALUES (%s, %s) "
+    "ON CONFLICT (db_role) DO UPDATE SET school_id = EXCLUDED.school_id', ['shschool_app', _s.pk])\n"
 )
 SEED_GUARD = (  # يسبق كلَّ سكربت: قاعدةُ التثبيت المنسوخة وحدها، لا قاعدة المعاينة المشتركة ولا غيرها
     "from django.db import connection as _c\n"
