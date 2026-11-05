@@ -659,7 +659,7 @@ class Effects:
         out = sh(["gh", "pr", "checks", str(pr)], tree).stdout.lower()
         if not out.strip() or any(w in out for w in ("pending", "queued", "in_progress", "waiting")):
             return "pending"
-        return "red" if "fail" in out else "green"
+        return "red" if "fail" in out or "cancel" in out else "green"
 
     def branch_diff(self, tree: str) -> str:
         return sh(["git", "diff", f"{self.cfg['base']}...HEAD"], tree).stdout
@@ -682,6 +682,23 @@ class Effects:
                 if text.startswith(("FAILED ", "ERROR ", "E   ")) and text not in keep:
                     keep.append(text)
         return "\n".join(keep)[-3000:]
+
+    def cancelled_runs(self, tree: str, pr: int) -> dict[str, str]:
+        """الفحوصُ الملغاة (مهلةُ الوظيفة تظهر إلغاءً لا فشلاً) ورقمُ تشغيل كلٍّ منها."""
+        p = sh(["gh", "pr", "checks", str(pr), "--json", "name,state,link"], tree)
+        try:
+            rows = json.loads(p.stdout or "[]")
+        except ValueError:
+            return {}
+        found = {}
+        for row in rows:
+            m = re.search(r"/runs/(\d+)", row.get("link") or "")
+            if m and str(row.get("state", "")).upper() == "CANCELLED":
+                found[row.get("name", "")] = m.group(1)
+        return found
+
+    def rerun_failed(self, tree: str, run_id: str) -> bool:
+        return sh(["gh", "run", "rerun", run_id, "--failed"], tree).returncode == 0
 
     def failed_names(self, tree: str, pr: int) -> list[str]:
         out = sh(["gh", "pr", "checks", str(pr)], tree).stdout
@@ -859,6 +876,11 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     # بطاقةُ المعاينة: فحصُ «سطر الاعتماد» أحمرُ بطبيعته حتى يُكتب السطرُ بعد اعتماد المالك، فليس فشلاً. قبل 2026-11-05 كان
     # يُعدّ فشلَ CI فتُغلق كلُّ بطاقة معاينةٍ بتقرير قبل أن تبلغ المعاينةَ أصلاً (W-20261105-001 مرّتين).
     real = [f for f in failed if not (preview and APPROVAL_CHECK in f)]
+    cancelled = fx.cancelled_runs(tree, pr) if st != "green" else {}
+    if cancelled:  # الإلغاءُ لا يقول شيئاً عن الشيفرة، فلا يذهب إلى النموذج (#1347)
+        real = [f for f in real if f not in cancelled and f != GATE_SUMMARY]
+        if not real:
+            return rerun_cancelled(card, fx, lpath, tree, pr, cancelled)
     if real:
         return repair_ci(card, cfg, fx, lpath, tree, branch, pr, real)
     if preview:
@@ -882,6 +904,22 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     if deploy_busy(card["id"], lpath):  # نشرٌ واحدٌ في الطريق فقط، فيبقى هدفُ التراجع عند فشل الصحّة واضحاً
         return "waiting_turn"
     return merge_and_publish(card, fx, lpath, tree, pr, r_stage="merge")
+
+
+def rerun_cancelled(card: dict, fx: Effects, lpath, tree: str, pr: int, cancelled: dict[str, str]) -> str:
+    """يعيد المهامَّ الملغاة بلا نموذج وبلا كلفة؛ وتكرارُها بعد CI_RERUN_MAX يُغلق بتقريرٍ يسمّيها علّةَ CI."""
+    cid = card["id"]
+    names = "، ".join(cancelled)[:300]
+    r = dict(card.get("runner_resume") or {})
+    done = int(r.get("ci_reruns") or 0)
+    if done >= CI_RERUN_MAX:
+        raise RunnerError(f"أُلغيت فحوصُ CI {done + 1} مرات على الطلب {pr}: {names} — علّةُ CI لا خلل في التعديل")
+    r["ci_reruns"] = done + 1  # يُحسب ولو فشل الأمر، فلا تدور البطاقةُ بلا نهاية
+    card["runner_resume"] = r
+    ledger.append_event("update", cid, {"runner_resume": r}, lpath)
+    ok = [fx.rerun_failed(tree, run) for run in sorted(set(cancelled.values()))]
+    ledger.append_event("note", cid, {"text": f"[مشغّل] إعادة فحوص ملغاة {done + 1}: {names}{'' if all(ok) else ' (تعذّرت الإعادة)'}", "by": BY}, lpath)
+    return "waiting_ci"
 
 
 def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, pr: int, failed: list[str]) -> str:
@@ -939,6 +977,8 @@ def inflight(items: dict[str, dict]) -> list[dict]:
     return sorted(cards, key=lambda i: i.get("created", ""))
 
 
+GATE_SUMMARY = "ملخص بوابة الجودة"  # يحمرّ تبعاً لأيّ مهمّةٍ أُلغيت فلا يُعدّ فشلاً مستقلّاً معها
+CI_RERUN_MAX = 2  # إعادةُ المهامّ الملغاة؛ بعدها علّةُ CI لا يصلحها النموذج
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
 MERGE_WAIT_S = 60 * 60
 DEPLOY_WAIT_S = 120 * 60

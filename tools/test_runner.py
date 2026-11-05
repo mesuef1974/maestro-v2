@@ -52,6 +52,12 @@ class Fake(runner.Effects):
     def checks_state(self, tree, pr): return self.ci
     def failed_checks(self, tree, pr): return "Ruff"
     def failed_names(self, tree, pr): return list(getattr(self, "failed", ["Ruff"])) if self.ci == "red" else []
+    def cancelled_runs(self, tree, pr): return dict(getattr(self, "cancelled", {})) if self.ci == "red" else {}
+
+    def rerun_failed(self, tree, run_id):
+        self.reruns = getattr(self, "reruns", []) + [run_id]
+        return True
+
     def pr_body_of(self, tree, pr): return (getattr(self, "pr_bodies", None) or [""])[-1]
     def gate_reasons(self, tree, pr): return "سبب"
     def gate_allows(self, tree, pr): return self.gate
@@ -1289,4 +1295,61 @@ def test_card_links_back_to_its_request_and_retry(env):
     created = next(e for e in ledger.load_events(lp) if e["kind"] == "created")["data"]
     assert created["request_file"] == "web-20261105-164506" and created["retry_of"] == "R-7"
     assert (runner.REQUESTS / "web-20261105-164506.done").is_file()
+
+
+E2E = "Playwright — e2e"
+
+
+def _cancelled(fx):
+    fx.ci, fx.failed, fx.cancelled = "red", [E2E, runner.GATE_SUMMARY], {E2E: "42"}
+    return fx
+
+
+def test_cancelled_check_is_rerun_without_the_model(env):
+    lp, lock = env
+    _card(lp)
+    fx = _cancelled(Fake())
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    assert fx.reruns == ["42"] and fx.runs == 1
+    fx.ci = "green"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.runs == 1
+
+
+def test_cancelled_shown_without_a_failed_name_still_never_passes_as_green(env):
+    lp, lock = env
+    _card(lp)
+    fx = _cancelled(Fake())
+    fx.failed = []
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and not fx.merged and fx.reruns == ["42"]
+
+
+def test_repeated_cancel_closes_as_a_ci_fault_with_no_model_run(env):
+    lp, lock = env
+    _card(lp)
+    fx = _cancelled(Fake())
+    for _ in range(runner.CI_RERUN_MAX):
+        assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 1 and not fx.merged
+    assert "علّةُ CI" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_a_real_failure_beside_a_cancel_goes_to_the_model(env):
+    lp, lock = env
+    _card(lp)
+    fx = _cancelled(Fake())
+    fx.failed = [E2E, "pytest shard 1/8", runner.GATE_SUMMARY]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2 and not getattr(fx, "reruns", [])
+
+
+def test_cancelled_runs_reads_state_and_run_id(monkeypatch):
+    rows = [{"name": "e2e", "state": "CANCELLED", "link": "https://x/actions/runs/42/job/7"},
+            {"name": "ok", "state": "SUCCESS", "link": "https://x/actions/runs/43/job/8"}]
+    out = runner.json.dumps(rows)
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a: runner.subprocess.CompletedProcess(cmd, 0, out, ""))
+    assert runner.Effects(CFG).cancelled_runs(".", 1) == {"e2e": "42"}
+
+
+def test_checks_state_treats_cancel_as_red(monkeypatch):
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a: runner.subprocess.CompletedProcess(cmd, 0, "e2e" + chr(9) + "cancel" + chr(9) + "5m", ""))
+    assert runner.Effects(CFG).checks_state(".", 1) == "red"
 
