@@ -123,6 +123,32 @@ def release_lock(path: Path = LOCK) -> None:
     path.unlink(missing_ok=True)
 
 
+# ───────────────────────── فحوص معايير القبول بلا توكنز (المرحلة 2.2) ─────────────────────────
+def _check_tests_in_diff(card: dict, files: list[str]) -> str:
+    return "" if any(f.startswith("tests/") or "/tests/" in f for f in files) else "المعيار «اختبار جديد أو معدَّل»: الفرق بلا أيّ ملفّ اختبار؛ أضف اختباراً يغطّي الحالة"
+
+
+def _check_scope_only(card: dict, files: list[str]) -> str:
+    declared = set(card.get("scope_files") or [])
+    if not declared:
+        return ""  # لا نطاقَ معلناً: لا شيء يُقارَن
+    out = [f for f in files if f not in declared and not (f.startswith("tests/") or "/tests/" in f)]
+    return ("المعيار «لا ملفّ خارج النطاق»: عُدّل خارج الملفّات المعلنة: " + ", ".join(out[:8])) if out else ""
+
+
+def _check_no_migrations(card: dict, files: list[str]) -> str:
+    out = [f for f in files if "/migrations/" in f or f.startswith("migrations/")]
+    return ("المعيار «لا هجرات»: الفرق يضمّ هجرات: " + ", ".join(out[:8])) if out else ""
+
+
+CRITERIA_CHECKS = {"tests_in_diff": _check_tests_in_diff, "scope_only": _check_scope_only, "no_migrations": _check_no_migrations}
+
+
+def criteria_failures(card: dict, files: list[str]) -> list[str]:
+    """رسائلُ المعايير الآليّة التي لم تتحقّق في الفرق؛ تُعاد إلى النموذج كسجلّ فشل فيصلحها في المحاولة التالية."""
+    return [m for c in card.get("runner_checks") or [] if c in CRITERIA_CHECKS for m in [CRITERIA_CHECKS[c](card, files)] if m]
+
+
 # ───────────────────────── الاختيار ─────────────────────────
 def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
     """أوّلُ بطاقةٍ موجَّهةٍ لها مواصفةٌ كاملة ومعايير قبول ووسمُ حجمٍ معروف، بالأولويّة ثمّ العمر."""
@@ -173,6 +199,11 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         f"الملفّات المسموحة: {', '.join(card.get('files_allowed') or []) or 'بحسب الحاجة'}",
         f"الملفّات الممنوعة: {', '.join(card.get('files_forbidden') or []) or 'لا شيء'}",
         f"معايير القبول:\n{acc_txt}",
+        f"نوع الطلب: {card['req_type']}" if card.get("req_type") else "",
+        f"الصفحة المعنيّة: {card['scope_page']}" if card.get("scope_page") else "",
+        (f"الملفّات المتوقَّعة (ابدأ منها؛ {'لا تعدّل غيرها' if 'scope_only' in (card.get('runner_checks') or []) else 'وغيرها إن لزم'}): "
+         + ", ".join(card["scope_files"])) if card.get("scope_files") else "",
+        f"خارج النطاق (لا تمسّه): {card['out_of_scope']}" if card.get("out_of_scope") else "",
         "قواعد: عدّل الملفّات واكتب الاختبارات وشغّلها فقط. لا git ولا دفع ولا نشر. التعليقات بالعربيّة.",
         "قبل أن تنتهي: `ruff format <الملفّات المعدَّلة>` ثمّ `ruff check <الملفّات المعدَّلة>`؛ فحصُ الدمج يرفض ملفّاً غيرَ منسَّق.",
         "غيّرتَ سلوكَ دالّةٍ أو قالب؟ ابحث (Grep) في tests/ عن كلّ مستعمِلٍ له وحدّث اختباراته وشغّلها؛ اختبارٌ لم تفتحه يكسر CI.",
@@ -494,9 +525,23 @@ def record_run(card_id: str, label: str, res: Result, path=None) -> None:
 
 
 # ───────────────────────── الدورة ─────────────────────────
-def pr_body(card: dict, head: str = "") -> str:
+CHECK_NAMES = {"tests_in_diff": "اختبار يغطّي الحالة", "scope_only": "لا ملفّ خارج النطاق", "no_migrations": "لا هجرات"}
+
+
+def criteria_line(card: dict, files: list[str]) -> str:
+    """سطرُ حال المعايير الآليّة في وصف الطلب: ✔ أو ✘ لكلّ فحصٍ طلبه المالك، و«بعينك» لمعايير المالك."""
+    if not card.get("runner_checks"):
+        return ""
+    parts = [("✘ " if CRITERIA_CHECKS[c](card, files) else "✔ ") + CHECK_NAMES.get(c, c) for c in card["runner_checks"] if c in CRITERIA_CHECKS]
+    return "معايير آليّة (المشغّل، بلا توكنز): " + " · ".join(parts) + " — والبقية: CI أو بعينك"
+
+
+def pr_body(card: dict, head: str = "", files: list[str] | None = None) -> str:
     """وصفُ الطلب؛ لبطاقاتٍ source=owner سطرُ اعتماد المالك بصيغة D-520م (طلبُه في الخطوة الأولى هو الاعتماد)."""
     body = f"البطاقة {card['id']} — المشغّل."
+    line = criteria_line(card, files) if files is not None else card.get("criteria_line", "")
+    if line:
+        body += "\n\n" + line
     if card.get("source") == "owner" and card.get("approval") != "معاينة":
         body += f"\n\nاعتُمد من المالك مباشرةً بلا معاينة 8500 — {time.strftime('%Y-%m-%d')}{(' — الرأس ' + head[:8]) if head else ''} (D-520م، {card['id']})"
     if card.get("source") == "owner" and card.get("approval") == "معاينة" and card.get("preview_approved"):
@@ -642,6 +687,10 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
                         break
                     if ok:
+                        miss = criteria_failures(card, fx.changed(tree))
+                        if miss:  # الفحوص خضراء لكن معياراً آليّاً من الطلب لم يتحقّق: يُعاد إلى النموذج كإصلاح
+                            ok, log = False, "\n".join(miss)
+                    if ok:
                         break
                     prompt = brief(card, rules, log, fx.diff(tree))
                 if ok or spent >= TOTAL_CAP_USD:
@@ -651,8 +700,11 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             files = fx.changed(tree)
             if not files:
                 raise RunnerError("لم يُحدث النموذجُ أيَّ تغيير")
+            if card.get("runner_checks"):  # يُحفظ ليبقى في الوصف حين يُعاد كتابته بعد اعتماد المعاينة
+                card["criteria_line"] = criteria_line(card, files)
+                ledger.append_event("update", cid, {"criteria_line": card["criteria_line"]}, lpath)
             head = fx.commit_push(tree, branch, files, f"{cid}: {card.get('problem', '')[:60]}")
-            pr = fx.open_pr(tree, branch, f"{cid}: {card.get('problem', '')[:60]}", pr_body(card, head))
+            pr = fx.open_pr(tree, branch, f"{cid}: {card.get('problem', '')[:60]}", pr_body(card, head, files))
             for old_pr in fx.close_old_prs(tree, cid, pr):
                 ledger.append_event("note", cid, {"text": f"[مشغّل] أُغلق الطلب القديم #{old_pr}: حلّ محلّه #{pr}", "by": BY}, lpath)
             card["runner_resume"] = {"pr": pr, "branch": branch, "head": head, "tree": tree}
@@ -698,6 +750,11 @@ def resume(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     return out
 
 
+def _split_list(fields: dict, key: str) -> list[str]:
+    """قيمةٌ مفصولةٌ بالفاصلة العربيّة في ملفّ الطلب (المعايير المرقّمة، الفحوص، الملفّات) ← قائمة."""
+    return [x.strip() for x in fields.get(key, "").split("،") if x.strip()]
+
+
 def intake_requests(cfg: dict, lpath=None) -> int:
     """ملفّاتُ requests/*.md ← بطاقاتٌ بلا نموذج؛ القالب: عنوان/مطلوب/معايير/وسم، سطرٌ لكلّ مفتاح."""
     n = 0
@@ -717,12 +774,15 @@ def intake_requests(cfg: dict, lpath=None) -> int:
         cid = ledger.new_id(ledger.load_events(lpath))
         touches = [t.strip() for t in fields.get("يمسّ", "").split("،") if t.strip()]
         approval = "معاينة" if fields.get("الاعتماد") == "معاينة" or (not fields.get("الاعتماد") and fields["الوسم"] == "تصميم") else "مباشر"
+        extra = {"req_type": fields.get("النوع", ""), "criteria_ids": [int(x) for x in _split_list(fields, "معايير مرقّمة") if x.isdigit()],
+                 "runner_checks": [c for c in _split_list(fields, "فحوص المشغّل") if c in CRITERIA_CHECKS],
+                 "scope_page": fields.get("الصفحة", ""), "scope_files": _split_list(fields, "الملفات"), "out_of_scope": fields.get("خارج النطاق", "")}
         ledger.append_event("created", cid, {"problem": fields["العنوان"], "impact": fields["المطلوب"],
                                               "accept": [a.strip() for a in fields["معايير القبول"].split("؛") if a.strip()],
                                               "approval": approval,
                                               "priority": fields.get("الأولوية") if fields.get("الأولوية") in ledger.PRIORITIES else "P2",
                                               "runner_size": fields["الوسم"], "source": "owner",
-                                              "touches": touches}, lpath)
+                                              "touches": touches, **{k: v for k, v in extra.items() if v}}, lpath)
         ledger.append_event("state", cid, {"state": "routed", "by": BY}, lpath)
         if touches:  # الأمن والصلاحيات والأدوار والهجرات تردّها البوّابة: لا نبني ثم نُرَدّ
             ledger.append_event("update", cid, {"runner_hold": True}, lpath)

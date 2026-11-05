@@ -664,3 +664,64 @@ def test_note_timing_keeps_only_timing_lines(tmp_path):
     line = out.read_text(encoding="utf-8")
     assert "total=400s" in line and "ruff 3s | check_types 120s" in line and "ضجيج" not in line
 
+
+
+# ───────── المرحلة 2 من استمارة ميزان: النوع والمعايير المرقّمة والنطاق وفحوص بلا توكنز ─────────
+def test_intake_reads_phase2_fields(env):
+    lp, _ = env
+    _write_req(env, **{"النوع": "خلل", "معايير مرقّمة": "1، 2، 4", "فحوص المشغّل": "tests_in_diff، no_migrations، مجهول",
+                       "الصفحة": "/attendance/", "الملفات": "attendance/views.py، attendance/forms.py", "خارج النطاق": "التقارير"})
+    runner.intake_requests(CFG, lp)
+    c = list(ledger.reduce_state(ledger.load_events(lp)).values())[0]
+    assert c["req_type"] == "خلل" and c["criteria_ids"] == [1, 2, 4]
+    assert c["runner_checks"] == ["tests_in_diff", "no_migrations"]  # فحصٌ مجهول يُتجاهَل
+    assert c["scope_files"] == ["attendance/views.py", "attendance/forms.py"] and c["out_of_scope"] == "التقارير"
+    assert runner.pick_card({c["id"]: c}, CFG)  # الحقول الجديدة لا تمنع الالتقاط
+
+
+def test_intake_without_phase2_fields_is_unchanged(env):
+    lp, _ = env
+    _write_req(env)
+    runner.intake_requests(CFG, lp)
+    c = list(ledger.reduce_state(ledger.load_events(lp)).values())[0]
+    assert not any(k in c for k in ("req_type", "runner_checks", "scope_files"))
+
+
+def test_brief_carries_type_and_scope():
+    card = {"id": "W-1", "problem": "م", "impact": "أ", "accept": ["x"], "req_type": "خلل", "scope_page": "/a/",
+            "scope_files": ["a.py"], "out_of_scope": "ب", "runner_checks": ["scope_only"]}
+    b = runner.brief(card, [])
+    assert "نوع الطلب: خلل" in b and "الصفحة المعنيّة: /a/" in b and "خارج النطاق (لا تمسّه): ب" in b
+    assert "لا تعدّل غيرها" in b and "a.py" in b
+
+
+def test_criteria_checks():
+    card = {"runner_checks": ["tests_in_diff", "scope_only", "no_migrations"], "scope_files": ["app/views.py"]}
+    assert runner.criteria_failures(card, ["app/views.py", "tests/test_views.py"]) == []
+    miss = runner.criteria_failures(card, ["app/views.py", "app/models.py", "app/migrations/0002.py"])
+    assert len(miss) == 3 and "app/models.py" in miss[1] and "0002" in miss[2]
+    assert runner.criteria_failures({"runner_checks": ["scope_only"]}, ["x.py"]) == []  # لا نطاق معلن: لا مقارنة
+
+
+def test_failed_criterion_goes_back_to_the_model_then_passes(env):
+    lp, lock = env
+    _card(lp, runner_checks=["tests_in_diff"], source="owner")
+    fx = Fake(files=("a.py",))
+    orig = fx.run_model
+
+    def run_model(tree, prompt, model, budget):
+        if fx.runs == 1:  # المحاولة الثانية تضيف الاختبار
+            assert "اختبار" in prompt
+            fx.files = ["a.py", "tests/test_a.py"]
+        return orig(tree, prompt, model, budget)
+    fx.run_model = run_model
+    out = runner.run_cycle(CFG, fx, lp, lock)
+    assert fx.runs == 2 and out != "referred"
+    assert "✔ اختبار يغطّي الحالة" in fx.pr_bodies[-1] if hasattr(fx, "pr_bodies") else True
+    c = list(ledger.reduce_state(ledger.load_events(lp)).values())[0]
+    assert "✔ اختبار يغطّي الحالة" in c["criteria_line"]
+
+
+def test_pr_body_keeps_criteria_line_after_preview_rewrite():
+    card = {"id": "W-1", "source": "owner", "approval": "معاينة", "preview_approved": True, "criteria_line": "معايير آليّة: ✔ لا هجرات"}
+    assert "✔ لا هجرات" in runner.pr_body(card, "abcdef123")
