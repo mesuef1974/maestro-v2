@@ -1023,7 +1023,7 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
 
 def preview_message(card: dict, info: dict) -> str:
     cid = card["id"]
-    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — افتح {info['url']} — ادخل بالرقم {info['account']} ({info['role']})، "
+    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — افتح {info['url']} — سجّل الخروج أولًا إن كنت داخلًا بحساب آخر (السجلّ لا يُفتح من مدرسة أخرى) ثم ادخل بالرقم {info['account']} ({info['role']})، "
             f"وكلمة المرور في {info['password_at']} — تحقّق من: {'؛ '.join(str(c) for c in info['checks'])[:300]} — "
             f"للاعتماد: python tools/runner.py --approve {cid} — للرفض: python tools/runner.py --reject {cid} --reason \"السبب\" — الطلب #{info['pr']}")
 
