@@ -756,7 +756,7 @@ def test_pr_body_keeps_criteria_line_after_preview_rewrite():
 
 def test_review_gap_sends_the_model_back_and_passes_after_fix(env):
     lp, lock = env
-    _card(lp)
+    _card(lp, size="متوسط")
     fx = Fake()
     fx.review_q = [["حذف الخطّاف"], []]
     assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.runs == 2 and fx.reviews == 2
@@ -764,7 +764,7 @@ def test_review_gap_sends_the_model_back_and_passes_after_fix(env):
 
 def test_review_gap_that_never_closes_is_closed_without_a_pr(env):
     lp, lock = env
-    _card(lp)
+    _card(lp, size="متوسط")
     fx = Fake()
     fx.review_q = [["حذف الخطّاف"]]
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
@@ -773,7 +773,7 @@ def test_review_gap_that_never_closes_is_closed_without_a_pr(env):
 
 def test_unreadable_review_never_opens_a_pr(env):
     lp, lock = env
-    _card(lp)
+    _card(lp, size="متوسط")
     fx = Fake()
     fx.review_q = [None]
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
@@ -935,6 +935,7 @@ def test_failure_summary_shows_what_failed_not_what_passed():
     log = "✔ ruff check: نجح\n✘ ruff format --check: فشل\n    Would reformat: tests/a.py\n✔ mypy: نجح\nلا تدفع"
     assert runner.failure_summary(log) == "✘ ruff format --check: فشل Would reformat: tests/a.py"
     assert runner.failure_summary("بلا علامات") == "بلا علامات"
+    assert runner.failure_summary("✔ ok" + chr(10) + "    FAILED tests/a.py::t - x") == "FAILED tests/a.py::t - x"
 
 
 class Dock:
@@ -1059,4 +1060,233 @@ def test_every_failed_round_is_noted_and_the_diff_is_kept(env):
 
 def test_ci_guards_run_in_the_container():
     assert {"tests/test_file_size.py", "tests/test_layering.py", "tests/test_page_layouts.py"} <= set(runner.LIGHT_GUARDS)
+
+
+NL = chr(10)
+
+
+class Logs(Fake):
+    """verify فاشل بسجلّات متتالية."""
+
+    def __init__(self, *logs):
+        super().__init__(verify=(False,))
+        self.logs = list(logs)
+        self.verifies = 0
+
+    def verify(self, tree):
+        self.verifies += 1
+        log = self.logs.pop(0) if len(self.logs) > 1 else self.logs[0]
+        return (log == "ok"), log
+
+
+def test_same_failure_twice_closes_after_two_model_runs_without_escalating(env):
+    lp, lock = env
+    _card(lp)
+    fx = Logs("    FAILED tests/a.py::t - سبب أول", "    FAILED tests/a.py::t - سبب آخر")
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 2
+    queue = runner.OWNER_QUEUE.read_text(encoding="utf-8")
+    assert queue.count("الفشل نفسه مرتين") == 1 and "tests/a.py::t" in queue
+
+
+def test_fingerprint_survives_the_ladder_step(env):
+    lp, lock = env
+    _card(lp)
+    fx = Logs("FAILED a", "", "", "FAILED b", "FAILED b")
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 5
+
+
+def test_empty_fingerprint_never_closes(env):
+    lp, lock = env
+    _card(lp)
+    fx = Logs("سجل بلا فحوص")
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == runner.MAX_ROUNDS
+
+
+def test_fingerprint_reads_names_and_test_ids_only():
+    log = "✘ التعقيد الحلقي (CC ≥ 31): فشل" + NL + "    تفصيل" + NL + "FAILED tests/a.py::t - سبب" + NL + "✔ ruff: نجح"
+    assert runner.failure_fingerprint(log) == ("tests/a.py::t", "التعقيد الحلقي (CC ≥ 31)")
+    assert runner.failure_fingerprint("لا شيء") == ()
+
+
+class NewHeads(Fake):
+    heads = 0
+
+    def commit_push(self, tree, branch, files, msg):
+        self.heads += 1
+        return f"h{self.heads}"
+
+
+def test_same_red_ci_after_a_pushed_fix_closes(env):
+    lp, lock = env
+    _card(lp)
+    fx = NewHeads()
+    fx.ci, fx.failed = "red", ["pytest shard 1/8"]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 2
+    assert "الفشل نفسه مرتين" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_new_red_checks_after_a_fix_get_another_repair(env):
+    lp, lock = env
+    _card(lp)
+    fx = NewHeads()
+    fx.ci, fx.failed = "red", ["pytest shard 1/8"]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    fx.failed = ["pytest shard 2/8"]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 3
+
+
+def test_usage_limit_during_ci_repair_keeps_the_open_pr_in_flight(env):
+    lp, lock = env
+    _card(lp)
+
+    class QuotaOnRepair(Fake):
+        def run_model(self, tree, prompt, model, budget):
+            if self.runs:
+                runner.check_quota("Usage limit reached")
+            return super().run_model(tree, prompt, model, budget)
+
+    fx = QuotaOnRepair()
+    fx.ci, fx.failed = "red", ["pytest shard 1/8"]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "env_down"
+    card = _state(lp)
+    assert card["state"] == "in_progress" and card["runner_resume"]["pr"] and not fx.removed
+
+
+def test_small_card_is_not_reviewed(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and not getattr(fx, "reviews", 0)
+    assert not any("مراجعة القبول" in e["data"].get("text", "") for e in ledger.load_events(lp))
+
+
+def _spent(lp, cid, cost, ts=None, label="[مشغّل] sonnet تشغيل 1"):
+    ev = ledger.append_event("note", cid, {"text": f"{label}: كلفة={cost:.4f}$ أدوار=1", "by": "runner"}, lp)
+    if ts:
+        raw = lp.read_text(encoding="utf-8").replace(ev["ts"], ts)
+        lp.write_text(raw, encoding="utf-8")
+
+
+def test_daily_spend_uses_the_utc_day_of_doha_timestamps(env):
+    from datetime import datetime, timezone
+    lp, _ = env
+    _spent(lp, "W-1", 1.0, "2026-11-05T02:00:00+03:00")  # 11-04 23:00 UTC: أمس
+    _spent(lp, "W-1", 2.0, "2026-11-05T04:00:00+03:00")  # 11-05 01:00 UTC
+    _spent(lp, "W-1", 0.5, "2026-11-05T05:00:00+03:00", "[مشغّل] مراجعة القبول")
+    _spent(lp, "W-1", 0.25, "2026-11-05T06:00:00+03:00", "[مشغّل] sonnet إصلاح CI 1")
+    now = datetime(2026, 11, 5, 12, tzinfo=timezone.utc)
+    assert runner.daily_spend(lp, now) == 2.75
+
+
+def test_daily_cap_stops_new_cards_but_resumes_running_ones(env):
+    lp, lock = env
+    _card(lp, "W-20261104-901")
+    fx = Fake()
+    fx.ci = "pending"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    _card(lp, "W-20261104-902")
+    _spent(lp, "W-1", runner.DAILY_CAP_USD)
+    fx.ci = "green"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_budget"
+    assert _state(lp, "W-20261104-901")["state"] == "published"
+    assert _state(lp, "W-20261104-902")["state"] == "routed" and fx.runs == 1
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert runner.OWNER_QUEUE.read_text(encoding="utf-8").count("سقف يومي") == 1
+
+
+def test_poll_keeps_going_on_waiting_budget():
+    assert _poll_with(["waiting_budget"]) == 5
+
+
+def test_usage_limit_returns_the_card_to_the_queue(env):
+    lp, lock = env
+    _card(lp)
+
+    class Quota(Fake):
+        def run_model(self, tree, prompt, model, budget):
+            runner.check_quota("You've hit your session limit · resets 9pm")
+            return super().run_model(tree, prompt, model, budget)
+
+    assert runner.run_cycle(CFG, Quota(), lp, lock) == "env_down"
+    assert _state(lp)["state"] == "routed"
+    queue = runner.OWNER_QUEUE.read_text(encoding="utf-8")
+    assert "نفدت حصّة الاشتراك" in queue and "W-20261104-901" not in queue
+
+
+def test_quota_text_does_not_match_the_run_budget():
+    runner.check_quota("Budget limit reached")
+    with pytest.raises(runner.EnvDown):
+        runner.check_quota("Usage limit reached")
+
+
+def test_record_run_keeps_tokens_beside_the_unchanged_text(env):
+    lp, _ = env
+    runner.record_run("W-1", "haiku تشغيل 1", runner.Result(True, "", 0.5, 2, {"usage": {"input_tokens": 3, "output_tokens": 4, "x": {}}}), lp)
+    data = ledger.load_events(lp)[-1]["data"]
+    assert data["text"] == "[مشغّل] haiku تشغيل 1: كلفة=0.5000$ أدوار=2" and data["usage"] == {"input_tokens": 3, "output_tokens": 4}
+
+
+def test_format_only_failure_is_fixed_without_a_model_run(env):
+    lp, lock = env
+    _card(lp)
+    fx = Logs("✘ ruff format --check: فشل" + NL + "    Would reformat: a.py", "ok")
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.runs == 1 and fx.verifies == 2
+
+
+def test_autoformat_and_prepush_use_the_same_image(tmp_path, monkeypatch):
+    import flow_pump as fp
+    seen = []
+    fx = runner.Effects(CFG)
+    (tmp_path / "a.py").write_text("x=1", encoding="utf-8")
+    monkeypatch.setattr(fx, "changed", lambda tree: ["a.py"])
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a: seen.append(cmd) or runner.subprocess.CompletedProcess(cmd, 0, "", ""))
+    fx.autoformat(str(tmp_path))
+    assert fp.PREPUSH_IMAGE in seen[0] and fp.PREPUSH_IMAGE in fp.prepush_command("t", "g", "g", "n", "net")
+
+
+def test_changed_lists_files_inside_a_new_folder(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "pkg" / "sub" / "a.py").write_text("x = 1", encoding="utf-8")
+    assert runner.Effects(CFG).changed(str(tmp_path)) == ["pkg/sub/a.py"]
+
+
+GOOD = "العنوان: ع" + NL + "المطلوب: م" + NL + "معايير القبول: ق" + NL + "الوسم: صغير" + NL
+
+
+def test_request_that_vanishes_after_glob_makes_no_card(env, monkeypatch):
+    lp, _ = env
+    runner.REQUESTS.mkdir()
+    gone = runner.REQUESTS / "web-1.md"
+    gone.write_text(GOOD, encoding="utf-8")
+    real = Path.rename
+
+    def lost(self, target):
+        if self.name == "web-1.md":
+            self.unlink()
+            raise FileNotFoundError
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "rename", lost)
+    assert runner.intake_requests(CFG, lp) == 0 and not ledger.load_events(lp)
+
+
+def test_request_deleted_before_read_is_skipped(env, monkeypatch):
+    lp, _ = env
+    runner.REQUESTS.mkdir()
+    ghost = runner.REQUESTS / "web-2.md"
+    monkeypatch.setattr(Path, "glob", lambda self, pat: [ghost])
+    assert runner.intake_requests(CFG, lp) == 0 and not ledger.load_events(lp)
+
+
+def test_card_links_back_to_its_request_and_retry(env):
+    lp, _ = env
+    runner.REQUESTS.mkdir()
+    (runner.REQUESTS / "web-20261105-164506.md").write_text(GOOD + "إعادة لـ: R-7" + NL, encoding="utf-8")
+    assert runner.intake_requests(CFG, lp) == 1
+    created = next(e for e in ledger.load_events(lp) if e["kind"] == "created")["data"]
+    assert created["request_file"] == "web-20261105-164506" and created["retry_of"] == "R-7"
+    assert (runner.REQUESTS / "web-20261105-164506.done").is_file()
 

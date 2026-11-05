@@ -20,11 +20,13 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -119,6 +121,11 @@ LIGHT_GUARDS = (
 )
 FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير المالك
 FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
+DAILY_CAP_USD = 10.0  # قرار المالك 2026-11-05، يُراجَع بعد أسبوع: تقديرٌ يحمي حصّة الاشتراك لا فاتورة API
+REVIEW_SIZES = ("متوسط", "كبير", "تصميم")  # البطاقةُ الصغيرة تكفيها الفحوص
+COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول): كلفة=([\d.]+)\$")
+# نصوصُ claude 2.1.312 المستخرجة من البرنامج نفسه؛ لا يدخل فيها «Budget limit» فهو سقفُ التشغيل --max-budget-usd
+USAGE_LIMIT = re.compile(r"usage limit reached|you(?:'|’)ve hit your|out of extra usage", re.I)
 TOTAL_CAP_USD = 3.0  # السقفُ الكلّيّ للبطاقة عبر كلّ التشغيلات (D-521م)
 ESCALATE = {"haiku": "sonnet"}  # الأعلى لا يُستعمل آليّاً أبداً
 
@@ -130,6 +137,12 @@ class Result:
     cost: float = 0.0
     turns: int = 0
     raw: dict = field(default_factory=dict)
+
+
+def check_quota(text: str) -> None:
+    """نفادُ حصّة الاشتراك علّةُ بيئة: لا يُحسب فشلاً للنموذج ولا يصعد السلّم ولا يُغلق البطاقة."""
+    if USAGE_LIMIT.search(text):
+        raise EnvDown(f"نفدت حصّة الاشتراك: {text.strip()[:160]}")
 
 
 def load_config(path: Path = CONFIG) -> dict:
@@ -235,11 +248,32 @@ def save_fail_diff(card_id: str, diff: str, folder: Path | None = None) -> None:
     (folder / f"{card_id}.diff").write_text(diff, encoding="utf-8")
 
 
+def failure_fingerprint(log: str) -> tuple[str, ...]:
+    """أسماءُ الفحوص الفاشلة ومعرّفاتُ الاختبارات وحدها، فتُقارَن جولتان؛ والفارغةُ لا تعني شيئاً (quick_check والمراجعة)."""
+    found = set()
+    for ln in log.splitlines():
+        text = ln.lstrip()
+        if text.startswith("✘") and ":" in text:
+            found.add(text[1:].rsplit(":", 1)[0].strip())
+        elif text.startswith("FAILED ") and len(text.split()) > 1:
+            found.add(text.split()[1])
+    return tuple(sorted(found))
+
+
+def give_up(cid: str, message: str, log: str, fx: "Effects", tree: str, lpath=None) -> "RunnerError":
+    """يحفظ الفرقَ وآخرَ سجلٍّ قبل الإغلاق؛ بادئةُ الملاحظة يقرؤها ميزان فلا تتغيّر."""
+    save_fail_diff(cid, fx.review_diff(tree))
+    safe = mask(log)
+    if safe:
+        ledger.append_event("note", cid, {"text": f"[مشغّل] آخر سجلّ فشل: {safe[-FAIL_NOTE_CHARS:]}", "by": BY}, lpath)
+    return RunnerError(message)
+
+
 def failure_summary(log: str) -> str:
     """ما فشل لا ما نجح: سطورُ ✘ وFAILED وتفاصيلُها المزاحة؛ وإن غابت فآخرُ السجلّ."""
     keep, inside = [], False
     for ln in log.splitlines():
-        if ln.startswith(("✘", "FAILED")):
+        if ln.lstrip().startswith(("✘", "FAILED")):  # prepush يزيح التفاصيل بأربع مسافات
             inside = True
             keep.append(ln)
         elif inside and ln.startswith("    "):
@@ -437,7 +471,10 @@ class Effects:
         try:
             data = json.loads(p.stdout)
         except ValueError:
+            check_quota((p.stdout + p.stderr)[-500:])
             return Result(False, (p.stdout + p.stderr)[-500:])
+        if data.get("is_error"):
+            check_quota(str(data.get("result", "")))
         return Result(not data.get("is_error"), str(data.get("result", ""))[-500:], float(data.get("total_cost_usd") or 0),
                       int(data.get("num_turns") or 0), data)
 
@@ -455,9 +492,12 @@ class Effects:
         try:
             data = json.loads(p.stdout)
         except ValueError:
+            check_quota((p.stdout + p.stderr)[-300:])
             return Result(False, (p.stdout + p.stderr)[-300:]), []
+        if data.get("is_error"):
+            check_quota(str(data.get("result", "")))
         res = Result(not data.get("is_error"), str(data.get("result", ""))[-2000:], float(data.get("total_cost_usd") or 0),
-                     int(data.get("num_turns") or 0))
+                     int(data.get("num_turns") or 0), data)
         missing = parse_review(res.out)
         if missing is None:
             res.ok = False
@@ -573,7 +613,7 @@ class Effects:
         return code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
 
     def changed(self, tree: str) -> list[str]:
-        p = sh(["git", "status", "--porcelain"], tree)
+        p = sh(["git", "status", "--porcelain", "--untracked-files=all"], tree)  # بلاه يظهر المجلدُ الجديد `dir/` لا ملفّاته
         return [ln[3:].strip().strip('"') for ln in p.stdout.splitlines() if ln.strip()]
 
     def diff(self, tree: str) -> str:
@@ -758,7 +798,30 @@ def refer(card_id: str, reason: str, queue: Path | None = None) -> None:
 
 
 def record_run(card_id: str, label: str, res: Result, path=None) -> None:
-    ledger.append_event("note", card_id, {"text": f"[مشغّل] {label}: كلفة={res.cost:.4f}$ أدوار={res.turns}", "by": BY}, path)
+    """التوكنزُ حقلٌ بجانب النصّ للاطّلاع، فلا يتغيّر نصُّ الملاحظة الذي يقرؤه ميزان."""
+    usage = {k: v for k, v in (res.raw.get("usage") or {}).items() if isinstance(v, int)}
+    data = {"text": f"[مشغّل] {label}: كلفة={res.cost:.4f}$ أدوار={res.turns}", "by": BY}
+    ledger.append_event("note", card_id, {**data, "usage": usage} if usage else data, path)
+
+
+def daily_spend(lpath=None, now: datetime | None = None) -> float:
+    """كلفةُ اليوم بتوقيت UTC؛ و`ts` في الدفتر بتوقيت الدوحة فيُحوَّل قبل حدّ اليوم."""
+    today = (now or datetime.now(timezone.utc)).date()
+    total = 0.0
+    for e in ledger.load_events(lpath):
+        m = COST_NOTE.match(e["data"].get("text", "")) if e["kind"] == "note" else None
+        if m and datetime.fromisoformat(e["ts"]).astimezone(timezone.utc).date() == today:
+            total += float(m.group(1))
+    return total
+
+
+def report_budget(spent: float, queue: Path | None = None) -> str:
+    """سطرٌ واحدٌ في اليوم؛ والبطاقاتُ الجارية تُستأنف قبل هذا الحارس بلا كلفة نموذج."""
+    queue = queue or OWNER_QUEUE
+    mark = f"سقف يومي {datetime.now(timezone.utc):%Y-%m-%d}"
+    if not (queue.is_file() and mark in queue.read_text(encoding="utf-8")):
+        refer("RUNNER", f"{mark}: بلغت الكلفة {spent:.2f}$ من {DAILY_CAP_USD}$، ولا بطاقات جديدة حتى اليوم التالي بتوقيت UTC", queue)
+    return "waiting_budget"
 
 
 # ───────────────────────── الدورة ─────────────────────────
@@ -826,15 +889,21 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
     cid = card["id"]
     r = dict(card.get("runner_resume") or {})
     done, spent = int(r.get("ci_fixes") or 0), float(r.get("spent") or 0)
+    fp, head_now = sorted(failed), r.get("head", "")
+    if r.get("ci_fp") == fp and r.get("ci_fp_head") != head_now:  # دُفع إصلاحٌ وبقيت الفحوصُ نفسُها حمراء
+        save_fail_diff(cid, fx.branch_diff(tree))
+        raise RunnerError(f"الفشل نفسه مرتين: فحوصُ CI حمراء على الطلب {pr}: {'، '.join(failed)[:300]}")
     if done >= CI_FIX_MAX or spent >= TOTAL_CAP_USD:
         save_fail_diff(cid, fx.branch_diff(tree))
         raise RunnerError(f"فحوصُ CI حمراء على الطلب {pr}: {'، '.join(failed)[:300]}")
+    if daily_spend(lpath) >= DAILY_CAP_USD:
+        return "waiting_budget"
     model, _, budget = _tiers(cfg, card)[-1]
     rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
     log = fx.ci_log(tree, pr) or "، ".join(failed)
     res = fx.run_model(tree, brief(card, rules, log, fx.branch_diff(tree)), model, min(budget, TOTAL_CAP_USD - spent))
     record_run(cid, f"{model} إصلاح CI {done + 1}", res, lpath)
-    r.update(ci_fixes=done + 1, spent=spent + res.cost)
+    r.update(ci_fixes=done + 1, spent=spent + res.cost, ci_fp=fp, ci_fp_head=head_now)
     card["runner_resume"] = r
     ledger.append_event("update", cid, {"runner_resume": r}, lpath)
     if not res.ok:
@@ -961,7 +1030,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             att = fx.stage_attachments(card)
             card["attachments_path"] = att  # للموجز فقط؛ لا يُكتب في الدفتر
             rules = [Path(p).read_text(encoding="utf-8")[:3000] for p in card.get("rules") or [] if Path(p).is_file()]
-            prompt, ok, gaps, log = brief(card, rules), False, [], ""
+            prompt, ok, gaps, log, last_fp = brief(card, rules), False, [], "", ()
             tiers, rounds = _tiers(cfg, card), 0
             for tier_no, (model, max_turns, budget) in enumerate(tiers):
                 for attempt in range(MAX_ROUNDS if tier_no == len(tiers) - 1 else MAX_FIX_RUNS + 1):
@@ -978,6 +1047,14 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     advance_others(cid, cfg, fx, lpath)
                     fx.autoformat(tree)  # ما تصلحه الأداةُ لا يُعاد إلى النموذج
                     ok, log = fx.verify(tree)
+                    fp = () if ok else failure_fingerprint(log)
+                    if fp == ("ruff format --check",):  # تصلحه الأداة: بلا جولة نموذج
+                        fx.autoformat(tree)
+                        ok, log = fx.verify(tree)
+                        fp = () if ok else failure_fingerprint(log)
+                    if fp and fp == last_fp:
+                        raise give_up(cid, f"الفشل نفسه مرتين: {'، '.join(fp)[:300]}؛ كلفة={spent:.2f}$ من {TOTAL_CAP_USD}$", log, fx, tree, lpath)
+                    last_fp = fp
                     if ok and not fx.changed(tree):
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
                         break
@@ -985,6 +1062,8 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         miss = criteria_failures(card, fx.changed(tree))
                         if miss:  # الفحوص خضراء لكن معياراً آليّاً من الطلب لم يتحقّق: يُعاد إلى النموذج كإصلاح
                             ok, log = False, "\n".join(miss)
+                    if ok and norm_size(card.get("runner_size", "")) not in REVIEW_SIZES:
+                        break
                     if ok:
                         rev, missing = fx.review(tree, card, min(REVIEW_BUDGET_USD, TOTAL_CAP_USD - spent))
                         record_run(cid, "مراجعة القبول", rev, lpath)
@@ -1001,12 +1080,8 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     break
             if not ok:
                 lack = f"؛ معايير ناقصة: {'، '.join(gaps)[:200]}" if gaps else ""
-                save_fail_diff(cid, fx.review_diff(tree))
-                safe = mask(log)
-                if safe:
-                    ledger.append_event("note", cid, {"text": f"[مشغّل] آخر سجلّ فشل: {safe[-FAIL_NOTE_CHARS:]}", "by": BY}, lpath)
-                why = f"؛ آخر سبب: {failure_summary(safe)}" if safe else ""
-                raise RunnerError(f"فشل النموذج بعد السلّم الكامل (كلفة={spent:.2f}$ من {TOTAL_CAP_USD}$){lack}{why}")
+                why = f": {failure_summary(mask(log))}" if log else ""
+                raise give_up(cid, f"فشل النموذج بعد السلّم الكامل{why}؛ كلفة={spent:.2f}$ من {TOTAL_CAP_USD}${lack}", log, fx, tree, lpath)
             files = fx.changed(tree)
             if not files:
                 raise RunnerError("لم يُحدث النموذجُ أيَّ تغيير")
@@ -1031,6 +1106,11 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                 return fail(card, exc, fx, lpath)
         except RunnerError as exc:
             return fail(card, exc, fx, lpath)
+        except EnvDown:  # حصّةٌ نفدت أو بيئةٌ تعطّلت وسط البطاقة: لا تُحسب عليها
+            keep = bool(card.get("runner_resume"))  # طلبٌ مفتوح: يكمله الاستئناف على شجرته
+            if not keep:
+                ledger.append_event("state", cid, {"state": "routed", "by": BY, "held_by": ""}, lpath)
+            raise
         finally:
             fx.unstage_attachments(card.pop("attachments_path", "") or "")
             if tree and not keep:
@@ -1076,19 +1156,30 @@ def intake_requests(cfg: dict, lpath=None) -> int:
         return 0
     for f in sorted(REQUESTS.glob("*.md")):
         fields = {}
-        for ln in f.read_text(encoding="utf-8").splitlines():
+        try:
+            text = f.read_text(encoding="utf-8")
+        except FileNotFoundError:  # ألغاه المالك بعد glob
+            continue
+        for ln in text.splitlines():
             if ":" in ln:
                 k, v = ln.split(":", 1)
                 fields[k.strip()] = v.strip()
         missing = [k for k in ("العنوان", "المطلوب", "معايير القبول", "الوسم") if not fields.get(k)]
         if missing or not size_row(cfg, fields.get("الوسم", "")):
+            try:
+                f.rename(f.with_suffix(".rejected"))
+            except FileNotFoundError:
+                continue
             refer(f.stem, "رُفض الطلب " + f.name + " — " + (f"الحقل الناقص: {'، '.join(missing)}" if missing else "وسمٌ مجهول"))
-            f.rename(f.with_suffix(".rejected"))
+            continue
+        try:
+            f.rename(f.with_suffix(".done"))  # من ينقل أولاً يفوز: بعد هذا السطر فقط تُكتب البطاقة
+        except FileNotFoundError:
             continue
         cid = ledger.new_id(ledger.load_events(lpath))
         touches = [t.strip() for t in fields.get("يمسّ", "").split("،") if t.strip()]
         approval = "معاينة" if fields.get("الاعتماد") == "معاينة" or (not fields.get("الاعتماد") and fields["الوسم"] == "تصميم") else "مباشر"
-        extra = {"req_type": fields.get("النوع", ""), "criteria_ids": [int(x) for x in _split_list(fields, "معايير مرقّمة") if x.isdigit()],
+        extra = {"request_file": f.stem, "retry_of": fields.get("إعادة لـ", ""), "req_type": fields.get("النوع", ""), "criteria_ids": [int(x) for x in _split_list(fields, "معايير مرقّمة") if x.isdigit()],
                  "runner_checks": [c for c in _split_list(fields, "فحوص المشغّل") if c in CRITERIA_CHECKS],
                  "scope_page": fields.get("الصفحة", ""), "scope_files": _split_list(fields, "الملفات"), "out_of_scope": fields.get("خارج النطاق", ""),
                  "attachments_dir": fields.get("المرفقات", "") if Path(fields.get("المرفقات", "") or "/nonexistent").is_dir() else "",
@@ -1103,7 +1194,6 @@ def intake_requests(cfg: dict, lpath=None) -> int:
         if touches:  # الأمن والصلاحيات والأدوار والهجرات تردّها البوّابة: لا نبني ثم نُرَدّ
             ledger.append_event("update", cid, {"runner_hold": True}, lpath)
             refer(cid, "يمسّ " + "، ".join(touches) + " فلن يُدمج آليًّا — يلزم قرارك")
-        f.rename(f.with_suffix(".done"))
         n += 1
     return n
 
@@ -1125,15 +1215,18 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
         intake_requests(cfg, lpath)
         fx = fx or Effects(cfg)
         out = "idle"
-        for waiting in inflight(ledger.reduce_state(ledger.load_events(lpath))):
-            out = resume(waiting, cfg, fx, lpath)
-        items = ledger.reduce_state(ledger.load_events(lpath))
-        if len(inflight(items)) >= MAX_INFLIGHT:
-            return out
-        card = pick_card(items, cfg)
-        if not card:
-            return out
         try:
+            for waiting in inflight(ledger.reduce_state(ledger.load_events(lpath))):
+                out = resume(waiting, cfg, fx, lpath)
+            items = ledger.reduce_state(ledger.load_events(lpath))
+            if len(inflight(items)) >= MAX_INFLIGHT:
+                return out
+            spent = daily_spend(lpath)
+            if spent >= DAILY_CAP_USD:
+                return report_budget(spent)
+            card = pick_card(items, cfg)
+            if not card:
+                return out
             return process(card, cfg, fx, lpath)
         except EnvDown as exc:
             return report_env(str(exc))
