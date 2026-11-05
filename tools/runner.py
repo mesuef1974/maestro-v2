@@ -38,6 +38,10 @@ REQUESTS = ROOT / "requests"
 BY = "runner"
 MAX_FIX_RUNS = 2
 LOCK_STALE_S = 3 * 3600
+MAX_INFLIGHT = 2  # بطاقتان معاً في أقصى حدّ؛ الدمجُ والنشرُ واحدةٌ تلو الأخرى (deploy_busy)
+POLL_S = 60  # الدورةُ تُعاد كلَّ دقيقةٍ داخل تشغيل المهمّة المجدولة
+POLL_WINDOW_S = 270  # أقلُّ من 5 دقائق حتى ينتهي التشغيلُ قبل موعد المهمّة التالي
+POLL_AGAIN = ("idle", "published", "referred")  # مع waiting_*؛ غيرُها (env_down وlocked) يُنهي التشغيل
 IMAGE_DIR = HERE / "prepush_image"  # Dockerfile صورة الفحص؛ يبنيها المشغّل نفسُه حين تغيب
 DEFAULT_CONFIG = {
     "repo": "D:/shschool_mvp",
@@ -282,10 +286,22 @@ class Effects:
             raise RunnerError(f"بيئةٌ: تعذّر ruff format — {(p.stdout + p.stderr).strip()[-200:]}")
         return files
 
+    def quick_check(self, tree: str) -> tuple[bool, str]:
+        """فحصٌ بالثواني قبل الحاوية: أخطاءُ الصياغة والأسماءُ غير المعرَّفة فقط، لأنّ ruff الجهاز أحدثُ من نسخة CI
+        فلا تُطبَّق قواعدُ المستودع هنا. خروجٌ غيرُ 1 (أداةٌ غائبة أو علّةُ تشغيل) لا يُسقط شيئاً: الحكمُ لـprepush."""
+        files = [f for f in self.changed(tree) if f.endswith(".py") and (Path(tree) / f).is_file()]
+        if not files:
+            return True, ""
+        p = sh([sys.executable, "-m", "ruff", "check", "--isolated", "--select", "E9,F821,F822,F823", "--", *files], tree, 120)
+        return p.returncode != 1, (p.stdout + p.stderr)[-4000:]
+
     def verify(self, tree: str) -> tuple[bool, str]:
         """prepush داخل الحاوية كما تفعل المضخّة (صورةٌ وقاعدةُ اختبارٍ مؤقّتة)؛ علّةُ البيئة (docker/الصورة/غير مقيس) تُحال فوراً بلا تشغيل إصلاح."""
         import flow_pump as fp  # noqa: PLC0415
 
+        quick_ok, quick_log = self.quick_check(tree)
+        if not quick_ok:  # لا تُهدر سبعُ دقائق حاويةٍ على خطأٍ يُرى في ثوانٍ
+            return False, quick_log
         if not fp._image_present(fp._docker):
             raise RunnerError(f"بيئةٌ: صورة {fp.PREPUSH_IMAGE} غائبة أو docker متوقّف — لا يُصلحه النموذج")
         rc, gitdir = _git(tree, "rev-parse", "--absolute-git-dir")
@@ -508,7 +524,21 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         raise Transient("الرأسُ تغيّر بعد الفحص")
     if not fx.in_deploy_window(tree):  # الدمجُ نشرٌ فوريّ: خارجَ النافذة لا دمج، ويبقى الطلبُ مفتوحاً
         return "waiting_window"
+    if deploy_busy(card["id"], lpath):  # نشرٌ واحدٌ في الطريق فقط، فيبقى هدفُ التراجع عند فشل الصحّة واضحاً
+        return "waiting_turn"
     return merge_and_publish(card, fx, lpath, tree, pr, r_stage="merge")
+
+
+def deploy_busy(card_id: str, lpath=None) -> bool:
+    """هل بطاقةٌ أخرى دخلت الدمجَ ولم تُنشر بعد؟"""
+    items = ledger.reduce_state(ledger.load_events(lpath))
+    return any(i["id"] != card_id and (i.get("runner_resume") or {}).get("stage") in ("merged_wait", "deploy_wait") for i in items.values())
+
+
+def inflight(items: dict[str, dict]) -> list[dict]:
+    """بطاقاتٌ فتحت طلبها ولم تنتهِ، الأقدمُ أوّلاً فهي الأسبقُ إلى الدمج."""
+    cards = [i for i in items.values() if i.get("state") in ("in_progress", "merged") and i.get("runner_resume")]
+    return sorted(cards, key=lambda i: i.get("created", ""))
 
 
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
@@ -707,19 +737,33 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
         return "locked"
     try:
         intake_requests(cfg, lpath)
+        fx = fx or Effects(cfg)
+        out = "idle"
+        for waiting in inflight(ledger.reduce_state(ledger.load_events(lpath))):
+            out = resume(waiting, cfg, fx, lpath)
         items = ledger.reduce_state(ledger.load_events(lpath))
-        waiting = [i for i in items.values() if i.get("state") in ("in_progress", "merged") and i.get("runner_resume")]
-        if waiting:
-            return resume(waiting[0], cfg, fx or Effects(cfg), lpath)
+        if len(inflight(items)) >= MAX_INFLIGHT:
+            return out
         card = pick_card(items, cfg)
         if not card:
-            return "idle"
+            return out
         try:
-            return process(card, cfg, fx or Effects(cfg), lpath)
+            return process(card, cfg, fx, lpath)
         except EnvDown as exc:
             return report_env(str(exc))
     finally:
         release_lock(lock)
+
+
+def poll(cfg: dict, cycle=run_cycle, sleep=time.sleep, clock=time.monotonic) -> None:
+    """دوراتٌ كلَّ دقيقةٍ داخل تشغيل المهمّة: مهمّةُ الخمس دقائق تبقى كما هي ويقصر الانتظار بين مراحل البطاقة."""
+    end = clock() + POLL_WINDOW_S
+    while True:
+        out = cycle(cfg)
+        print(out)
+        if not (out in POLL_AGAIN or out.startswith("waiting")) or clock() + POLL_S > end:
+            return
+        sleep(POLL_S)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -731,7 +775,7 @@ def main(argv: list[str] | None = None) -> int:
         card = pick_card(ledger.reduce_state(ledger.load_events()), cfg)
         print(card["id"] if card else "idle")
         return 0
-    print(run_cycle(cfg))
+    poll(cfg)
     return 0
 
 

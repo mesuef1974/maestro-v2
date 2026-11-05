@@ -586,3 +586,73 @@ def test_gate_script_comes_from_main_not_from_the_branch(tmp_path):
     assert path != "scripts/auto_merge_gate.py" and Path(path).read_text(encoding="utf-8") == "print('main-gate')\n"
     cfg_none = {**CFG, "repo": str(repo), "base": "main~0:nonexistent"}
     assert runner.Effects(cfg_none).gate_script(str(tmp_path)) == "scripts/auto_merge_gate.py"
+
+
+def test_second_card_starts_while_first_waits_and_third_does_not(env):
+    lp, lock = env
+    for n in (901, 902, 903):
+        _card(lp, f"W-20261104-{n}")
+    fx = Fake()
+    fx.ci = "pending"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 1
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2  # السقف بطاقتان
+    assert _state(lp, "W-20261104-903")["state"] == "routed"
+
+
+def test_second_card_does_not_merge_until_first_is_published(env):
+    lp, lock = env
+    _card(lp, "W-20261104-901")
+    _card(lp, "W-20261104-902")
+    fx = Fake()
+    fx.prod = "old0000"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_deploy"  # الأولى دُمجت ولم تُنشر
+    fx.merged = False
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_turn" and not fx.merged
+    assert _state(lp, "W-20261104-902")["state"] == "in_progress"
+    fx.prod = "oid1"
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert _state(lp, "W-20261104-901")["state"] == "published" and _state(lp, "W-20261104-902")["state"] == "published"
+
+
+def _poll_with(outs):
+    t = {"now": 0.0}
+    calls = []
+
+    def cycle(cfg):
+        calls.append(1)
+        return outs[min(len(calls) - 1, len(outs) - 1)]
+
+    def sleep(s):
+        t["now"] += s
+
+    runner.poll(CFG, cycle, sleep, lambda: t["now"])
+    return len(calls)
+
+
+def test_poll_repeats_every_minute_and_ends_before_the_next_task():
+    assert _poll_with(["waiting_ci"]) == 5  # 0 و60 و120 و180 و240 ثانية
+
+
+def test_poll_stops_on_env_down_and_locked():
+    assert _poll_with(["idle", "env_down"]) == 2
+    assert _poll_with(["locked"]) == 1
+
+
+def test_quick_check_fails_only_on_exit_one(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("x = y", encoding="utf-8")
+    fx = runner.Effects(CFG)
+    monkeypatch.setattr(fx, "changed", lambda tree: ["a.py", "docs/b.md", "gone.py"])
+    seen = []
+
+    def fake(code):
+        def run(cmd, cwd=None, timeout=None):
+            seen.append(cmd)
+            return runner.subprocess.CompletedProcess(cmd, code, "F821 undefined", "")
+        return run
+
+    monkeypatch.setattr(runner, "sh", fake(1))
+    assert fx.quick_check(str(tmp_path)) == (False, "F821 undefined")
+    assert seen[0][-1] == "a.py" and "gone.py" not in seen[0]
+    monkeypatch.setattr(runner, "sh", fake(2))
+    assert fx.quick_check(str(tmp_path))[0] is True  # علّةُ أداة: الحكمُ لـprepush
