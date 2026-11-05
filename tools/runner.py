@@ -75,8 +75,25 @@ class EnvDown(Exception):
 REVIEW_MODEL = "sonnet"  # مراجعةُ القبول أقوى من منفّذ البطاقة الصغيرة، والأعلى لا يُستعمل آليّاً
 REVIEW_BUDGET_USD = 0.25
 REVIEW_DIFF_CHARS = 40000
-# الخفيفُ من حرّاس البنية يبقى محلّيّاً (25 و10 ثوانٍ، قياس 2026-11-05)؛ الوصوليّة والعيادة (2.5–4 دقائق كلٌّ) لـCI
-LIGHT_GUARDS = ("tests/test_layering.py", "tests/test_clock_pin_ratchet.py")
+# الخفيفُ يبقى محلّيّاً (قياس 2026-11-05، بلا قاعدة بيانات): الطبقات 25 ث والساعة 10 ث وحرّاسُ القراءة النصّيّة نحو ثانيةٍ لكلٍّ.
+# الوصوليّة والعيادة والحرّاسُ التي تبني قاعدةً (نحو دقيقتين كلٌّ) لـCI؛ وtest_numbering_guard خارجها لأنّه يحتاج .git.
+LIGHT_GUARDS = (
+    "tests/test_layering.py",
+    "tests/test_clock_pin_ratchet.py",
+    "tests/test_attendance_erasure_flag_guard.py",
+    "tests/test_attendance_ledger_readers_guard.py",
+    "tests/test_auditlog_object_repr_guard.py",
+    "tests/test_dashboard_no_tailwind_guard.py",
+    "tests/test_dashboard_rules_guard.py",
+    "tests/test_excel_writer_guard.py",
+    "tests/test_export_button_guard.py",
+    "tests/test_export_guards.py",
+    "tests/test_module_gates_match_guards.py",
+    "tests/test_no_points_deduction_guard.py",
+    "tests/test_parents_freeze_flag_guard.py",
+    "tests/test_personal_data_guard.py",
+    "tests/test_print_frame_guard.py",
+)
 FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير المالك
 FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
 TOTAL_CAP_USD = 3.0  # السقفُ الكلّيّ للبطاقة عبر كلّ التشغيلات (D-521م)
