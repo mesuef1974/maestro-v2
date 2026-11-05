@@ -627,6 +627,11 @@ class Effects:
     def commit_push(self, tree: str, branch: str, files: list[str], msg: str) -> str:
         sh(["git", "add", "--", *files], tree)
         p = sh(["git", "commit", "-m", msg], tree)
+        if p.returncode and BASELINE_UPDATED in p.stdout + p.stderr:
+            # تحريكُ الأسطر يغيّر أرقامَها في خطّ أساس الأسرار، فيوقف الخطّافُ الإيداعَ مرّةً (W-20261105-019).
+            # الإعادةُ تمرّ على الخطّاف نفسِه: سرٌّ جديدٌ يُسقطها ولا يدخل خطَّ الأساس.
+            sh(["git", "add", "--", SECRETS_BASELINE], tree)
+            p = sh(["git", "commit", "-m", msg], tree)
         if p.returncode:
             raise RunnerError(f"تعذّر الإيداع: {(p.stdout + p.stderr)[-200:]}")
         head = sh(["git", "rev-parse", "HEAD"], tree).stdout.strip()
@@ -1258,6 +1263,8 @@ VISIBLE_PATHS = ("templates/", "static/")  # ما يراه المستخدم: ي�
 GATE_SUMMARY = "ملخص بوابة الجودة"  # يحمرّ تبعاً لأيّ مهمّةٍ أُلغيت فلا يُعدّ فشلاً مستقلّاً معها
 DERIVED_CHECKS = (GATE_SUMMARY, "pytest — تغطية")  # نتيجةُ غيرهما: تسقط إذا سقط shard، ولا تقول شيئاً بنفسها
 AFFECTED_TOOL = "scripts/affected_tests.py"
+SECRETS_BASELINE = ".secrets.baseline"
+BASELINE_UPDATED = "The baseline file was updated"
 CI_RERUN_MAX = 1  # إعادةُ عطل البنية؛ بعدها علّةُ CI لا يصلحها النموذج
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
 MERGE_WAIT_S = 60 * 60

@@ -1793,3 +1793,35 @@ def test_a_deleted_test_is_not_handed_to_pytest(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_kept.py").write_text("", encoding="utf-8")
     assert runner.referenced_tests(str(tmp_path), ["tests/test_kept.py", "tests/test_gone.py"]) == ["tests/test_kept.py"]
+
+
+def _commits(monkeypatch, outs):
+    calls = []
+
+    def sh(cmd, *a, **k):
+        calls.append(cmd)
+        if cmd[:2] == ["git", "commit"]:
+            rc, out = outs.pop(0)
+            return runner.subprocess.CompletedProcess(cmd, rc, out, "")
+        return runner.subprocess.CompletedProcess(cmd, 0, "h1", "")
+    monkeypatch.setattr(runner, "sh", sh)
+    return calls
+
+
+def test_baseline_refresh_by_the_hook_is_added_and_committed_again(monkeypatch):
+    calls = _commits(monkeypatch, [(1, runner.BASELINE_UPDATED), (0, "")])
+    assert runner.Effects(CFG).commit_push(".", "b", ["a.yml"], "m") == "h1"
+    assert ["git", "add", "--", runner.SECRETS_BASELINE] in calls
+
+
+def test_a_new_secret_still_stops_the_commit_on_the_second_pass(monkeypatch):
+    _commits(monkeypatch, [(1, runner.BASELINE_UPDATED), (1, "Potential secrets")])
+    with pytest.raises(runner.RunnerError, match="تعذّر الإيداع"):
+        runner.Effects(CFG).commit_push(".", "b", ["a.yml"], "m")
+
+
+def test_any_other_hook_failure_does_not_touch_the_baseline(monkeypatch):
+    calls = _commits(monkeypatch, [(1, "ruff failed")])
+    with pytest.raises(runner.RunnerError):
+        runner.Effects(CFG).commit_push(".", "b", ["a.yml"], "m")
+    assert ["git", "add", "--", runner.SECRETS_BASELINE] not in calls
