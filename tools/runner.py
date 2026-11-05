@@ -183,6 +183,20 @@ def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
     return ready[0] if ready else None
 
 
+def failure_summary(log: str) -> str:
+    """ما فشل لا ما نجح: سطورُ ✘ وFAILED وتفاصيلُها المزاحة؛ وإن غابت فآخرُ السجلّ."""
+    keep, inside = [], False
+    for ln in log.splitlines():
+        if ln.startswith(("✘", "FAILED")):
+            inside = True
+            keep.append(ln)
+        elif inside and ln.startswith("    "):
+            keep.append(ln)
+        else:
+            inside = False
+    return " ".join(" ".join(keep or [log[-FAIL_REPORT_CHARS:]]).split())[:FAIL_REPORT_CHARS]
+
+
 def prepush_env(extra: list[str], tree: str = ".") -> list[str]:
     """متغيّراتُ حاوية prepush. حرّاسُ البنية 310 ثوانٍ من 378 (قياس 2026-11-05) وهي ضمن pytest الكامل في CI،
     فتُتخطّى هنا بقرار المالك بالمتغيّر الذي يعرفه prepush_check؛ والمعدَّلُ يُختبر بـPREPUSH_EXTRA_TESTS."""
@@ -416,7 +430,11 @@ class Effects:
         files = [f for f in self.changed(tree) if f.endswith(".py") and (Path(tree) / f).is_file()]
         if not files:
             return []
-        p = sh([sys.executable, "-m", "ruff", "format", "--", *files], tree, 300)
+        import flow_pump as fp  # noqa: PLC0415
+
+        # بنسخة الصورة (0.4.4 كـCI) لا نسخة الجهاز: تنسيقُ الجهاز الأحدث يرفضه فحصُ الحاوية فتفشل البطاقةُ كلُّها (W-20261105-010)
+        p = sh(["docker", "run", "--rm", "--network", "none", "-v", f"{tree}:/w", "-w", "/w", fp.PREPUSH_IMAGE,
+                "ruff", "format", "--no-cache", "--", *files], tree, 300)
         if p.returncode:
             raise RunnerError(f"بيئةٌ: تعذّر ruff format — {(p.stdout + p.stderr).strip()[-200:]}")
         return files
@@ -827,7 +845,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                 safe = ledger._PII.sub("[محجوب]", log)  # سجلُّ الفحص قد يحمل بياناتِ اختبارٍ تشبه الشخصيّة
                 if safe:
                     ledger.append_event("note", cid, {"text": f"[مشغّل] آخر سجلّ فشل: {safe[-FAIL_NOTE_CHARS:]}", "by": BY}, lpath)
-                why = f"؛ آخر سبب: {' '.join(safe[-FAIL_REPORT_CHARS:].split())}" if safe else ""
+                why = f"؛ آخر سبب: {failure_summary(safe)}" if safe else ""
                 raise RunnerError(f"فشل النموذج بعد السلّم الكامل (كلفة={spent:.2f}$ من {TOTAL_CAP_USD}$){lack}{why}")
             files = fx.changed(tree)
             if not files:

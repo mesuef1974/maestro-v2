@@ -501,14 +501,22 @@ def test_autoformat_runs_before_every_verify(env):
     assert fx.calls == ["autoformat", "verify", "autoformat", "verify"]
 
 
-def test_autoformat_formats_only_changed_python_files(tmp_path):
+def test_autoformat_uses_the_image_ruff_on_changed_python_only(tmp_path, monkeypatch):
     import subprocess
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / "a.py").write_text("x = [1,2,\n  3]\n", encoding="utf-8")
     (tmp_path / "b.txt").write_text("x = [1,2]\n", encoding="utf-8")
+    real, seen = runner.sh, []
+
+    def spy(cmd, cwd=None, timeout=None, *rest):
+        if cmd[0] == "docker":
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return real(cmd, cwd, timeout, *rest) if timeout else real(cmd, cwd)
+
+    monkeypatch.setattr(runner, "sh", spy)
     assert runner.Effects(CFG).autoformat(str(tmp_path)) == ["a.py"]
-    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "x = [1, 2, 3]\n"
-    assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "x = [1,2]\n"
+    assert seen[0][-1] == "a.py" and "--network" in seen[0] and "ruff" in seen[0]  # لا ruff الجهاز ولا b.txt
 
 
 def test_brief_tells_the_model_to_format():
@@ -909,4 +917,10 @@ def test_model_failure_without_verify_still_reports_its_reason(env):
 
     assert runner.run_cycle(CFG, ModelDown(), lp, lock) == "referred"
     assert "رصيد غير كاف" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_failure_summary_shows_what_failed_not_what_passed():
+    log = "✔ ruff check: نجح\n✘ ruff format --check: فشل\n    Would reformat: tests/a.py\n✔ mypy: نجح\nلا تدفع"
+    assert runner.failure_summary(log) == "✘ ruff format --check: فشل Would reformat: tests/a.py"
+    assert runner.failure_summary("بلا علامات") == "بلا علامات"
 
