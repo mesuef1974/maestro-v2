@@ -75,6 +75,8 @@ class EnvDown(Exception):
 REVIEW_MODEL = "sonnet"  # مراجعةُ القبول أقوى من منفّذ البطاقة الصغيرة، والأعلى لا يُستعمل آليّاً
 REVIEW_BUDGET_USD = 0.25
 REVIEW_DIFF_CHARS = 40000
+FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير المالك
+FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
 TOTAL_CAP_USD = 3.0  # السقفُ الكلّيّ للبطاقة عبر كلّ التشغيلات (D-521م)
 ESCALATE = {"haiku": "sonnet"}  # الأعلى لا يُستعمل آليّاً أبداً
 
@@ -784,12 +786,14 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             att = fx.stage_attachments(card)
             card["attachments_path"] = att  # للموجز فقط؛ لا يُكتب في الدفتر
             rules = [Path(p).read_text(encoding="utf-8")[:3000] for p in card.get("rules") or [] if Path(p).is_file()]
-            prompt, ok, gaps = brief(card, rules), False, []
+            prompt, ok, gaps, log = brief(card, rules), False, [], ""
             for model, max_turns, budget in _tiers(cfg, card):
                 for attempt in range(MAX_FIX_RUNS + 1):
                     res = fx.run_model(tree, prompt, model, min(budget, TOTAL_CAP_USD - spent))
                     record_run(cid, f"{model} تشغيل {attempt + 1}", res, lpath)
                     spent += res.cost
+                    if not res.ok:
+                        log = res.out or log
                     if not res.ok or spent >= TOTAL_CAP_USD:  # سقفُ الأدوار لا يحكم؛ الفحصُ والميزانيةُ هما الحماية
                         break  # فشل النموذج: التصعيد إلى الأعلى مسموحُ السلّم
                     advance_others(cid, cfg, fx, lpath)
@@ -817,7 +821,11 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     break
             if not ok:
                 lack = f"؛ معايير ناقصة: {'، '.join(gaps)[:200]}" if gaps else ""
-                raise RunnerError(f"فشل النموذج بعد السلّم الكامل (كلفة={spent:.2f}$ من {TOTAL_CAP_USD}$){lack}")
+                safe = ledger._PII.sub("[محجوب]", log)  # سجلُّ الفحص قد يحمل بياناتِ اختبارٍ تشبه الشخصيّة
+                if safe:
+                    ledger.append_event("note", cid, {"text": f"[مشغّل] آخر سجلّ فشل: {safe[-FAIL_NOTE_CHARS:]}", "by": BY}, lpath)
+                why = f"؛ آخر سبب: {' '.join(safe[-FAIL_REPORT_CHARS:].split())}" if safe else ""
+                raise RunnerError(f"فشل النموذج بعد السلّم الكامل (كلفة={spent:.2f}$ من {TOTAL_CAP_USD}$){lack}{why}")
             files = fx.changed(tree)
             if not files:
                 raise RunnerError("لم يُحدث النموذجُ أيَّ تغيير")
@@ -852,10 +860,10 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
 def fail(card: dict, exc: Exception, fx: Effects, lpath=None) -> str:
     """إغلاقٌ بتقرير: لا يُنتظر ردٌّ من المالك (D-521م)؛ سطرُ تقرير وملاحظةٌ في الدفتر وحالةُ closed."""
     cid = card["id"]
-    ledger.append_event("note", cid, {"text": f"[مشغّل] أُغلقت بتقرير: {exc}"[:400], "by": BY}, lpath)
+    ledger.append_event("note", cid, {"text": f"[مشغّل] أُغلقت بتقرير: {exc}"[:800], "by": BY}, lpath)
     ledger.append_event("update", cid, {"runner_hold": True, "runner_resume": None}, lpath)
     ledger.append_event("state", cid, {"state": "closed", "by": BY, "held_by": ""}, lpath)
-    refer(cid, str(exc)[:300])
+    refer(cid, str(exc)[:700])  # يتّسع للرأس والمعايير الناقصة وآخر سبب، فلا يُقصّ السببُ من التقرير
     return "referred"
 
 

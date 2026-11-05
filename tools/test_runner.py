@@ -859,3 +859,46 @@ def test_a_broken_follow_up_does_not_fail_the_running_card(env, monkeypatch):
     notes = [e for e in ledger.load_events(lp) if e["kind"] == "note" and "تعذّرت المتابعة" in e["data"].get("text", "")]
     assert len(notes) == 1
 
+
+class FailsWith(Fake):
+    def __init__(self, log):
+        super().__init__(verify=(False,))
+        self.log = log
+
+    def verify(self, tree):
+        return False, self.log
+
+
+def test_last_failure_reason_reaches_owner_queue_and_ledger(env):
+    lp, lock = env
+    _card(lp)
+    log = "ضجيج " * 900 + "FAILED tests/test_x.py السبب الأخير"
+    assert runner.run_cycle(CFG, FailsWith(log), lp, lock) == "referred"
+    queue = runner.OWNER_QUEUE.read_text(encoding="utf-8")
+    assert "فشل النموذج بعد السلّم الكامل" in queue and "السبب الأخير" in queue
+    assert len(queue.splitlines()) == 1
+    note = next(e["data"]["text"] for e in ledger.load_events(lp) if "آخر سجلّ فشل" in e["data"].get("text", ""))
+    assert note.endswith("السبب الأخير") and len(note) <= runner.FAIL_NOTE_CHARS + 40
+
+
+def test_failure_log_is_masked_and_newlines_stay_out_of_the_report(env):
+    lp, lock = env
+    _card(lp)
+    runner.run_cycle(CFG, FailsWith("سطر\nuser@example.com رقم 123456789"), lp, lock)
+    queue = runner.OWNER_QUEUE.read_text(encoding="utf-8")
+    assert "example.com" not in queue and "123456789" not in queue and "[محجوب]" in queue
+    assert len(queue.splitlines()) == 1
+    assert "example.com" not in lp.read_text(encoding="utf-8")
+
+
+def test_model_failure_without_verify_still_reports_its_reason(env):
+    lp, lock = env
+    _card(lp)
+
+    class ModelDown(Fake):
+        def run_model(self, tree, prompt, model, budget):
+            return runner.Result(False, "رصيد غير كاف")
+
+    assert runner.run_cycle(CFG, ModelDown(), lp, lock) == "referred"
+    assert "رصيد غير كاف" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
