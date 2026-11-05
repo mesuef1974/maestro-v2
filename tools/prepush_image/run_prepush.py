@@ -90,4 +90,8 @@ if rc == 0 and extra:
     print(f"[timing] extra_tests {time.monotonic() - extra_start:.0f}s", flush=True)
     if proc.returncode != 0:
         rc = 1
+if rc == 0:
+    import affected_guards  # noqa: E402 — بجوار هذا الملف (/runner)
+
+    rc = affected_guards.run(skip=extra)
 sys.exit(rc)

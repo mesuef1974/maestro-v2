@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.cookiejar
+import importlib.util
 import json
 import os
 import re
@@ -592,11 +593,12 @@ class Effects:
             raise RunnerError("بيئةٌ: تعذّرت قراءةُ مجلّد git للشجرة")
         name = f"runner-{Path(tree).name.lower()}"
         extra = referenced_tests(tree, self.changed(tree))
+        affected = self.affected_env(tree)
 
         def cmd_for(net: str) -> list[str]:
             cmd = fp.prepush_command(tree, gitdir, common, name, net, fp.root_prepush_scripts(tree))
             i = cmd.index(fp.PREPUSH_IMAGE)
-            cmd[i:i] = prepush_env(extra, tree)
+            cmd[i:i] = [*prepush_env(extra, tree), *affected]
             return cmd
 
         db_state = {"db": "none"}
@@ -750,26 +752,45 @@ class Effects:
     def close_pr(self, tree: str, pr: int) -> None:
         sh(["gh", "pr", "close", str(pr)], tree)
 
-    def cancelled_runs(self, tree: str, pr: int) -> dict[str, str]:
-        """الفحوصُ الملغاة (مهلةُ الوظيفة تظهر إلغاءً لا فشلاً) ورقمُ تشغيل كلٍّ منها."""
+    def infra_runs(self, tree: str, pr: int) -> dict[str, str]:
+        """وظائفُ عطل البنية ورقمُ تشغيل كلٍّ منها: الملغاةُ (مهلةُ الوظيفة تظهر إلغاءً) وما سقط في خطوةٍ من INFRA_STEPS."""
         p = sh(["gh", "pr", "checks", str(pr), "--json", "name,state,link"], tree)
         try:
             rows = json.loads(p.stdout or "[]")
         except ValueError:
             return {}
-        found = {}
+        found, failed = {}, {}
         for row in rows:
             m = re.search(r"/runs/(\d+)", row.get("link") or "")
-            if m and str(row.get("state", "")).upper() == "CANCELLED":
+            state = str(row.get("state", "")).upper()
+            if m and state == "CANCELLED":
                 found[row.get("name", "")] = m.group(1)
+            elif m and state == "FAILURE":
+                failed[row.get("name", "")] = m.group(1)
+        for run in sorted(set(failed.values())):
+            found.update({n: run for n in self.infra_jobs(tree, run) if failed.get(n) == run})
         return found
+
+    def infra_jobs(self, tree: str, run: str) -> list[str]:
+        """الحكمُ لـ`infra_failures` من main، فلا تتكرّر قائمةُ خطوات البنية هنا؛ وتعذُّرُها يترك الفشلَ فشلَ شيفرة."""
+        path = self.main_file("scripts/ci_needs_gate.py")
+        jobs = sh(["gh", "api", f"repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?per_page=100"], tree).stdout
+        if not path:
+            return []
+        try:
+            spec = importlib.util.spec_from_file_location("ci_needs_gate_main", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return list(module.infra_failures(jobs))
+        except (OSError, SyntaxError, AttributeError, ImportError):
+            return []
 
     def rerun_failed(self, tree: str, run_id: str) -> bool:
         return sh(["gh", "run", "rerun", run_id, "--failed"], tree).returncode == 0
 
     def failed_names(self, tree: str, pr: int) -> list[str]:
         out = sh(["gh", "pr", "checks", str(pr)], tree).stdout
-        return [ln.split("\t")[0] for ln in out.splitlines() if "\tfail" in ln]
+        return [ln.split("\t")[0] for ln in out.splitlines() if "\tfail" in ln or "\tcancel" in ln]
 
     def failed_checks(self, tree: str, pr: int) -> str:
         return "، ".join(self.failed_names(tree, pr))[:300] or "؟"
@@ -784,14 +805,30 @@ class Effects:
         وبطاقةٌ على فرعٍ أقدمَ من إصلاحٍ في البوّابة تُرفض بنسخةٍ عفا عنها main (#1338). الحَكَمُ main؛ وإن خلت منها
         البوّابةُ فنسخةُ الشجرة. تُكتب إلى ملفٍّ مؤقّتٍ خارجَ الشجرة وتعمل بـcwd الشجرة ليجد gh المستودع.
         """
+        return self.main_file("scripts/auto_merge_gate.py") or "scripts/auto_merge_gate.py"
+
+    def main_file(self, rel: str) -> str:
+        """نسخةُ main من ملفٍّ في مجلّدٍ لا يحوي غيرَ هذه النسخ (يُركَّب في الحاوية)، أو "" إن تعذّرت."""
         repo, base = self.cfg["repo"], self.cfg["base"]
         sh(["git", "fetch", "-q", "origin", "main"], repo)
-        p = sh(["git", "show", f"{base}:scripts/auto_merge_gate.py"], repo)
+        p = sh(["git", "show", f"{base}:{rel}"], repo)
         if p.returncode or not p.stdout.strip():
-            return "scripts/auto_merge_gate.py"
-        out = Path(tempfile.gettempdir()) / f"auto_merge_gate_main_{os.getpid()}.py"
+            return ""
+        out = Path(tempfile.gettempdir()) / f"runner_main_{os.getpid()}" / Path(rel).name
+        out.parent.mkdir(exist_ok=True)
         out.write_text(p.stdout, encoding="utf-8")
         return str(out)
+
+    def affected_env(self, tree: str) -> list[str]:
+        """متغيّراتُ حرّاس المعدَّل. الملفّاتُ من الفرع والشجرة معًا: تعديلُ النموذج غيرُ مودَعٍ وقت الفحص."""
+        tool = self.main_file(AFFECTED_TOOL)
+        rc, out = _git(tree, "diff", "-z", "--name-only", "--diff-filter=ACMRD", f"{self.cfg['base']}...HEAD")
+        files = list(dict.fromkeys([*(out.split("\0") if not rc else []), *self.changed(tree)]))
+        files = [f for f in files if f]
+        if not tool or not files:
+            return []
+        return ["-v", f"{Path(tool).parent}:/affected:ro", "-e", f"PREPUSH_AFFECTED=/affected/{Path(tool).name}",
+                "-e", "PREPUSH_AFFECTED_FILES=" + "\n".join(files)]
 
     def gate_reasons(self, tree: str, pr: int) -> str:
         p = sh([sys.executable, self.gate_script(tree), str(pr)], tree)
@@ -943,11 +980,11 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     # بطاقةُ المعاينة: فحصُ «سطر الاعتماد» أحمرُ بطبيعته حتى يُكتب السطرُ بعد اعتماد المالك، فليس فشلاً. قبل 2026-11-05 كان
     # يُعدّ فشلَ CI فتُغلق كلُّ بطاقة معاينةٍ بتقرير قبل أن تبلغ المعاينةَ أصلاً (W-20261105-001 مرّتين).
     real = [f for f in failed if not (preview and APPROVAL_CHECK in f)]
-    cancelled = fx.cancelled_runs(tree, pr) if st != "green" else {}
-    if cancelled:  # الإلغاءُ لا يقول شيئاً عن الشيفرة، فلا يذهب إلى النموذج (#1347)
-        real = [f for f in real if f not in cancelled and f != GATE_SUMMARY]
+    infra = fx.infra_runs(tree, pr) if st != "green" else {}
+    if infra:  # عطلُ البنية لا يقول شيئاً عن الشيفرة، وما يُشتقّ منه يسقط معه (#1347، #1348)
+        real = [f for f in real if f not in infra and f not in DERIVED_CHECKS]
         if not real:
-            return rerun_cancelled(card, fx, lpath, tree, pr, cancelled)
+            return rerun_infra(card, fx, lpath, tree, pr, infra)
     if real:
         return repair_ci(card, cfg, fx, lpath, tree, branch, pr, real)
     if preview:
@@ -962,6 +999,8 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
             return "waiting_ci"
         if failed:  # السطرُ مكتوبٌ وفحصُه لم يُعَد بعد
             return "waiting_ci"
+    if card.get("merge_hold") and card.get("merge_released") != head:
+        return hold_for_owner(card, lpath, pr, head)
     if not fx.gate_allows(tree, pr):
         raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {fx.gate_reasons(tree, pr)}")
     if fx.remote_head(branch) != head:
@@ -1124,19 +1163,37 @@ def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None) -> tup
     return True, f"{cid}: سُجّل الاعتماد على الرأس {head[:8]}، ويدمجها المشغّل في دورته التالية"
 
 
-def rerun_cancelled(card: dict, fx: Effects, lpath, tree: str, pr: int, cancelled: dict[str, str]) -> str:
-    """يعيد المهامَّ الملغاة بلا نموذج وبلا كلفة؛ وتكرارُها بعد CI_RERUN_MAX يُغلق بتقريرٍ يسمّيها علّةَ CI."""
+def hold_for_owner(card: dict, lpath, pr: int, head: str) -> str:
+    """بطاقةٌ تمسّ حكمَ البوّابة يقرأ المالكُ فرقَها قبل الدمج؛ والفتحُ مربوطٌ بالرأس فلا يرثه دفعٌ بعده."""
+    if card.get("merge_hold_told") != head:
+        ledger.append_event("update", card["id"], {"merge_hold_told": head}, lpath)
+        refer(card["id"], f"الطلب {pr} أخضر وموقوف حتى تقرأ فرقه. للدمج: python tools/runner.py --release {card['id']}")
+    return "waiting_owner"
+
+
+def release_merge(cid: str, lpath=None) -> tuple[bool, str]:
+    card = ledger.reduce_state(ledger.load_events(lpath)).get(cid)
+    head = ((card or {}).get("runner_resume") or {}).get("head", "")
+    if not head or not card.get("merge_hold"):
+        return False, f"{cid}: ليست موقوفة قبل الدمج"
+    ledger.append_event("note", cid, {"text": f"[مالك] قرأ الفرق وفتح الدمج على الرأس {head[:8]}", "by": "owner"}, lpath)
+    ledger.append_event("update", cid, {"merge_released": head}, lpath)
+    return True, f"{cid}: فُتح الدمج على الرأس {head[:8]}"
+
+
+def rerun_infra(card: dict, fx: Effects, lpath, tree: str, pr: int, infra: dict[str, str]) -> str:
+    """يعيد وظائفَ عطل البنية بلا نموذج وبلا كلفة؛ وتكرارُه بعد CI_RERUN_MAX يُغلق بتقريرٍ يسمّيها."""
     cid = card["id"]
-    names = "، ".join(cancelled)[:300]
+    names = "، ".join(infra)[:300]
     r = dict(card.get("runner_resume") or {})
     done = int(r.get("ci_reruns") or 0)
     if done >= CI_RERUN_MAX:
-        raise RunnerError(f"أُلغيت فحوصُ CI {done + 1} مرات على الطلب {pr}: {names} — علّةُ CI لا خلل في التعديل")
+        raise RunnerError(f"عطل بنية في CI على الطلب {pr} بعد {done} إعادة: {names}")
     r["ci_reruns"] = done + 1  # يُحسب ولو فشل الأمر، فلا تدور البطاقةُ بلا نهاية
     card["runner_resume"] = r
     ledger.append_event("update", cid, {"runner_resume": r}, lpath)
-    ok = [fx.rerun_failed(tree, run) for run in sorted(set(cancelled.values()))]
-    ledger.append_event("note", cid, {"text": f"[مشغّل] إعادة فحوص ملغاة {done + 1}: {names}{'' if all(ok) else ' (تعذّرت الإعادة)'}", "by": BY}, lpath)
+    ok = [fx.rerun_failed(tree, run) for run in sorted(set(infra.values()))]
+    ledger.append_event("note", cid, {"text": f"[مشغّل] إعادة بعد عطل بنية {done + 1}: {names}{'' if all(ok) else ' (تعذّرت الإعادة)'}"[:300], "by": BY}, lpath)
     return "waiting_ci"
 
 
@@ -1165,11 +1222,13 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
     if not res.ok:
         return "waiting_ci"
     fx.autoformat(tree)
-    ok, vlog = fx.verify(tree)
     files = fx.changed(tree)
-    if not ok or not files:
-        why = failure_summary(mask(vlog)) if not ok else "لم يُحدث النموذجُ أيَّ تغيير"
-        ledger.append_event("note", cid, {"text": f"[مشغّل] إصلاح CI {done + 1} فشل: {why}", "by": BY}, lpath)
+    if not files:  # الجولةُ التالية بالسجلّ نفسه لن تأتي بجديد (#1348)
+        save_fail_diff(cid, fx.branch_diff(tree))
+        raise RunnerError(f"لم يُحدث النموذجُ أيَّ تغيير في إصلاح CI على الطلب {pr}: {'، '.join(failed)[:300]}")
+    ok, vlog = fx.verify(tree)
+    if not ok:
+        ledger.append_event("note", cid, {"text": f"[مشغّل] إصلاح CI {done + 1} فشل: {failure_summary(mask(vlog))}", "by": BY}, lpath)
         return "waiting_ci"
     require_preview(card, files, lpath)
     head = fx.commit_push(tree, branch, files, f"{cid}: إصلاح فحوص CI")
@@ -1220,7 +1279,9 @@ GIT_BASH = r"C:\Program Files\Git\bin\bash.exe"  # لا `bash` مجرّدة: ق�
 AUTO_CRITERIA = ("make prepush", "اختبار جديد", "لا يتغيّر ملف", "لا هجرات")  # تفحصها الأدوات لا عينُ المالك
 VISIBLE_PATHS = ("templates/", "static/")  # ما يراه المستخدم: يعاينه المالك أيًّا كان نوع الطلب (قراره 2026-11-05)
 GATE_SUMMARY = "ملخص بوابة الجودة"  # يحمرّ تبعاً لأيّ مهمّةٍ أُلغيت فلا يُعدّ فشلاً مستقلّاً معها
-CI_RERUN_MAX = 2  # إعادةُ المهامّ الملغاة؛ بعدها علّةُ CI لا يصلحها النموذج
+DERIVED_CHECKS = (GATE_SUMMARY, "pytest — تغطية")  # نتيجةُ غيرهما: تسقط إذا سقط shard، ولا تقول شيئاً بنفسها
+AFFECTED_TOOL = "scripts/affected_tests.py"
+CI_RERUN_MAX = 1  # إعادةُ عطل البنية؛ بعدها علّةُ CI لا يصلحها النموذج
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
 MERGE_WAIT_S = 60 * 60
 DEPLOY_WAIT_S = 120 * 60
@@ -1543,11 +1604,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reject", metavar="CARD", help="رفض المعاينة، ومعه --reason")
     ap.add_argument("--reason", default="")
     ap.add_argument("--reseed", metavar="CARD", help="إعادة بذر المعاينة بعد فشلها")
+    ap.add_argument("--release", metavar="CARD", help="فتح دمج بطاقة موقوفة بعد قراءة فرقها")
     a = ap.parse_args(argv)
     if a.reseed:
         ledger.append_event("update", a.reseed, {"preview_seed_failed": ""})
         print(f"{a.reseed}: يُعاد البذر في الدورة التالية")
         return 0
+    if a.release:
+        ok, text = release_merge(a.release)
+        print(text)
+        return 0 if ok else 1
     if a.approve or a.reject:
         ok, text = decide_preview(a.approve or a.reject, bool(a.approve), a.reason)
         print(text)

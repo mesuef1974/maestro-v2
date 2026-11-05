@@ -52,7 +52,7 @@ class Fake(runner.Effects):
     def checks_state(self, tree, pr): return self.ci
     def failed_checks(self, tree, pr): return "Ruff"
     def failed_names(self, tree, pr): return list(getattr(self, "failed", ["Ruff"])) if self.ci == "red" else []
-    def cancelled_runs(self, tree, pr): return dict(getattr(self, "cancelled", {})) if self.ci == "red" else {}
+    def infra_runs(self, tree, pr): return dict(getattr(self, "cancelled", {})) if self.ci == "red" else {}
     def seed_script(self, tree, prompt):
         self.seed_prompts = getattr(self, "seed_prompts", []) + [prompt]
         q = getattr(self, "seed_q", ["```python" + chr(10) + "print(1)" + chr(10) + "```"])
@@ -1361,7 +1361,7 @@ def test_repeated_cancel_closes_as_a_ci_fault_with_no_model_run(env):
     for _ in range(runner.CI_RERUN_MAX):
         assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 1 and not fx.merged
-    assert "علّةُ CI" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+    assert "عطل بنية في CI" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
 
 
 def test_a_real_failure_beside_a_cancel_goes_to_the_model(env):
@@ -1372,12 +1372,12 @@ def test_a_real_failure_beside_a_cancel_goes_to_the_model(env):
     assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2 and not getattr(fx, "reruns", [])
 
 
-def test_cancelled_runs_reads_state_and_run_id(monkeypatch):
+def test_infra_runs_reads_state_and_run_id(monkeypatch):
     rows = [{"name": "e2e", "state": "CANCELLED", "link": "https://x/actions/runs/42/job/7"},
             {"name": "ok", "state": "SUCCESS", "link": "https://x/actions/runs/43/job/8"}]
     out = runner.json.dumps(rows)
     monkeypatch.setattr(runner, "sh", lambda cmd, *a: runner.subprocess.CompletedProcess(cmd, 0, out, ""))
-    assert runner.Effects(CFG).cancelled_runs(".", 1) == {"e2e": "42"}
+    assert runner.Effects(CFG).infra_runs(".", 1) == {"e2e": "42"}
 
 
 def test_checks_state_treats_cancel_as_red(monkeypatch):
@@ -1672,3 +1672,115 @@ def test_ci_repair_that_touches_a_template_requires_preview(env):
     runner.run_cycle(CFG, fx, lp, lock)
     assert _state(lp)["approval"] == "معاينة"
 
+
+def test_coverage_fallen_with_a_cancelled_shard_is_rerun_not_sent_to_the_model(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.ci, fx.failed, fx.cancelled = "red", ["pytest shard 3/8", "pytest — تغطية", runner.GATE_SUMMARY], {"pytest shard 3/8": "42"}
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.reruns == ["42"] and fx.runs == 1
+
+
+def _checks(monkeypatch, rows):
+    out = runner.json.dumps(rows)
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a: runner.subprocess.CompletedProcess(cmd, 0, out, ""))
+
+
+def test_failure_in_an_infra_step_counts_as_infra(monkeypatch):
+    _checks(monkeypatch, [{"name": "shard", "state": "FAILURE", "link": "https://x/actions/runs/42/job/7"},
+                          {"name": "ruff", "state": "FAILURE", "link": "https://x/actions/runs/42/job/8"}])
+    fx = runner.Effects(CFG)
+    monkeypatch.setattr(fx, "infra_jobs", lambda tree, run: ["shard"])
+    assert fx.infra_runs(".", 1) == {"shard": "42"}
+
+
+def test_infra_jobs_uses_the_main_copy_of_the_judge(monkeypatch, tmp_path):
+    f = tmp_path / "ci_needs_gate.py"
+    f.write_text("def infra_failures(jobs):" + chr(10) + "    return [jobs]" + chr(10), encoding="utf-8")
+    _checks(monkeypatch, [])
+    fx = runner.Effects(CFG)
+    monkeypatch.setattr(fx, "main_file", lambda rel: str(f))
+    assert fx.infra_jobs(".", "42") == ["[]"]
+
+
+def test_unreadable_judge_leaves_the_failure_as_code(monkeypatch):
+    _checks(monkeypatch, [])
+    fx = runner.Effects(CFG)
+    monkeypatch.setattr(fx, "main_file", lambda rel: "")
+    assert fx.infra_jobs(".", "42") == []
+
+
+def test_failed_names_include_cancelled(monkeypatch):
+    t = chr(9)
+    out = chr(10).join([f"shard{t}cancel{t}5m", f"cov{t}fail{t}1m", f"ok{t}pass{t}1m"])
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a: runner.subprocess.CompletedProcess(cmd, 0, out, ""))
+    assert runner.Effects(CFG).failed_names(".", 1) == ["shard", "cov"]
+
+
+def test_no_change_in_ci_repair_closes_at_once_with_no_second_round(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.ci = "red"
+    runner.run_cycle(CFG, fx, lp, lock)
+    fx.files, runs = [], fx.runs
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == runs + 1 and not fx.merged
+    assert "لم يُحدث" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_affected_env_joins_branch_and_uncommitted_files(monkeypatch, tmp_path):
+    fx = runner.Effects(CFG)
+    tool = tmp_path / "affected_tests.py"
+    monkeypatch.setattr(fx, "main_file", lambda rel: str(tool))
+    monkeypatch.setattr(fx, "changed", lambda tree: ["b.py", "c.py"])
+    monkeypatch.setattr(runner, "_git", lambda tree, *a: (0, "a.py" + chr(0) + "b.py"))
+    env = fx.affected_env(".")
+    assert env[1] == f"{tmp_path}:/affected:ro" and "PREPUSH_AFFECTED=/affected/affected_tests.py" in env
+    assert env[-1] == "PREPUSH_AFFECTED_FILES=" + chr(10).join(["a.py", "b.py", "c.py"])
+
+
+def test_affected_env_is_empty_without_the_main_tool(monkeypatch):
+    fx = runner.Effects(CFG)
+    monkeypatch.setattr(fx, "main_file", lambda rel: "")
+    monkeypatch.setattr(fx, "changed", lambda tree: ["b.py"])
+    monkeypatch.setattr(runner, "_git", lambda tree, *a: (0, ""))
+    assert fx.affected_env(".") == []
+
+
+def _held(lp, lock, fx):
+    _card(lp, merge_hold=True)
+    return runner.run_cycle(CFG, fx, lp, lock)
+
+
+def test_held_card_waits_green_and_reports_once(env):
+    lp, lock = env
+    fx = Fake()
+    assert _held(lp, lock, fx) == "waiting_owner" and not fx.merged
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_owner"
+    assert runner.OWNER_QUEUE.read_text(encoding="utf-8").count("--release") == 1
+
+
+def test_release_merges_the_head_that_was_read(env):
+    lp, lock = env
+    fx = Fake()
+    _held(lp, lock, fx)
+    assert runner.release_merge("W-20261104-901", lp)[0]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.merged
+
+
+def test_release_does_not_cover_a_later_head(env):
+    lp, lock = env
+    fx = Fake()
+    _held(lp, lock, fx)
+    runner.release_merge("W-20261104-901", lp)
+    card = _state(lp)
+    r = {**card["runner_resume"], "head": "other"}
+    ledger.append_event("update", card["id"], {"runner_resume": r}, lp)
+    assert runner.hold_for_owner(_state(lp), lp, 1, "other") == "waiting_owner"
+    assert _state(lp)["merge_released"] != "other"
+
+
+def test_release_refuses_a_card_that_is_not_held(env):
+    lp, lock = env
+    _card(lp)
+    assert not runner.release_merge("W-20261104-901", lp)[0]
