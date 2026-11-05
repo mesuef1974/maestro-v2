@@ -821,6 +821,14 @@ def test_prepush_env_skips_structure_and_keeps_extra_tests():
     assert runner.prepush_env(["tests/a.py", "tests/b.py"])[-1] == "PREPUSH_EXTRA_TESTS=tests/a.py tests/b.py"
 
 
+def test_prepush_env_adds_light_guards_once_when_present(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_layering.py").write_text("", encoding="utf-8")
+    out = runner.prepush_env(["tests/test_layering.py", "tests/a.py"], str(tmp_path))
+    assert out[-1] == "PREPUSH_EXTRA_TESTS=tests/test_layering.py tests/a.py"  # بلا تكرار، والغائبُ لا يُضاف
+    assert runner.prepush_env([], str(tmp_path))[-1] == "PREPUSH_EXTRA_TESTS=tests/test_layering.py"
+
+
 class TurnsGreen(Fake):
     def run_model(self, tree, prompt, model, budget):
         self.ci = "green"

@@ -75,6 +75,8 @@ class EnvDown(Exception):
 REVIEW_MODEL = "sonnet"  # مراجعةُ القبول أقوى من منفّذ البطاقة الصغيرة، والأعلى لا يُستعمل آليّاً
 REVIEW_BUDGET_USD = 0.25
 REVIEW_DIFF_CHARS = 40000
+# الخفيفُ من حرّاس البنية يبقى محلّيّاً (25 و10 ثوانٍ، قياس 2026-11-05)؛ الوصوليّة والعيادة (2.5–4 دقائق كلٌّ) لـCI
+LIGHT_GUARDS = ("tests/test_layering.py", "tests/test_clock_pin_ratchet.py")
 FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير المالك
 FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
 TOTAL_CAP_USD = 3.0  # السقفُ الكلّيّ للبطاقة عبر كلّ التشغيلات (D-521م)
@@ -181,11 +183,12 @@ def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
     return ready[0] if ready else None
 
 
-def prepush_env(extra: list[str]) -> list[str]:
+def prepush_env(extra: list[str], tree: str = ".") -> list[str]:
     """متغيّراتُ حاوية prepush. حرّاسُ البنية 310 ثوانٍ من 378 (قياس 2026-11-05) وهي ضمن pytest الكامل في CI،
     فتُتخطّى هنا بقرار المالك بالمتغيّر الذي يعرفه prepush_check؛ والمعدَّلُ يُختبر بـPREPUSH_EXTRA_TESTS."""
+    tests = list(dict.fromkeys([*extra, *(g for g in LIGHT_GUARDS if (Path(tree) / g).is_file())]))
     env = ["-e", "PREPUSH_STRUCTURE_NESTED=1"]
-    return env + (["-e", "PREPUSH_EXTRA_TESTS=" + " ".join(extra)] if extra else [])
+    return env + (["-e", "PREPUSH_EXTRA_TESTS=" + " ".join(tests)] if tests else [])
 
 
 def review_prompt(card: dict, files: list[str], diff: str) -> str:
@@ -446,7 +449,7 @@ class Effects:
         def cmd_for(net: str) -> list[str]:
             cmd = fp.prepush_command(tree, gitdir, common, name, net, fp.root_prepush_scripts(tree))
             i = cmd.index(fp.PREPUSH_IMAGE)
-            cmd[i:i] = prepush_env(extra)
+            cmd[i:i] = prepush_env(extra, tree)
             return cmd
 
         started = time.monotonic()
