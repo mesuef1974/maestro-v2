@@ -33,6 +33,7 @@ import ledger  # noqa: E402
 
 CONFIG = ROOT / "runner_config.json"
 LOCK = ROOT / "ledger" / "runner.lock"
+TIMING_LOG = ROOT / "ledger" / "prepush_timing.log"
 OWNER_QUEUE = ROOT / "owner_queue.md"
 REQUESTS = ROOT / "requests"
 BY = "runner"
@@ -318,7 +319,9 @@ class Effects:
                 cmd[i:i] = ["-e", "PREPUSH_EXTRA_TESTS=" + " ".join(extra)]
             return cmd
 
+        started = time.monotonic()
         code, log = fp.run_with_db(fp._docker, cmd_for, name, 3600)
+        note_timing(name, time.monotonic() - started, log)
         if "غير مقيس" in log or "تعذّر إنشاء" in log or "تعذّر" in log[:200]:
             raise RunnerError("بيئةٌ: الفحص غير مقيس في الحاوية — " + log.strip()[-160:])
         return code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
@@ -472,6 +475,13 @@ class Effects:
 
 
 # ───────────────────────── الإحالة والتسجيل ─────────────────────────
+def note_timing(name: str, total: float, log: str, path: Path | None = None) -> None:
+    """زمنُ prepush الكلّيّ وأزمنةُ فحوصه: قياسٌ يُبنى عليه أيُّ تقليصٍ لاحق."""
+    rows = [ln.strip() for ln in log.splitlines() if ln.startswith("[timing]")]
+    with (path or TIMING_LOG).open("a", encoding="utf-8") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M')} {name} total={total:.0f}s {' | '.join(r[9:] for r in rows)}\n")
+
+
 def refer(card_id: str, reason: str, queue: Path | None = None) -> None:
     queue = queue or OWNER_QUEUE
     line = f"- {time.strftime('%Y-%m-%d %H:%M')} {card_id}: {reason}\n"

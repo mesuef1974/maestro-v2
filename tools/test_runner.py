@@ -656,3 +656,11 @@ def test_quick_check_fails_only_on_exit_one(tmp_path, monkeypatch):
     assert seen[0][-1] == "a.py" and "gone.py" not in seen[0]
     monkeypatch.setattr(runner, "sh", fake(2))
     assert fx.quick_check(str(tmp_path))[0] is True  # علّةُ أداة: الحكمُ لـprepush
+
+
+def test_note_timing_keeps_only_timing_lines(tmp_path):
+    out = tmp_path / "t.log"
+    runner.note_timing("runner-x", 400.4, "ضجيج\n[timing] ruff 3s\n[timing] check_types 120s\n", out)
+    line = out.read_text(encoding="utf-8")
+    assert "total=400s" in line and "ruff 3s | check_types 120s" in line and "ضجيج" not in line
+
