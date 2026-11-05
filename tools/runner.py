@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -34,6 +35,9 @@ import ledger  # noqa: E402
 CONFIG = ROOT / "runner_config.json"
 LOCK = ROOT / "ledger" / "runner.lock"
 TIMING_LOG = ROOT / "ledger" / "prepush_timing.log"
+DB_CACHE = ROOT / "ledger"  # ledger/prepush_testdb_<بصمة>.dump، خارج git
+TEST_DB = "test_db"
+DB_CACHE_KEEP = 5
 OWNER_QUEUE = ROOT / "owner_queue.md"
 REQUESTS = ROOT / "requests"
 BY = "runner"
@@ -214,11 +218,44 @@ def failure_summary(log: str) -> str:
     return " ".join(" ".join(keep or [log[-FAIL_REPORT_CHARS:]]).split())[:FAIL_REPORT_CHARS]
 
 
+def migrations_key(tree: str, db_image: str) -> str:
+    """بصمةُ كلِّ ملفّات الهجرات وصورةِ القاعدة: أيُّ هجرةٍ جديدةٍ أو معدَّلةٍ تعني قاعدةً جديدة."""
+    h = hashlib.sha256(db_image.encode("utf-8"))
+    for f in sorted(Path(tree).rglob("migrations/*.py")):
+        h.update(f.relative_to(tree).as_posix().encode("utf-8"))
+        h.update(f.read_bytes())
+    return h.hexdigest()[:16]
+
+
+def prepare_test_db(docker, pg: str, key: str, build_cmd: list[str], cache: Path | None = None) -> str:
+    """يستعيد قاعدةَ الاختبار المحفوظة (نحو ثانية بدل دقيقتين، قياس 2026-11-05) أو يبنيها نظيفةً ويحفظها.
+
+    hit استُعيدت، built بُنيت وحُفظت، none لا قاعدة جاهزة فيبنيها pytest كالمعتاد. كلُّ فشلٍ يعود إلى none، والحكمُ النهائيّ
+    لـCI على قاعدةٍ نظيفة."""
+    cache = cache or DB_CACHE
+    dump = cache / f"prepush_testdb_{key}.dump"
+    psql = ["exec", pg, "psql", "-U", "test_user", "-d", "postgres", "-c"]
+    if dump.is_file():
+        if (docker(["cp", str(dump), f"{pg}:/tmp/t.dump"], 120)[0] == 0
+                and docker([*psql, f"create database {TEST_DB}"], 60)[0] == 0
+                and docker(["exec", pg, "pg_restore", "-U", "test_user", "-d", TEST_DB, "-j", "4", "/tmp/t.dump"], 120)[0] == 0):
+            return "hit"
+        docker([*psql, f"drop database if exists {TEST_DB}"], 60)
+        dump.unlink(missing_ok=True)
+    if docker(build_cmd, 900)[0] == 0 and docker(["exec", pg, "pg_dump", "-U", "test_user", "-Fc", "-f", "/tmp/t.dump", TEST_DB], 120)[0] == 0 \
+            and docker(["cp", f"{pg}:/tmp/t.dump", str(dump)], 120)[0] == 0:
+        for old in sorted(cache.glob("prepush_testdb_*.dump"), key=lambda f: f.stat().st_mtime)[:-DB_CACHE_KEEP]:
+            old.unlink(missing_ok=True)
+        return "built"
+    docker([*psql, f"drop database if exists {TEST_DB}"], 60)
+    return "none"
+
+
 def prepush_env(extra: list[str], tree: str = ".") -> list[str]:
     """متغيّراتُ حاوية prepush. حرّاسُ البنية 310 ثوانٍ من 378 (قياس 2026-11-05) وهي ضمن pytest الكامل في CI،
     فتُتخطّى هنا بقرار المالك بالمتغيّر الذي يعرفه prepush_check؛ والمعدَّلُ يُختبر بـPREPUSH_EXTRA_TESTS."""
     tests = list(dict.fromkeys([*extra, *(g for g in LIGHT_GUARDS if (Path(tree) / g).is_file())]))
-    env = ["-e", "PREPUSH_STRUCTURE_NESTED=1"]
+    env = ["-e", "PREPUSH_STRUCTURE_NESTED=1", "-e", "PREPUSH_REUSE_DB=1"]
     return env + (["-e", "PREPUSH_EXTRA_TESTS=" + " ".join(tests)] if tests else [])
 
 
@@ -487,9 +524,19 @@ class Effects:
             cmd[i:i] = prepush_env(extra, tree)
             return cmd
 
+        db_state = {"db": "none"}
+
+        def ready(net: str, pg: str) -> None:
+            cmd = cmd_for(net)
+            cmd[cmd.index(fp.PREPUSH_IMAGE):cmd.index(fp.PREPUSH_IMAGE)] = ["-e", "PREPUSH_BUILD_DB=1"]
+            try:
+                db_state["db"] = prepare_test_db(fp._docker, pg, migrations_key(tree, fp.PREPUSH_DB_IMAGE), cmd)
+            except OSError as exc:  # القاعدةُ المحفوظة تسريعٌ لا شرط
+                db_state["db"] = f"error:{exc}"[:60]
+
         started = time.monotonic()
-        code, log = fp.run_with_db(fp._docker, cmd_for, name, 3600)
-        note_timing(name, time.monotonic() - started, log)
+        code, log = fp.run_with_db(fp._docker, cmd_for, name, 3600, ready=ready)
+        note_timing(f"{name} db={db_state['db']}", time.monotonic() - started, log)
         if "غير مقيس" in log or "تعذّر إنشاء" in log or "تعذّر" in log[:200]:
             raise RunnerError("بيئةٌ: الفحص غير مقيس في الحاوية — " + log.strip()[-160:])
         return code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]

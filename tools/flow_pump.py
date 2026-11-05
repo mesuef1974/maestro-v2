@@ -574,7 +574,7 @@ def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str, ro
     ]
 
 
-def run_with_db(docker, cmd_for, name: str, timeout: int, sleep=None) -> tuple[int, str]:
+def run_with_db(docker, cmd_for, name: str, timeout: int, sleep=None, ready=None) -> tuple[int, str]:
     """يشغّل أمرَ الفحص بقاعدة postgres:16 مؤقّتةٍ (كـCI) على شبكةٍ داخليّة بلا خروج؛ ويزيلهما دائماً. تعذّرُ القاعدة = فشلٌ لا نجاح."""
     import time  # noqa: PLC0415
 
@@ -596,6 +596,8 @@ def run_with_db(docker, cmd_for, name: str, timeout: int, sleep=None) -> tuple[i
             sleep(1.5)
         else:
             return 1, "قاعدةُ الاختبار لم تجهز"
+        if ready:  # تجهيزُ القاعدة قبل الفحص (المشغّل: استعادةُ قاعدةٍ محفوظة)
+            ready(net, pg)
         return docker(cmd_for(net), timeout)
     finally:
         docker(["rm", "-f", pg], 60)

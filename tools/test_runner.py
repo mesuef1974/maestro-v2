@@ -1,4 +1,5 @@
 """اختباراتُ المشغّل (D-519م): الاختيار، القفل، الإصلاح مرّتين، الإحالة، التراجع الآليّ، وتسجيل الكلفة."""
+import os
 import sys
 from pathlib import Path
 
@@ -825,7 +826,7 @@ def test_attachment_copied_into_the_diff_stops_the_card(tmp_path):
 
 
 def test_prepush_env_skips_structure_and_keeps_extra_tests():
-    assert runner.prepush_env([]) == ["-e", "PREPUSH_STRUCTURE_NESTED=1"]
+    assert runner.prepush_env([]) == ["-e", "PREPUSH_STRUCTURE_NESTED=1", "-e", "PREPUSH_REUSE_DB=1"]
     assert runner.prepush_env(["tests/a.py", "tests/b.py"])[-1] == "PREPUSH_EXTRA_TESTS=tests/a.py tests/b.py"
 
 
@@ -924,3 +925,67 @@ def test_failure_summary_shows_what_failed_not_what_passed():
     assert runner.failure_summary(log) == "✘ ruff format --check: فشل Would reformat: tests/a.py"
     assert runner.failure_summary("بلا علامات") == "بلا علامات"
 
+
+class Dock:
+    """دوكر مزيّف: يسجّل الأوامر ويفشل فيما يحوي fail، و`cp` إلى المضيف ينشئ الملف."""
+
+    def __init__(self, fail=()):
+        self.cmds, self.fail = [], fail
+
+    def __call__(self, cmd, timeout):
+        self.cmds.append(cmd)
+        if any(f in " ".join(cmd) for f in self.fail):
+            return 1, ""
+        if cmd[0] == "cp" and cmd[1].startswith("pg:"):
+            Path(cmd[2]).write_bytes(b"dump")
+        return 0, ""
+
+    def ran(self, word):
+        return any(word in " ".join(c) for c in self.cmds)
+
+
+def test_cached_db_is_restored_without_building(tmp_path):
+    (tmp_path / "prepush_testdb_k.dump").write_bytes(b"d")
+    dock = Dock()
+    assert runner.prepare_test_db(dock, "pg", "k", ["build"], tmp_path) == "hit"
+    assert dock.ran("pg_restore") and not dock.ran("build")
+
+
+def test_missing_cache_builds_and_saves(tmp_path):
+    dock = Dock()
+    assert runner.prepare_test_db(dock, "pg", "k", ["build"], tmp_path) == "built"
+    assert (tmp_path / "prepush_testdb_k.dump").is_file()
+
+
+def test_bad_cache_is_dropped_and_rebuilt(tmp_path):
+    (tmp_path / "prepush_testdb_k.dump").write_bytes(b"d")
+    dock = Dock(fail=("pg_restore",))
+    assert runner.prepare_test_db(dock, "pg", "k", ["build"], tmp_path) == "built"
+    assert dock.ran("drop database") and dock.ran("build")
+
+
+def test_failed_build_leaves_no_partial_db(tmp_path):
+    dock = Dock(fail=("build",))
+    assert runner.prepare_test_db(dock, "pg", "k", ["build"], tmp_path) == "none"
+    assert dock.ran("drop database") and not (tmp_path / "prepush_testdb_k.dump").exists()
+
+
+def test_old_dumps_are_pruned(tmp_path):
+    for n in range(runner.DB_CACHE_KEEP + 2):
+        f = tmp_path / f"prepush_testdb_{n}.dump"
+        f.write_bytes(b"d")
+        os.utime(f, (n, n))
+    runner.prepare_test_db(Dock(), "pg", "new", ["build"], tmp_path)
+    assert len(list(tmp_path.glob("*.dump"))) == runner.DB_CACHE_KEEP
+
+
+def test_any_migration_change_changes_the_key(tmp_path):
+    m = tmp_path / "app" / "migrations"
+    m.mkdir(parents=True)
+    (m / "0001_a.py").write_text("a", encoding="utf-8")
+    first = runner.migrations_key(str(tmp_path), "pg16")
+    assert first == runner.migrations_key(str(tmp_path), "pg16")
+    (m / "0002_b.py").write_text("b", encoding="utf-8")
+    second = runner.migrations_key(str(tmp_path), "pg16")
+    (m / "0001_a.py").write_text("changed", encoding="utf-8")
+    assert len({first, second, runner.migrations_key(str(tmp_path), "pg16"), runner.migrations_key(str(tmp_path), "pg17")}) == 4
