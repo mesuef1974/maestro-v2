@@ -1636,3 +1636,39 @@ def test_seed_body_takes_the_fenced_script_only():
     assert runner.seed_body("شرح" + chr(10) + "```python" + chr(10) + "a=1" + chr(10) + "```") == "a=1" + chr(10)
     assert runner.seed_body("a=1") == ""
 
+
+def test_visible_change_turns_a_direct_card_into_preview_before_the_pr(env):
+    lp, lock = env
+    _card(lp, approval="مباشر", source="owner")
+    bodies = []
+
+    class Opens(Fake):
+        def open_pr(self, tree, branch, title, body):
+            bodies.append(body)
+            return super().open_pr(tree, branch, title, body)
+
+    fx = Opens(files=("templates/quality/a.html", "tests/test_a.py"))
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_preview" and not fx.merged
+    assert _state(lp)["approval"] == "معاينة"
+    assert bodies and not any("مباشرةً" in b for b in bodies)
+
+
+def test_static_change_counts_and_backend_change_stays_direct(env):
+    lp, lock = env
+    card = {"id": "W-1", "approval": "مباشر"}
+    runner.require_preview(card, ["core/a.py", "tests/test_a.py"], lp)
+    assert card["approval"] == "مباشر"
+    runner.require_preview(card, ["static/css/a.css"], lp)
+    assert card["approval"] == "معاينة"
+
+
+def test_ci_repair_that_touches_a_template_requires_preview(env):
+    lp, lock = env
+    _card(lp, approval="مباشر", source="owner")
+    fx = Fake()
+    fx.ci = "red"
+    runner.run_cycle(CFG, fx, lp, lock)
+    fx.files = ["templates/a.html"]
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert _state(lp)["approval"] == "معاينة"
+

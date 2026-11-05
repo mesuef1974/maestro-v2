@@ -973,6 +973,15 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     return merge_and_publish(card, fx, lpath, tree, pr, r_stage="merge")
 
 
+def require_preview(card: dict, files: list[str], lpath=None) -> None:
+    """الأثرُ يحسم الاعتماد لا نوعُ الطلب: «خلل» في PDF مرّ بوضع «مباشر» لأنّ افتراضَ النوع طُبّق (#1349)."""
+    seen = [f for f in files if f.replace("\\", "/").startswith(VISIBLE_PATHS)]
+    if seen and card.get("approval") != "معاينة":
+        card["approval"] = "معاينة"
+        ledger.append_event("update", card["id"], {"approval": "معاينة"}, lpath)
+        ledger.append_event("note", card["id"], {"text": f"[مشغّل] صار الاعتماد معاينة: يغيّر {'، '.join(seen[:3])}"[:300], "by": BY}, lpath)
+
+
 def same_tree(a: str, b: str) -> bool:
     return a.replace("\\", "/").rstrip("/").lower() == b.replace("\\", "/").rstrip("/").lower()
 
@@ -1162,6 +1171,7 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
         why = failure_summary(mask(vlog)) if not ok else "لم يُحدث النموذجُ أيَّ تغيير"
         ledger.append_event("note", cid, {"text": f"[مشغّل] إصلاح CI {done + 1} فشل: {why}", "by": BY}, lpath)
         return "waiting_ci"
+    require_preview(card, files, lpath)
     head = fx.commit_push(tree, branch, files, f"{cid}: إصلاح فحوص CI")
     r["head"] = head
     card["runner_resume"] = r
@@ -1208,6 +1218,7 @@ PREVIEW_ACCOUNT = ("99900001", "المدير")  # تُغيّره البطاقة 
 PREVIEW_PASSWORD_AT = "tools/.preview_accounts.env"
 GIT_BASH = r"C:\Program Files\Git\bin\bash.exe"  # لا `bash` مجرّدة: قد تكون System32 (WSL)
 AUTO_CRITERIA = ("make prepush", "اختبار جديد", "لا يتغيّر ملف", "لا هجرات")  # تفحصها الأدوات لا عينُ المالك
+VISIBLE_PATHS = ("templates/", "static/")  # ما يراه المستخدم: يعاينه المالك أيًّا كان نوع الطلب (قراره 2026-11-05)
 GATE_SUMMARY = "ملخص بوابة الجودة"  # يحمرّ تبعاً لأيّ مهمّةٍ أُلغيت فلا يُعدّ فشلاً مستقلّاً معها
 CI_RERUN_MAX = 2  # إعادةُ المهامّ الملغاة؛ بعدها علّةُ CI لا يصلحها النموذج
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
@@ -1360,6 +1371,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             files = fx.changed(tree)
             if not files:
                 raise RunnerError("لم يُحدث النموذجُ أيَّ تغيير")
+            require_preview(card, files, lpath)  # قبل وصف الطلب، فلا يُكتب فيه سطرُ «مباشرةً»
             leak = attachment_leak(tree, files, card)
             if leak:
                 raise RunnerError("المرفقات لا تُودَع: نُسخ مرفقٌ إلى " + "، ".join(leak[:5]))
