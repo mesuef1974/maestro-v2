@@ -123,7 +123,7 @@ FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير الما�
 FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
 DAILY_CAP_USD = 10.0  # قرار المالك 2026-11-05، يُراجَع بعد أسبوع: تقديرٌ يحمي حصّة الاشتراك لا فاتورة API
 REVIEW_SIZES = ("متوسط", "كبير", "تصميم")  # البطاقةُ الصغيرة تكفيها الفحوص
-COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول): كلفة=([\d.]+)\$")
+COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول|بذر المعاينة): كلفة=([\d.]+)\$")
 # نصوصُ claude 2.1.312 المستخرجة من البرنامج نفسه؛ لا يدخل فيها «Budget limit» فهو سقفُ التشغيل --max-budget-usd
 USAGE_LIMIT = re.compile(r"usage limit reached|you(?:'|’)ve hit your|out of extra usage", re.I)
 TOTAL_CAP_USD = 3.0  # السقفُ الكلّيّ للبطاقة عبر كلّ التشغيلات (D-521م)
@@ -710,6 +710,31 @@ class Effects:
         script = self._preview_script().as_posix()
         sh([GIT_BASH, "-c", f'PREVIEW_PIN_MAX_MINUTES={PREVIEW_PIN_MINUTES} bash "{script}" pin "{tree}" {PREVIEW_PIN_MINUTES}'], ".", 120)
 
+    def seed_script(self, tree: str, prompt: str) -> Result:
+        """النموذجُ يقرأ الشجرة ولا يكتب فيها ولا يشغّل شيئاً: يعيد نصَّ السكربت فقط."""
+        cmd = ["claude", "-p", "--model", SEED_MODEL, "--output-format", "json", "--max-budget-usd", str(SEED_BUDGET_USD),
+               "--tools", "Read,Grep,Glob", *self.isolation_args(tree)]
+        p = sh(cmd, tree, 900, prompt)
+        try:
+            data = json.loads(p.stdout)
+        except ValueError:
+            check_quota((p.stdout + p.stderr)[-300:])
+            return Result(False, (p.stdout + p.stderr)[-300:])
+        if data.get("is_error"):
+            check_quota(str(data.get("result", "")))
+        return Result(not data.get("is_error"), str(data.get("result", "")), float(data.get("total_cost_usd") or 0), int(data.get("num_turns") or 0), data)
+
+    def run_seed(self, script: str) -> tuple[bool, str]:
+        """داخل حاوية الويب المعروضة؛ الحارسُ يوقفه إن لم تكن قاعدةَ تثبيت."""
+        st = self.preview_slot()
+        p = sh(["docker", "exec", "-i", f"schoolos-main-preview-{st}-web-1", "python", "manage.py", "shell"], ".", 300, SEED_GUARD + script)
+        return p.returncode == 0 and "Traceback" not in p.stderr, (p.stdout + p.stderr)[-3000:]
+
+    def preview_slot(self) -> str:
+        p = sh(["git", "-C", str(self._preview_script().parent.parent), "rev-parse", "--absolute-git-dir"], ".")
+        f = Path(p.stdout.strip()) / "preview-state" / "slot"
+        return f.read_text(encoding="utf-8").strip() if f.is_file() else "a"
+
     def close_pr(self, tree: str, pr: int) -> None:
         sh(["gh", "pr", "close", str(pr)], tree)
 
@@ -950,9 +975,48 @@ def preview_info(card: dict, pr: int) -> dict:
             "password_at": PREVIEW_PASSWORD_AT, "checks": checks or [card.get("problem", "")], "pr": pr}
 
 
+def seed_prompt(card: dict, info: dict, error: str = "") -> str:
+    """ما يُعايَن يحتاج بيانات: قاعدةُ 8500 خلت من الزيارات يوم #1347 فلم يكن هناك ما يُفتح."""
+    again = f"\n\nالمحاولة السابقة فشلت بهذا الخطأ، فأصلحها:\n{error[-1500:]}" if error else ""
+    return "\n\n".join([
+        "اكتب سكربت Python يُشغَّل في `manage.py shell` ليبذر أقلّ بيانات تجعل هذا التعديل قابلاً للمعاينة بالعين. اقرأ النماذج والعروض في هذه الشجرة ولا تعدّل شيئاً.",
+        f"التعديل: {card.get('problem', '')}\n{card.get('impact', '')}",
+        "ما سيتحقق منه المالك:\n" + "\n".join(f"- {c}" for c in info["checks"]),
+        f"الدخول بحساب رقمه الوظيفي {info['account']} ({info['role']}): اربط البيانات بمدرسته ونطاقه حتى يراها، وابحث عنه بالرقم الوظيفي.",
+        "الشروط: يعيد استعمال ما وُجد فلا يكرّر عند إعادة التشغيل؛ أسماءُ كلّ سجلّ جديد تبدأ بـ«[وهميّ]» ولا أسماء أشخاص حقيقيين؛ يمسّ البيانات لا البنية؛ لا شبكة ولا ملفّات.",
+        "آخر سطر يطبعه السكربت بالضبط: PREVIEW_PATH=/المسار/الذي/يفتحه/المالك (السجلّ المبذور نفسه، لا صفحة عامّة).",
+        "أجب بكتلة ```python واحدة لا غير." + again,
+    ])
+
+
+def seed_body(text: str) -> str:
+    """أوّلُ كتلة python؛ جوابٌ بلاها ليس سكربتاً."""
+    m = re.search(r"```(?:python|py)?\s*\n(.*?)```", text, re.S)
+    return m.group(1) if m else ""
+
+
+def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, str]:
+    """يعيد (المسار، سبب الفشل). فشلُ البذر لا يوقف المعاينة، بل يُقال في الرسالة صراحة."""
+    cid, tree, error = card["id"], card["runner_resume"]["tree"], ""
+    for _ in range(SEED_ATTEMPTS):
+        res = fx.seed_script(tree, seed_prompt(card, info, error))
+        record_run(cid, "بذر المعاينة", res, lpath)
+        body = seed_body(res.out) if res.ok else ""
+        if not body:
+            error = res.out[-300:] or "لا سكربت في الجواب"
+            continue
+        ok, log = fx.run_seed(body)
+        path = re.findall(r"PREVIEW_PATH=(/\S*)", log)
+        if ok and path:
+            return path[-1], ""
+        error = log or "لم يطبع السكربت PREVIEW_PATH"
+    return "", failure_summary(mask(error))[:200]
+
+
 def preview_message(card: dict, info: dict) -> str:
     cid = card["id"]
-    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — افتح {info['url']} — ادخل بالرقم {info['account']} ({info['role']})، "
+    data = f"لم تُبذر بيانات: {info['seed_error']} — " if info.get("seed_error") else ""
+    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — {data}افتح {info['url']} — ادخل بالرقم {info['account']} ({info['role']})، "
             f"وكلمة المرور في {info['password_at']} — تحقّق من: {'؛ '.join(str(c) for c in info['checks'])[:300]} — "
             f"للاعتماد: python tools/runner.py --approve {cid} — للرفض: python tools/runner.py --reject {cid} --reason \"السبب\" — الطلب #{info['pr']}")
 
@@ -969,6 +1033,8 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
         return "waiting_preview"
     if card.get("preview_seen") != head:
         info = preview_info(card, pr)
+        path, info["seed_error"] = seed_preview(card, info, fx, lpath)
+        info["url"] = PREVIEW_URL + path if path else info["url"]
         ledger.append_event("update", cid, {"preview_seen": head, "preview_info": info}, lpath)
         refer(cid, preview_message(card, info))
     return "waiting_preview"
@@ -1086,6 +1152,14 @@ def inflight(items: dict[str, dict]) -> list[dict]:
 PREVIEW_URL = "http://localhost:8500"
 PREVIEW_PIN_MINUTES = 720  # تبقى حتى قرار المالك لا 30 دقيقة (قراره 2026-11-05): قد يقرأ الرسالة بعد ساعات
 PREVIEW_HB_STALE_S = 600
+SEED_MODEL = "sonnet"
+SEED_BUDGET_USD = 0.40
+SEED_ATTEMPTS = 2
+SEED_GUARD = (  # يسبق كلَّ سكربت: قاعدةُ التثبيت المنسوخة وحدها، لا قاعدة المعاينة المشتركة ولا غيرها
+    "from django.db import connection as _c\n"
+    "import re as _re\n"
+    "assert _re.fullmatch(r'.+_preview', _c.settings_dict['NAME']), 'ليست قاعدة تثبيت'\n"
+)
 PREVIEW_ACCOUNT = ("99900001", "المدير")  # تُغيّره البطاقة بحقل preview_account
 PREVIEW_PASSWORD_AT = "tools/.preview_accounts.env"
 GIT_BASH = r"C:\Program Files\Git\bin\bash.exe"  # لا `bash` مجرّدة: قد تكون System32 (WSL)
@@ -1161,6 +1235,10 @@ def _tiers(cfg: dict, card: dict) -> list[tuple[str, int, float]]:
 def advance_others(cid: str, cfg: dict, fx: Effects, lpath=None) -> None:
     """بين جولات البطاقة تتقدّم البطاقةُ الأخرى في الدورة نفسها وتحت القفل نفسِه، فلا ينتظر تسجيلُ نشرها أو دمجُها جولاتٍ طويلة.
     عطلُ المتابعة يُكتب ملاحظةً على صاحبها ولا يُسقط البطاقةَ الجارية."""
+    try:
+        preview_cycle(cfg, fx, lpath)  # جولةُ بطاقةٍ قد تطول فلا تتعطّل دورةُ 8500 معها
+    except (OSError, ValueError) as exc:
+        print(f"preview: {exc}"[:200])
     for other in inflight(ledger.reduce_state(ledger.load_events(lpath))):
         if other["id"] == cid:
             continue

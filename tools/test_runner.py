@@ -53,6 +53,15 @@ class Fake(runner.Effects):
     def failed_checks(self, tree, pr): return "Ruff"
     def failed_names(self, tree, pr): return list(getattr(self, "failed", ["Ruff"])) if self.ci == "red" else []
     def cancelled_runs(self, tree, pr): return dict(getattr(self, "cancelled", {})) if self.ci == "red" else {}
+    def seed_script(self, tree, prompt):
+        self.seed_prompts = getattr(self, "seed_prompts", []) + [prompt]
+        q = getattr(self, "seed_q", ["```python" + chr(10) + "print(1)" + chr(10) + "```"])
+        return runner.Result(True, q.pop(0) if len(q) > 1 else q[0], 0.05, 3)
+
+    def run_seed(self, script):
+        q = getattr(self, "seed_runs", [(True, "PREVIEW_PATH=/quality/observations/1/pdf/view/")])
+        return q.pop(0) if len(q) > 1 else q[0]
+
     def preview_tick(self): self.ticks = getattr(self, "ticks", 0) + 1
     def preview_release(self): self.releases = getattr(self, "releases", 0) + 1
     def close_pr(self, tree, pr): self.closed_pr = pr
@@ -1509,4 +1518,62 @@ def test_pin_command_lifts_the_limit_for_this_call_only(monkeypatch):
     monkeypatch.setattr(runner, "sh", lambda cmd, *a: seen.append(cmd) or runner.subprocess.CompletedProcess(cmd, 0, "", ""))
     runner.Effects({**CFG, "repo": "R"}).preview_pin("C:/wt/t")
     assert seen[0][0] == runner.GIT_BASH and "PREVIEW_PIN_MAX_MINUTES=720" in seen[0][2] and 'pin "C:/wt/t" 720' in seen[0][2]
+
+
+def _shown(lp, lock, fx):
+    _preview_card(lp)
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    return _queue()
+
+
+def test_seeded_record_link_reaches_the_owner_and_its_cost_counts(env):
+    lp, lock = env
+    line = _shown(lp, lock, Fake())
+    assert "http://localhost:8500/quality/observations/1/pdf/view/" in line and "لم تُبذر" not in line
+    assert _state(lp)["preview_info"]["seed_error"] == ""
+    assert runner.COST_NOTE.match("[مشغّل] بذر المعاينة: كلفة=0.0500$ أدوار=3")
+
+
+def test_seed_error_goes_back_to_the_model_once(env):
+    lp, lock = env
+    fx = Fake()
+    fx.seed_runs = [(False, "NameError: Foo"), (True, "PREVIEW_PATH=/x/")]
+    assert "http://localhost:8500/x/" in _shown(lp, lock, fx)
+    assert len(fx.seed_prompts) == 2 and "NameError: Foo" in fx.seed_prompts[1]
+
+
+def test_failed_seed_is_said_plainly_and_does_not_block_the_preview(env):
+    lp, lock = env
+    fx = Fake()
+    fx.seed_runs = [(False, "NameError: Foo")]
+    line = _shown(lp, lock, fx)
+    assert "لم تُبذر بيانات" in line and "http://localhost:8500/quality/" in line and "جاهز للمعاينة" in line
+    assert len(fx.seed_prompts) == runner.SEED_ATTEMPTS
+
+
+def test_no_script_in_the_answer_never_runs_anything(env):
+    lp, lock = env
+    fx = Fake()
+    fx.seed_q = ["لا أستطيع"]
+    fx.run_seed = lambda s: pytest.fail("شُغّل نصٌّ ليس سكربتاً")
+    assert "لم تُبذر بيانات" in _shown(lp, lock, fx)
+
+
+def test_seed_guard_runs_first_and_accepts_only_a_pin_copy(monkeypatch):
+    seen = []
+    monkeypatch.setattr(runner, "sh", lambda cmd, cwd, t=0, stdin=None: seen.append((cmd, stdin)) or runner.subprocess.CompletedProcess(cmd, 0, "", ""))
+    fx = runner.Effects({**CFG, "repo": "R"})
+    monkeypatch.setattr(fx, "preview_slot", lambda: "b")
+    fx.run_seed("print(1)")
+    cmd, stdin = seen[0]
+    assert "schoolos-main-preview-b-web-1" in cmd and stdin.startswith(runner.SEED_GUARD) and stdin.endswith("print(1)")
+    pattern = runner.re.search(r"r'(.+?)'", runner.SEED_GUARD).group(1)
+    assert runner.re.fullmatch(pattern, "ss_runner_w_preview") and not runner.re.fullmatch(pattern, "ss_main_preview_g73")
+    assert not runner.re.fullmatch(pattern, "shschool_db")
+
+
+def test_seed_body_takes_the_fenced_script_only():
+    assert runner.seed_body("شرح" + chr(10) + "```python" + chr(10) + "a=1" + chr(10) + "```") == "a=1" + chr(10)
+    assert runner.seed_body("a=1") == ""
 
