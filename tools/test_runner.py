@@ -36,7 +36,12 @@ class Fake(runner.Effects):
     def run_model(self, tree, prompt, model, budget):
         self.runs += 1
         return runner.Result(True, "تم", self.cost, self.turns)
-    def verify(self, tree): return (self.verify_q.pop(0) if len(self.verify_q) > 1 else self.verify_q[0]), "سجلّ الفشل"
+    def verify(self, tree):
+        self.calls = getattr(self, "calls", []) + ["verify"]
+        return (self.verify_q.pop(0) if len(self.verify_q) > 1 else self.verify_q[0]), "سجلّ الفشل"
+    def autoformat(self, tree):
+        self.calls = getattr(self, "calls", []) + ["autoformat"]
+        return []
     def changed(self, tree): return self.files
     def diff(self, tree): return "diff"
     def commit_push(self, tree, branch, files, msg): return "h1"
@@ -417,3 +422,85 @@ def test_direct_card_has_no_preview_stop(env):
     lp, lock = env
     _card(lp, approval="مباشر", source="owner")
     assert not runner.run_cycle(CFG, Fake(), lp, lock).startswith("waiting_preview")
+
+
+# ───────────────────────── علاجُ 2026-11-05: الصورةُ تُبنى والتنسيقُ قبل الفحص ─────────────────────────
+class _Docker:
+    """محاكي docker: يسجّل الأوامر؛ `up` للمحرّك و`image` للصورة، والبناءُ يجعل الصورةَ موجودة."""
+
+    def __init__(self, up=True, image=False, build_rc=0):
+        self.up, self.image, self.build_rc, self.cmds = up, image, build_rc, []
+
+    def __call__(self, cmd, timeout):
+        self.cmds.append(cmd[0])
+        if cmd[0] == "info":
+            return (0 if self.up else 1), ""
+        if cmd[0] == "image":
+            return (0 if self.image else 1), ""
+        if cmd[0] == "build":
+            if self.build_rc == 0:
+                self.image = True
+            return self.build_rc, "سجلّ البناء"
+        raise AssertionError(cmd)
+
+
+@pytest.fixture()
+def image_dir(tmp_path, monkeypatch):
+    d = tmp_path / "prepush_image"
+    d.mkdir()
+    (d / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "IMAGE_DIR", d)
+    return d
+
+
+def test_preflight_builds_missing_image_when_docker_is_up(image_dir):
+    dk = _Docker(up=True, image=False)
+    runner.Effects(CFG).preflight(sleep=lambda s: None, wait_s=0, docker=dk)
+    assert "build" in dk.cmds and dk.image
+
+
+def test_preflight_does_not_build_when_image_exists():
+    dk = _Docker(up=True, image=True)
+    runner.Effects(CFG).preflight(sleep=lambda s: None, wait_s=0, docker=dk)
+    assert "build" not in dk.cmds
+
+
+def test_preflight_env_down_when_docker_never_returns(image_dir):
+    dk = _Docker(up=False, image=False)
+    with pytest.raises(runner.EnvDown, match="docker متوقّف"):
+        runner.Effects(CFG).preflight(sleep=lambda s: None, wait_s=0, docker=dk)
+    assert "build" not in dk.cmds
+
+
+def test_preflight_build_failure_is_env_down_not_card_failure(image_dir):
+    dk = _Docker(up=True, image=False, build_rc=1)
+    with pytest.raises(runner.EnvDown, match="تعذّر بناءُ صورة"):
+        runner.Effects(CFG).preflight(sleep=lambda s: None, wait_s=0, docker=dk)
+
+
+def test_preflight_missing_dockerfile_is_env_down(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "IMAGE_DIR", tmp_path / "none")
+    with pytest.raises(runner.EnvDown, match="لا Dockerfile"):
+        runner.Effects(CFG).preflight(sleep=lambda s: None, wait_s=0, docker=_Docker(up=True, image=False))
+
+
+def test_autoformat_runs_before_every_verify(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake(verify=(False, True))
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published"
+    assert fx.calls == ["autoformat", "verify", "autoformat", "verify"]
+
+
+def test_autoformat_formats_only_changed_python_files(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "a.py").write_text("x = [1,2,\n  3]\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("x = [1,2]\n", encoding="utf-8")
+    assert runner.Effects(CFG).autoformat(str(tmp_path)) == ["a.py"]
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "x = [1, 2, 3]\n"
+    assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "x = [1,2]\n"
+
+
+def test_brief_tells_the_model_to_format():
+    assert "ruff format" in runner.brief({"id": "W-1", "accept": ["x"]}, [])

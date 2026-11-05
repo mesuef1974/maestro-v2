@@ -37,6 +37,7 @@ REQUESTS = ROOT / "requests"
 BY = "runner"
 MAX_FIX_RUNS = 2
 LOCK_STALE_S = 3 * 3600
+IMAGE_DIR = HERE / "prepush_image"  # Dockerfile صورة الفحص؛ يبنيها المشغّل نفسُه حين تغيب
 DEFAULT_CONFIG = {
     "repo": "D:/shschool_mvp",
     "base": "origin/main",
@@ -139,6 +140,7 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         f"الملفّات الممنوعة: {', '.join(card.get('files_forbidden') or []) or 'لا شيء'}",
         f"معايير القبول:\n{acc_txt}",
         "قواعد: عدّل الملفّات واكتب الاختبارات وشغّلها فقط. لا git ولا دفع ولا نشر. التعليقات بالعربيّة.",
+        "قبل أن تنتهي: `ruff format <الملفّات المعدَّلة>` ثمّ `ruff check <الملفّات المعدَّلة>`؛ فحصُ الدمج يرفض ملفّاً غيرَ منسَّق.",
     ]
     parts += rules
     if fail_log:
@@ -193,21 +195,62 @@ class Effects:
         return Result(not data.get("is_error"), str(data.get("result", ""))[-500:], float(data.get("total_cost_usd") or 0),
                       int(data.get("num_turns") or 0), data)
 
-    def preflight(self, sleep=time.sleep, wait_s: int = 600) -> None:
-        """يشغّل Docker Desktop إن كان متوقّفاً وينتظر حتى 10 دقائق؛ بعدها EnvDown (لا تُحسب على البطاقة)."""
+    @staticmethod
+    def docker_up(docker) -> bool:
+        """docker يستجيب (المحرّك لا الصورة): التمييزُ بين «المحرّك متوقّف» و«الصورة غائبة» شرطُ العلاج الصحيح لكلٍّ."""
+        rc, _ = docker(["info", "--format", "ok"], 60)
+        return rc == 0
+
+    def build_image(self, docker=None) -> None:
+        """الصورةُ غائبةٌ والمحرّكُ يعمل: تُبنى من Dockerfile المرفق (IMAGE_DIR) بلا انتظار يدٍ تبنيها.
+
+        قبل 2026-11-05 كان المشغّل ينتظر عشر دقائق «حتى تعود الصورة» ثمّ يبلّغ EnvDown كلَّ دورة، فعلقت البطاقةُ
+        الأولى (W-20261105-001) في الطابور مع أنّ docker يعمل. الفشلُ في البناء EnvDown: علّةُ بيئةٍ لا تُحسب على البطاقة.
+        """
         import flow_pump as fp  # noqa: PLC0415
 
-        if fp._image_present(fp._docker):
+        docker = docker or fp._docker
+        if not (IMAGE_DIR / "Dockerfile").is_file():
+            raise EnvDown(f"صورة {fp.PREPUSH_IMAGE} غائبة ولا Dockerfile في {IMAGE_DIR}")
+        rc, out = docker(["build", "-t", fp.PREPUSH_IMAGE, str(IMAGE_DIR)], 1800)
+        if rc:
+            raise EnvDown(f"تعذّر بناءُ صورة {fp.PREPUSH_IMAGE}: {out.strip()[-200:]}")
+
+    def preflight(self, sleep=time.sleep, wait_s: int = 600, docker=None) -> None:
+        """المحرّكُ متوقّف: يشغّل Docker Desktop وينتظر حتى 10 دقائق ثمّ EnvDown. المحرّكُ يعمل والصورةُ غائبة: تُبنى الآن.
+
+        لا تُحسب أيٌّ من الحالتين على البطاقة (D-521م).
+        """
+        import flow_pump as fp  # noqa: PLC0415
+
+        docker = docker or fp._docker
+        if fp._image_present(docker):
             return
-        exe = self.cfg.get("docker_desktop", "C:/Program Files/Docker/Docker/Docker Desktop.exe")
-        if Path(exe).is_file():
-            subprocess.Popen([exe], close_fds=True)  # noqa: S603
-        end = time.time() + wait_s
-        while time.time() < end:
-            sleep(15)
-            if fp._image_present(fp._docker):
-                return
-        raise EnvDown(f"docker متوقّف ولم يعد خلال {wait_s // 60} دقائق")
+        if not self.docker_up(docker):
+            exe = self.cfg.get("docker_desktop", "C:/Program Files/Docker/Docker/Docker Desktop.exe")
+            if Path(exe).is_file():
+                subprocess.Popen([exe], close_fds=True)  # noqa: S603
+            end = time.time() + wait_s
+            while not self.docker_up(docker):
+                if time.time() >= end:
+                    raise EnvDown(f"docker متوقّف ولم يعد خلال {wait_s // 60} دقائق")
+                sleep(15)
+        if not fp._image_present(docker):
+            self.build_image(docker)
+
+    def autoformat(self, tree: str) -> list[str]:
+        """تنسيقُ ما عدّله النموذج من بايثون بـruff قبل الفحص: حتميٌّ وبصفر توكنز.
+
+        قبل 2026-11-05 أنفق المشغّل ثلاثةَ تشغيلاتٍ ونحو عشرين دقيقةً من فحوص الحاوية على بطاقةٍ لم يكن ينقصها إلّا
+        `ruff format`؛ فما تصلحه أداةٌ لا يُعاد إلى النموذج. غيابُ ruff لا يُكتم: يُرفع RunnerError كعلّة بيئة.
+        """
+        files = [f for f in self.changed(tree) if f.endswith(".py") and (Path(tree) / f).is_file()]
+        if not files:
+            return []
+        p = sh([sys.executable, "-m", "ruff", "format", "--", *files], tree, 300)
+        if p.returncode:
+            raise RunnerError(f"بيئةٌ: تعذّر ruff format — {(p.stdout + p.stderr).strip()[-200:]}")
+        return files
 
     def verify(self, tree: str) -> tuple[bool, str]:
         """prepush داخل الحاوية كما تفعل المضخّة (صورةٌ وقاعدةُ اختبارٍ مؤقّتة)؛ علّةُ البيئة (docker/الصورة/غير مقيس) تُحال فوراً بلا تشغيل إصلاح."""
@@ -481,6 +524,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     spent += res.cost
                     if not res.ok or spent >= TOTAL_CAP_USD:  # سقفُ الأدوار لا يحكم؛ الفحصُ والميزانيةُ هما الحماية
                         break  # فشل النموذج: التصعيد إلى الأعلى مسموحُ السلّم
+                    fx.autoformat(tree)  # ما تصلحه الأداةُ لا يُعاد إلى النموذج
                     ok, log = fx.verify(tree)
                     if ok and not fx.changed(tree):
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
