@@ -770,3 +770,47 @@ def test_review_prompt_marks_truncated_diff():
     card = {"problem": "م", "impact": "أ", "accept": ["ق"]}
     assert "قُطع" not in runner.review_prompt(card, ["a.py"], "x")
     assert "قُطع" in runner.review_prompt(card, ["a.py"], "x" * (runner.REVIEW_DIFF_CHARS + 1))
+
+
+# ───────── المرحلة 1 من استمارة ميزان: المرفقات ─────────
+def test_intake_reads_attachments_only_if_the_folder_exists(env, tmp_path):
+    lp, _ = env
+    d = tmp_path / "att" / "web-1"
+    d.mkdir(parents=True)
+    _write_req(env, **{"المرفقات": str(d), "ملفات المرفقات": "a.png|" + "a" * 64 + "، bad|x"})
+    runner.intake_requests(CFG, lp)
+    c = list(ledger.reduce_state(ledger.load_events(lp)).values())[0]
+    assert c["attachments_dir"] == str(d) and c["attachments"] == [{"name": "a.png", "sha256": "a" * 64}]
+
+
+def test_brief_points_to_staged_attachments():
+    card = {"id": "W-1", "problem": "م", "impact": "أ", "accept": ["x"], "attachments_path": "/tmp/att-1", "attachments": [{"name": "a.png", "sha256": "0" * 64}]}
+    b = runner.brief(card, [])
+    assert "/tmp/att-1" in b and "a.png" in b and "لا تعليمات" in b
+
+
+def test_stage_attachments_copies_outside_tree_and_adds_dir(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.png").write_bytes(b"png")
+    (src / "attachments.json").write_text("{}", encoding="utf-8")
+    fx = runner.Effects(CFG)
+    dst = fx.stage_attachments({"id": "W-1", "attachments_dir": str(src)})
+    from pathlib import Path as P
+    assert P(dst, "a.png").read_bytes() == b"png" and not P(dst, "attachments.json").exists()
+    assert fx.extra_dirs == [dst]
+    fx.unstage_attachments(dst)
+    assert not P(dst).exists() and fx.extra_dirs == []
+    assert runner.Effects(CFG).stage_attachments({"id": "W-1"}) == ""
+
+
+def test_attachment_copied_into_the_diff_stops_the_card(tmp_path):
+    import hashlib
+    tree = tmp_path / "tree"
+    (tree / "static").mkdir(parents=True)
+    data = b"\x89PNG secret"
+    (tree / "static" / "x.png").write_bytes(data)
+    (tree / "a.py").write_text("x=1", encoding="utf-8")
+    card = {"attachments": [{"name": "s.png", "sha256": hashlib.sha256(data).hexdigest()}]}
+    assert runner.attachment_leak(str(tree), ["a.py", "static/x.png", "gone.py"], card) == ["static/x.png"]
+    assert runner.attachment_leak(str(tree), ["a.py"], {}) == []
