@@ -683,6 +683,36 @@ class Effects:
                     keep.append(text)
         return "\n".join(keep)[-3000:]
 
+    def _preview_script(self) -> Path:
+        return Path(self.cfg["repo"]) / ".claude" / "worktrees" / "main-preview" / "scripts" / "preview.sh"
+
+    def preview_state(self) -> dict[str, str]:
+        """ما يخدمه 8500 من ملفّات حالة preview.sh نفسها، لا من الذاكرة."""
+        p = sh(["git", "-C", str(self._preview_script().parent.parent), "rev-parse", "--absolute-git-dir"], ".")
+        base = Path(p.stdout.strip()) / "preview-state"
+        names = ("mode", "pin_tree", "pin_until", "watch_hb", "pin_request", "pin_in_progress")
+        return {n: (base / n).read_text(encoding="utf-8").strip() if (base / n).is_file() else "" for n in names}
+
+    def _preview_spawn(self, *args: str) -> None:
+        """بلا انتظار: البناءُ قد يطول، ولـpreview.sh قفلُه، فدورةٌ تخطّته تعيدها التالية."""
+        log = (ROOT / "ledger" / "preview_sync.log").open("a", encoding="utf-8")
+        subprocess.Popen([GIT_BASH, str(self._preview_script()), *args], cwd=self._preview_script().parent.parent, stdout=log, stderr=log,  # noqa: S603
+                         stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+    def preview_tick(self) -> None:
+        """هذه هي حلقةُ watch: توقّفت 8 ساعات يوم 2026-11-05 بلا إنذار، فجمد 8500 ولم يُنفَّذ أيُّ تثبيت."""
+        self._preview_spawn("sync")
+
+    def preview_release(self) -> None:
+        self._preview_spawn("release")
+
+    def preview_pin(self, tree: str) -> None:
+        script = self._preview_script().as_posix()
+        sh([GIT_BASH, "-c", f'PREVIEW_PIN_MAX_MINUTES={PREVIEW_PIN_MINUTES} bash "{script}" pin "{tree}" {PREVIEW_PIN_MINUTES}'], ".", 120)
+
+    def close_pr(self, tree: str, pr: int) -> None:
+        sh(["gh", "pr", "close", str(pr)], tree)
+
     def cancelled_runs(self, tree: str, pr: int) -> dict[str, str]:
         """الفحوصُ الملغاة (مهلةُ الوظيفة تظهر إلغاءً لا فشلاً) ورقمُ تشغيل كلٍّ منها."""
         p = sh(["gh", "pr", "checks", str(pr), "--json", "name,state,link"], tree)
@@ -884,11 +914,11 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     if real:
         return repair_ci(card, cfg, fx, lpath, tree, branch, pr, real)
     if preview:
+        if card.get("preview_rejected"):
+            fx.close_pr(tree, pr)
+            raise RunnerError(f"رفض المالك المعاينة على الطلب {pr}: {card['preview_rejected']}"[:600])
         if not card.get("preview_approved"):
-            if not card.get("preview_noted"):  # سطرٌ واحد في طابور المالك لا كلَّ دورة
-                refer(card["id"], f"جاهز للمعاينة على 8500: الطلب #{pr} — بعد اعتمادك يُدمج (preview_approved)", None)
-                ledger.append_event("update", card["id"], {"preview_noted": True}, lpath)
-            return "waiting_preview"
+            return preview_step(card, fx, lpath, tree, head, pr)
         body = pr_body(card, head)
         if fx.pr_body_of(tree, pr).strip() != body.strip():  # يُكتب مرّةً؛ فحصُ السطر يُعاد عند edited فيخضرّ في الدورة التالية
             fx.set_pr_body(tree, pr, body)
@@ -904,6 +934,82 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     if deploy_busy(card["id"], lpath):  # نشرٌ واحدٌ في الطريق فقط، فيبقى هدفُ التراجع عند فشل الصحّة واضحاً
         return "waiting_turn"
     return merge_and_publish(card, fx, lpath, tree, pr, r_stage="merge")
+
+
+def same_tree(a: str, b: str) -> bool:
+    return a.replace("\\", "/").rstrip("/").lower() == b.replace("\\", "/").rstrip("/").lower()
+
+
+def preview_info(card: dict, pr: int) -> dict:
+    """ما يلزم المالكَ ليعاين، في حقلٍ يقرؤه ميزان أيضاً."""
+    number, role = card.get("preview_account") or PREVIEW_ACCOUNT
+    acc = card.get("accept")
+    checks = [a for a in acc if not str(a).startswith(AUTO_CRITERIA)] if isinstance(acc, list) else [str(acc or "")]
+    page = card.get("scope_page") or "/"
+    return {"url": PREVIEW_URL + (page if page.startswith("/") else "/" + page), "account": number, "role": role,
+            "password_at": PREVIEW_PASSWORD_AT, "checks": checks or [card.get("problem", "")], "pr": pr}
+
+
+def preview_message(card: dict, info: dict) -> str:
+    cid = card["id"]
+    return (f"جاهز للمعاينة: {card.get('problem', '')[:90]} — افتح {info['url']} — ادخل بالرقم {info['account']} ({info['role']})، "
+            f"وكلمة المرور في {info['password_at']} — تحقّق من: {'؛ '.join(str(c) for c in info['checks'])[:300]} — "
+            f"للاعتماد: python tools/runner.py --approve {cid} — للرفض: python tools/runner.py --reject {cid} --reason \"السبب\" — الطلب #{info['pr']}")
+
+
+def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) -> str:
+    """لا تُطلب المعاينةُ إلا بعد أن يعرض 8500 شجرةَ البطاقة فعلاً (#1347: طُلبت على خادمٍ لا يحملها)."""
+    cid, st = card["id"], fx.preview_state()
+    live = st.get("mode") == "pin" and int(st.get("pin_until") or 0) > time.time() and not st.get("pin_in_progress")
+    if not (live and same_tree(st.get("pin_tree", ""), tree)):
+        if card.get("preview_seen"):  # انتهى التثبيت: لا يصحّ اعتمادٌ حتى يعود العرض
+            ledger.append_event("update", cid, {"preview_seen": ""}, lpath)
+        if not live and not st.get("pin_request") and not st.get("pin_in_progress"):  # خانةٌ واحدة، والأقدمُ يُستأنف أوّلاً
+            fx.preview_pin(tree)
+        return "waiting_preview"
+    if card.get("preview_seen") != head:
+        info = preview_info(card, pr)
+        ledger.append_event("update", cid, {"preview_seen": head, "preview_info": info}, lpath)
+        refer(cid, preview_message(card, info))
+    return "waiting_preview"
+
+
+def preview_cycle(cfg: dict, fx: Effects, lpath=None, queue: Path | None = None) -> None:
+    """كلَّ دورة: يُفكّ تثبيتُ بطاقةٍ انتهى قرارها، وإلا تدور حلقةُ المتابعة. تثبيتُ غير المشغّل لا يُمسّ."""
+    items = ledger.reduce_state(ledger.load_events(lpath))
+    trees = [i["runner_resume"].get("tree", "") for i in inflight(items) if i.get("approval") == "معاينة" and not i.get("preview_approved")]
+    st = fx.preview_state()
+    pinned = st.get("pin_tree", "").replace("\\", "/").lower()
+    ours = pinned.startswith(str(cfg.get("worktrees", "")).replace("\\", "/").lower() + "/runner-")
+    if st.get("mode") == "pin" and ours and not any(same_tree(pinned, t) for t in trees):
+        fx.preview_release()
+        return
+    fx.preview_tick()
+    beat = int(st.get("watch_hb") or 0)
+    if trees and beat and time.time() - beat > PREVIEW_HB_STALE_S:
+        queue = queue or OWNER_QUEUE
+        mark = f"خادم المعاينة متوقّف {datetime.now(timezone.utc):%Y-%m-%d}"
+        if not (queue.is_file() and mark in queue.read_text(encoding="utf-8")):
+            refer("RUNNER", f"{mark}: لا نبض لدورة 8500 منذ {int((time.time() - beat) / 60)} دقيقة، والمعاينات تنتظر", queue)
+
+
+def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None) -> tuple[bool, str]:
+    """قرارُ المالك مربوطٌ بالرأس المعروض: لا اعتمادَ لما لم يُعرض على 8500."""
+    card = ledger.reduce_state(ledger.load_events(lpath)).get(cid)
+    head = ((card or {}).get("runner_resume") or {}).get("head", "")
+    if not head or card.get("approval") != "معاينة":
+        return False, f"{cid}: لا تنتظر معاينة"
+    if not approve:
+        if not reason.strip():
+            return False, "الرفض يحتاج سببًا: --reason"
+        ledger.append_event("note", cid, {"text": f"[مالك] رفض المعاينة: {reason}"[:400], "by": "owner"}, lpath)
+        ledger.append_event("update", cid, {"preview_rejected": reason[:300]}, lpath)
+        return True, f"{cid}: سُجّل الرفض، ويغلقها المشغّل في دورته التالية"
+    if card.get("preview_seen") != head:
+        return False, f"{cid}: لم يُعرض الرأس {head[:8]} على 8500 بعد، فلا يُعتمد"
+    ledger.append_event("note", cid, {"text": f"[مالك] اعتمد على 8500 الرأس {head[:8]}", "by": "owner"}, lpath)
+    ledger.append_event("update", cid, {"preview_approved": True}, lpath)
+    return True, f"{cid}: سُجّل الاعتماد على الرأس {head[:8]}، ويدمجها المشغّل في دورته التالية"
 
 
 def rerun_cancelled(card: dict, fx: Effects, lpath, tree: str, pr: int, cancelled: dict[str, str]) -> str:
@@ -958,8 +1064,8 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
     card["runner_resume"] = r
     ledger.append_event("update", cid, {"runner_resume": r}, lpath)
     if card.get("approval") == "معاينة":  # ما عاينه المالك تغيّر: لا يسري اعتمادُه على الرأس الجديد
-        ledger.append_event("update", cid, {"preview_approved": False, "preview_noted": False}, lpath)
-        card["preview_approved"] = card["preview_noted"] = False
+        ledger.append_event("update", cid, {"preview_approved": False, "preview_seen": ""}, lpath)
+        card["preview_approved"], card["preview_seen"] = False, ""
     else:
         fx.set_pr_body(tree, pr, pr_body(card, head))
     return "waiting_ci"
@@ -977,6 +1083,13 @@ def inflight(items: dict[str, dict]) -> list[dict]:
     return sorted(cards, key=lambda i: i.get("created", ""))
 
 
+PREVIEW_URL = "http://localhost:8500"
+PREVIEW_PIN_MINUTES = 720  # تبقى حتى قرار المالك لا 30 دقيقة (قراره 2026-11-05): قد يقرأ الرسالة بعد ساعات
+PREVIEW_HB_STALE_S = 600
+PREVIEW_ACCOUNT = ("99900001", "المدير")  # تُغيّره البطاقة بحقل preview_account
+PREVIEW_PASSWORD_AT = "tools/.preview_accounts.env"
+GIT_BASH = r"C:\Program Files\Git\bin\bash.exe"  # لا `bash` مجرّدة: قد تكون System32 (WSL)
+AUTO_CRITERIA = ("make prepush", "اختبار جديد", "لا يتغيّر ملف", "لا هجرات")  # تفحصها الأدوات لا عينُ المالك
 GATE_SUMMARY = "ملخص بوابة الجودة"  # يحمرّ تبعاً لأيّ مهمّةٍ أُلغيت فلا يُعدّ فشلاً مستقلّاً معها
 CI_RERUN_MAX = 2  # إعادةُ المهامّ الملغاة؛ بعدها علّةُ CI لا يصلحها النموذج
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
@@ -1256,6 +1369,10 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
         fx = fx or Effects(cfg)
         out = "idle"
         try:
+            preview_cycle(cfg, fx, lpath)
+        except (OSError, ValueError) as exc:  # المعاينةُ لا توقف البطاقات
+            print(f"preview: {exc}"[:200])
+        try:
             for waiting in inflight(ledger.reduce_state(ledger.load_events(lpath))):
                 out = resume(waiting, cfg, fx, lpath)
             items = ledger.reduce_state(ledger.load_events(lpath))
@@ -1288,7 +1405,14 @@ def poll(cfg: dict, cycle=run_cycle, sleep=time.sleep, clock=time.monotonic) -> 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="مشغّل البطاقات بلا جلسة")
     ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--approve", metavar="CARD", help="اعتماد المعاينة المعروضة على 8500")
+    ap.add_argument("--reject", metavar="CARD", help="رفض المعاينة، ومعه --reason")
+    ap.add_argument("--reason", default="")
     a = ap.parse_args(argv)
+    if a.approve or a.reject:
+        ok, text = decide_preview(a.approve or a.reject, bool(a.approve), a.reason)
+        print(text)
+        return 0 if ok else 1
     cfg = load_config()
     if a.dry:
         card = pick_card(ledger.reduce_state(ledger.load_events()), cfg)

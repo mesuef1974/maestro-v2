@@ -53,6 +53,19 @@ class Fake(runner.Effects):
     def failed_checks(self, tree, pr): return "Ruff"
     def failed_names(self, tree, pr): return list(getattr(self, "failed", ["Ruff"])) if self.ci == "red" else []
     def cancelled_runs(self, tree, pr): return dict(getattr(self, "cancelled", {})) if self.ci == "red" else {}
+    def preview_tick(self): self.ticks = getattr(self, "ticks", 0) + 1
+    def preview_release(self): self.releases = getattr(self, "releases", 0) + 1
+    def close_pr(self, tree, pr): self.closed_pr = pr
+
+    def preview_state(self):
+        if not getattr(self, "pinned", ""):
+            return {}
+        return {"mode": "pin", "pin_tree": self.pinned, "pin_until": str(int(runner.time.time()) + 600)}
+
+    def preview_pin(self, tree):
+        self.pins = getattr(self, "pins", []) + [tree]
+        self.pinned = tree
+
 
     def rerun_failed(self, tree, run_id):
         self.reruns = getattr(self, "reruns", []) + [run_id]
@@ -439,6 +452,7 @@ def test_preview_card_waits_then_gets_the_8500_line_after_approval(env):
     _card(lp, approval="معاينة", source="owner")
     f = Fake()
     assert runner.run_cycle(CFG, f, lp, lock) == "waiting_preview"
+    runner.run_cycle(CFG, f, lp, lock)
     assert "جاهز للمعاينة" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
     ledger.append_event("update", "W-20261104-901", {"preview_approved": True}, lp)
     runner.run_cycle(CFG, f, lp, lock)
@@ -1352,4 +1366,147 @@ def test_cancelled_runs_reads_state_and_run_id(monkeypatch):
 def test_checks_state_treats_cancel_as_red(monkeypatch):
     monkeypatch.setattr(runner, "sh", lambda cmd, *a: runner.subprocess.CompletedProcess(cmd, 0, "e2e" + chr(9) + "cancel" + chr(9) + "5m", ""))
     assert runner.Effects(CFG).checks_state(".", 1) == "red"
+
+
+def _preview_card(lp, cid="W-20261104-901"):
+    _card(lp, cid, approval="معاينة")
+    ledger.append_event("update", cid, {"source": "owner", "scope_page": "/quality/", "accept": ["make prepush ينجح", "علامة صح في PDF"]}, lp)
+
+
+def _queue():
+    return runner.OWNER_QUEUE.read_text(encoding="utf-8") if runner.OWNER_QUEUE.is_file() else ""
+
+
+def test_preview_is_requested_only_after_8500_serves_the_card(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_preview"
+    assert len(fx.pins) == 1 and "جاهز للمعاينة" not in _queue()
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_preview"
+    line = _queue()
+    assert line.count("جاهز للمعاينة") == 1 and "http://localhost:8500/quality/" in line and "99900001" in line
+    assert "علامة صح في PDF" in line and "make prepush" not in line and "--approve W-20261104-901" in line
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert _queue().count("جاهز للمعاينة") == 1 and len(fx.pins) == 1
+
+
+def test_password_value_is_never_in_the_message():
+    info = runner.preview_info({"id": "W", "accept": []}, 1)
+    assert info["password_at"] == "tools/.preview_accounts.env" and "password" not in info
+
+
+def test_approval_is_refused_until_the_head_was_served(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    ok, text = runner.decide_preview("W-20261104-901", True, lpath=lp)
+    assert not ok and "لم يُعرض" in text
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert runner.decide_preview("W-20261104-901", True, lpath=lp)[0]
+    assert _state(lp)["preview_approved"] is True
+
+
+def test_approved_card_merges_and_its_pin_is_released(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.decide_preview("W-20261104-901", True, lpath=lp)
+    for _ in range(3):
+        runner.run_cycle(CFG, fx, lp, lock)
+    assert fx.merged
+
+
+def test_reject_needs_a_reason_then_closes_card_and_pr(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert not runner.decide_preview("W-20261104-901", False, " ", lp)[0]
+    assert runner.decide_preview("W-20261104-901", False, "العلامة مائلة", lp)[0]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.closed_pr and not fx.merged
+    assert "العلامة مائلة" in _queue()
+
+
+def test_expired_pin_voids_the_shown_head_and_pins_again(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    fx.pinned = ""
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert len(fx.pins) == 2 and not _state(lp)["preview_seen"]
+
+
+def test_second_card_waits_for_the_single_slot(env):
+    lp, lock = env
+    _preview_card(lp, "W-20261104-901")
+    _preview_card(lp, "W-20261104-902")
+
+    class Trees(Fake):
+        def prepare_tree(self, card_id, round_no=1):
+            return f"/t/{card_id}", "b"
+
+    fx = Trees()
+    fx.ci = "green"
+    for _ in range(3):
+        runner.run_cycle(CFG, fx, lp, lock)
+    assert len(fx.pins) == 1 and _queue().count("جاهز للمعاينة") == 1
+
+
+class Pinned(Fake):
+    def __init__(self, tree, beat=""):
+        super().__init__()
+        self.tree, self.beat = tree, beat
+
+    def preview_state(self):
+        return {"mode": "pin", "pin_tree": self.tree, "pin_until": "9999999999", "watch_hb": self.beat}
+
+
+WT = {"worktrees": "C:/wt"}
+
+
+def test_runner_pin_with_no_waiting_card_is_released(env):
+    lp, _ = env
+    fx = Pinned("C:/wt/runner-W-1-r1")
+    runner.preview_cycle(WT, fx, lp)
+    assert fx.releases == 1 and not getattr(fx, "ticks", 0)
+
+
+def test_someone_elses_pin_is_left_alone(env):
+    lp, _ = env
+    fx = Pinned("D:/x/session-tree")
+    runner.preview_cycle(WT, fx, lp)
+    assert not getattr(fx, "releases", 0) and fx.ticks == 1
+
+
+def test_dead_watch_is_reported_once_a_day_while_previews_wait(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    fx.preview_state = lambda: {"watch_hb": "1000"}
+    runner.preview_cycle(WT, fx, lp)
+    runner.preview_cycle(WT, fx, lp)
+    assert _queue().count("خادم المعاينة متوقّف") == 1
+
+
+def test_preview_state_reads_the_state_files(tmp_path, monkeypatch):
+    base = tmp_path / "preview-state"
+    base.mkdir()
+    (base / "mode").write_text("pin" + chr(10), encoding="utf-8")
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a: runner.subprocess.CompletedProcess(cmd, 0, str(tmp_path) + chr(10), ""))
+    st = runner.Effects({**CFG, "repo": "R"}).preview_state()
+    assert st["mode"] == "pin" and st["pin_tree"] == ""
+
+
+def test_pin_command_lifts_the_limit_for_this_call_only(monkeypatch):
+    seen = []
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a: seen.append(cmd) or runner.subprocess.CompletedProcess(cmd, 0, "", ""))
+    runner.Effects({**CFG, "repo": "R"}).preview_pin("C:/wt/t")
+    assert seen[0][0] == runner.GIT_BASH and "PREVIEW_PIN_MAX_MINUTES=720" in seen[0][2] and 'pin "C:/wt/t" 720' in seen[0][2]
 
