@@ -37,11 +37,14 @@ LOCK = ROOT / "ledger" / "runner.lock"
 TIMING_LOG = ROOT / "ledger" / "prepush_timing.log"
 DB_CACHE = ROOT / "ledger"  # ledger/prepush_testdb_<بصمة>.dump، خارج git
 TEST_DB = "test_db"
+FAIL_DIFFS = ROOT / "archive_local" / "fail_diffs"  # مستثنى من git
 DB_CACHE_KEEP = 5
 OWNER_QUEUE = ROOT / "owner_queue.md"
 REQUESTS = ROOT / "requests"
 BY = "runner"
-MAX_FIX_RUNS = 2
+MAX_FIX_RUNS = 2  # جولاتُ الإصلاح لنموذجٍ يليه أعلى منه
+MAX_ROUNDS = 5  # جولاتُ البطاقة كلّها؛ والسقفُ الماليّ TOTAL_CAP_USD يحكم معها، أيّهما أولاً
+CI_FIX_MAX = 2  # جولاتُ إصلاحٍ بعد أحمر CI على الطلب نفسه قبل الإغلاق
 LOCK_STALE_S = 3 * 3600
 MAX_INFLIGHT = 2  # بطاقتان معاً في أقصى حدّ؛ الدمجُ والنشرُ واحدةٌ تلو الأخرى (deploy_busy)
 POLL_S = 60  # الدورةُ تُعاد كلَّ دقيقةٍ داخل تشغيل المهمّة المجدولة
@@ -57,7 +60,7 @@ DEFAULT_CONFIG = {
         "كبير": ["sonnet", 80, 4.0],
         "تصميم": ["opus", 80, 6.0],
     },
-    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)"],
+    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m tests.layering_ratchet:*)"],
     "health_url": "https://shschoolmvp-production.up.railway.app/health/",
     "rollback_cmd": [],  # الافتراضيّ: gh workflow run rollback.yml (runbook §4)
     "worktrees": "C:/Users/mesue/delivery_manager_work_wt",
@@ -97,6 +100,22 @@ LIGHT_GUARDS = (
     "tests/test_parents_freeze_flag_guard.py",
     "tests/test_personal_data_guard.py",
     "tests/test_print_frame_guard.py",
+    # وظيفةُ «حرّاسٌ سريعة» في quality-gate.yml نفسُها (نحو 40 ثانية)، وtest_page_layouts: أسقطت 005 و009 في CI
+    "tests/test_file_size.py",
+    "tests/test_every_route_is_guarded.py",
+    "tests/test_css_budget.py",
+    "tests/test_css_split.py",
+    "tests/test_css_layers.py",
+    "tests/test_css_selectors.py",
+    "tests/test_css_colours_are_tokens.py",
+    "tests/test_css_dead_overrides.py",
+    "tests/test_css_comment_decoration.py",
+    "tests/test_px_tokens.py",
+    "tests/test_design_ratchet.py",
+    "tests/test_regression_guards_doc.py",
+    "tests/test_ci_gate_needs.py",
+    "tests/test_ci_docs_only.py",
+    "tests/test_page_layouts.py",
 )
 FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير المالك
 FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
@@ -202,6 +221,18 @@ def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
     ]
     ready.sort(key=lambda i: (ledger.PRIORITIES.index(i.get("priority", "P3")) if i.get("priority") in ledger.PRIORITIES else 9, i.get("created", "")))
     return ready[0] if ready else None
+
+
+def mask(text: str) -> str:
+    """سجلُّ الفحص قد يحمل بياناتِ اختبارٍ تشبه الشخصيّة، فلا تُكتب في الدفتر والتقرير."""
+    return ledger._PII.sub("[محجوب]", text)
+
+
+def save_fail_diff(card_id: str, diff: str, folder: Path | None = None) -> None:
+    """الشجرةُ تُحذف عند الفشل، فيبقى الفرقُ محلّيّاً خارج git للتحقيق."""
+    folder = folder or FAIL_DIFFS
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{card_id}.diff").write_text(diff, encoding="utf-8")
 
 
 def failure_summary(log: str) -> str:
@@ -590,6 +621,28 @@ class Effects:
             return "pending"
         return "red" if "fail" in out else "green"
 
+    def branch_diff(self, tree: str) -> str:
+        return sh(["git", "diff", f"{self.cfg['base']}...HEAD"], tree).stdout
+
+    def ci_log(self, tree: str, pr: int) -> str:
+        """سطورُ الفشل من سجلّات CI: ما يحتاجه النموذجُ ليصلح، بلا ضجيج التثبيت."""
+        p = sh(["gh", "pr", "checks", str(pr), "--json", "name,state,link"], tree)
+        try:
+            rows = json.loads(p.stdout or "[]")
+        except ValueError:
+            return ""
+        keep: list[str] = []
+        for row in rows:
+            job = row.get("link", "").rsplit("/job/", 1)[-1]
+            if row.get("state") != "FAILURE" or not job.isdigit():
+                continue
+            logs = sh(["gh", "api", f"repos/sh-school/shschool_mvp/actions/jobs/{job}/logs"], tree).stdout
+            for ln in logs.splitlines():
+                text = ln[29:].strip()
+                if text.startswith(("FAILED ", "ERROR ", "E   ")) and text not in keep:
+                    keep.append(text)
+        return "\n".join(keep)[-3000:]
+
     def failed_names(self, tree: str, pr: int) -> list[str]:
         out = sh(["gh", "pr", "checks", str(pr)], tree).stdout
         return [ln.split("\t")[0] for ln in out.splitlines() if "\tfail" in ln]
@@ -744,7 +797,7 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     # يُعدّ فشلَ CI فتُغلق كلُّ بطاقة معاينةٍ بتقرير قبل أن تبلغ المعاينةَ أصلاً (W-20261105-001 مرّتين).
     real = [f for f in failed if not (preview and APPROVAL_CHECK in f)]
     if real:
-        raise RunnerError(f"فحوصُ CI حمراء على الطلب {pr}: {'، '.join(real)[:300]}")
+        return repair_ci(card, cfg, fx, lpath, tree, branch, pr, real)
     if preview:
         if not card.get("preview_approved"):
             if not card.get("preview_noted"):  # سطرٌ واحد في طابور المالك لا كلَّ دورة
@@ -766,6 +819,43 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     if deploy_busy(card["id"], lpath):  # نشرٌ واحدٌ في الطريق فقط، فيبقى هدفُ التراجع عند فشل الصحّة واضحاً
         return "waiting_turn"
     return merge_and_publish(card, fx, lpath, tree, pr, r_stage="merge")
+
+
+def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, pr: int, failed: list[str]) -> str:
+    """أحمرُ CI يعود إلى النموذج على الطلب نفسه بدل إغلاق البطاقة؛ بعد CI_FIX_MAX جولةً أو بلوغ السقف تُغلق بتقرير."""
+    cid = card["id"]
+    r = dict(card.get("runner_resume") or {})
+    done, spent = int(r.get("ci_fixes") or 0), float(r.get("spent") or 0)
+    if done >= CI_FIX_MAX or spent >= TOTAL_CAP_USD:
+        save_fail_diff(cid, fx.branch_diff(tree))
+        raise RunnerError(f"فحوصُ CI حمراء على الطلب {pr}: {'، '.join(failed)[:300]}")
+    model, _, budget = _tiers(cfg, card)[-1]
+    rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
+    log = fx.ci_log(tree, pr) or "، ".join(failed)
+    res = fx.run_model(tree, brief(card, rules, log, fx.branch_diff(tree)), model, min(budget, TOTAL_CAP_USD - spent))
+    record_run(cid, f"{model} إصلاح CI {done + 1}", res, lpath)
+    r.update(ci_fixes=done + 1, spent=spent + res.cost)
+    card["runner_resume"] = r
+    ledger.append_event("update", cid, {"runner_resume": r}, lpath)
+    if not res.ok:
+        return "waiting_ci"
+    fx.autoformat(tree)
+    ok, vlog = fx.verify(tree)
+    files = fx.changed(tree)
+    if not ok or not files:
+        why = failure_summary(mask(vlog)) if not ok else "لم يُحدث النموذجُ أيَّ تغيير"
+        ledger.append_event("note", cid, {"text": f"[مشغّل] إصلاح CI {done + 1} فشل: {why}", "by": BY}, lpath)
+        return "waiting_ci"
+    head = fx.commit_push(tree, branch, files, f"{cid}: إصلاح فحوص CI")
+    r["head"] = head
+    card["runner_resume"] = r
+    ledger.append_event("update", cid, {"runner_resume": r}, lpath)
+    if card.get("approval") == "معاينة":  # ما عاينه المالك تغيّر: لا يسري اعتمادُه على الرأس الجديد
+        ledger.append_event("update", cid, {"preview_approved": False, "preview_noted": False}, lpath)
+        card["preview_approved"] = card["preview_noted"] = False
+    else:
+        fx.set_pr_body(tree, pr, pr_body(card, head))
+    return "waiting_ci"
 
 
 def deploy_busy(card_id: str, lpath=None) -> bool:
@@ -872,8 +962,12 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             card["attachments_path"] = att  # للموجز فقط؛ لا يُكتب في الدفتر
             rules = [Path(p).read_text(encoding="utf-8")[:3000] for p in card.get("rules") or [] if Path(p).is_file()]
             prompt, ok, gaps, log = brief(card, rules), False, [], ""
-            for model, max_turns, budget in _tiers(cfg, card):
-                for attempt in range(MAX_FIX_RUNS + 1):
+            tiers, rounds = _tiers(cfg, card), 0
+            for tier_no, (model, max_turns, budget) in enumerate(tiers):
+                for attempt in range(MAX_ROUNDS if tier_no == len(tiers) - 1 else MAX_FIX_RUNS + 1):
+                    if rounds >= MAX_ROUNDS:
+                        break
+                    rounds += 1
                     res = fx.run_model(tree, prompt, model, min(budget, TOTAL_CAP_USD - spent))
                     record_run(cid, f"{model} تشغيل {attempt + 1}", res, lpath)
                     spent += res.cost
@@ -901,12 +995,14 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                             break
                         ok, gaps = False, missing
                         log = "معايير قبول لم تتحقّق:\n" + "\n".join(f"- {m}" for m in missing)
+                    ledger.append_event("note", cid, {"text": f"[مشغّل] جولة {rounds} فشلت: {failure_summary(mask(log))}", "by": BY}, lpath)
                     prompt = brief(card, rules, log, fx.diff(tree))
                 if ok or spent >= TOTAL_CAP_USD:
                     break
             if not ok:
                 lack = f"؛ معايير ناقصة: {'، '.join(gaps)[:200]}" if gaps else ""
-                safe = ledger._PII.sub("[محجوب]", log)  # سجلُّ الفحص قد يحمل بياناتِ اختبارٍ تشبه الشخصيّة
+                save_fail_diff(cid, fx.review_diff(tree))
+                safe = mask(log)
                 if safe:
                     ledger.append_event("note", cid, {"text": f"[مشغّل] آخر سجلّ فشل: {safe[-FAIL_NOTE_CHARS:]}", "by": BY}, lpath)
                 why = f"؛ آخر سبب: {failure_summary(safe)}" if safe else ""
@@ -924,7 +1020,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             pr = fx.open_pr(tree, branch, f"{cid}: {card.get('problem', '')[:60]}", pr_body(card, head, files))
             for old_pr in fx.close_old_prs(tree, cid, pr):
                 ledger.append_event("note", cid, {"text": f"[مشغّل] أُغلق الطلب القديم #{old_pr}: حلّ محلّه #{pr}", "by": BY}, lpath)
-            card["runner_resume"] = {"pr": pr, "branch": branch, "head": head, "tree": tree}
+            card["runner_resume"] = {"pr": pr, "branch": branch, "head": head, "tree": tree, "spent": spent}
             ledger.append_event("update", cid, {"pr": pr, "runner_resume": card["runner_resume"]}, lpath)
             out = finish(card, cfg, fx, lpath, tree, branch, head, pr)
             keep = out.startswith("waiting")

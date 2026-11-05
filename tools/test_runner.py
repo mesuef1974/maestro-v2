@@ -69,6 +69,9 @@ class Fake(runner.Effects):
         self.rolled_to = sha
         return self.can_rollback
     def remove_tree(self, tree): self.removed = True
+    def review_diff(self, tree): return "الفرق الكامل"
+    def branch_diff(self, tree): return "فرق الفرع"
+    def ci_log(self, tree, pr): return "FAILED tests/test_y.py"
     def review(self, tree, card, budget):
         self.reviews = getattr(self, "reviews", 0) + 1
         q = getattr(self, "review_q", [[]])
@@ -82,7 +85,15 @@ class Fake(runner.Effects):
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "OWNER_QUEUE", tmp_path / "owner_queue.md")
     monkeypatch.setattr(runner, "REQUESTS", tmp_path / "requests")
+    monkeypatch.setattr(runner, "FAIL_DIFFS", tmp_path / "fail_diffs")
     return tmp_path / "e.jsonl", tmp_path / "lock"
+
+
+def _until_closed(fx, lp, lock):
+    """أحمرُ CI يأخذ جولاتِ إصلاحٍ قبل الإغلاق."""
+    for _ in range(runner.CI_FIX_MAX):
+        assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    return runner.run_cycle(CFG, fx, lp, lock)
 
 
 def _state(lp, cid="W-20261104-901"):
@@ -132,7 +143,7 @@ def test_red_checks_escalate_haiku_to_sonnet_then_close_with_report(env):
     lp, lock = env
     _card(lp)
     fx = Fake(verify=(False,))
-    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 6 and not fx.merged
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == runner.MAX_ROUNDS and not fx.merged
     assert _state(lp)["state"] == "closed"
     assert "W-20261104-901" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
 
@@ -274,7 +285,7 @@ def test_red_ci_refers(env):
     _card(lp)
     fx = Fake()
     fx.ci = "red"
-    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
+    assert _until_closed(fx, lp, lock) == "referred" and not fx.merged
 
 
 def test_owner_cards_get_the_d520_approval_line_others_do_not():
@@ -559,7 +570,7 @@ def test_preview_card_with_a_real_red_check_still_closes(env):
     _preview_card(lp)
     fx = Fake()
     fx.ci, fx.failed = "red", [runner.APPROVAL_CHECK, "pytest shard 1/4"]
-    assert runner.run_cycle(CFG, fx, lp, lock) == "referred"
+    assert _until_closed(fx, lp, lock) == "referred"
     assert "pytest shard 1/4" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
     assert runner.APPROVAL_CHECK not in runner.OWNER_QUEUE.read_text(encoding="utf-8")
 
@@ -584,7 +595,7 @@ def test_direct_card_treats_a_red_approval_check_as_a_real_failure(env):
     _card(lp, source="owner")
     fx = Fake()
     fx.ci, fx.failed = "red", [runner.APPROVAL_CHECK]
-    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
+    assert _until_closed(fx, lp, lock) == "referred" and not fx.merged
 
 
 def test_gate_script_comes_from_main_not_from_the_branch(tmp_path):
@@ -989,3 +1000,63 @@ def test_any_migration_change_changes_the_key(tmp_path):
     second = runner.migrations_key(str(tmp_path), "pg16")
     (m / "0001_a.py").write_text("changed", encoding="utf-8")
     assert len({first, second, runner.migrations_key(str(tmp_path), "pg16"), runner.migrations_key(str(tmp_path), "pg17")}) == 4
+
+
+def test_red_ci_goes_back_to_the_model_on_the_same_pr(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.ci = "red"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2 and not fx.merged
+    assert "اعتُمد من المالك" in fx.pr_bodies[-1] or fx.pr_bodies[-1].startswith("البطاقة")
+    fx.ci = "green"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published"
+
+
+def test_red_ci_closes_after_the_repair_limit_and_keeps_the_diff(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.ci = "red"
+    for _ in range(runner.CI_FIX_MAX):
+        assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and not fx.merged
+    assert (runner.FAIL_DIFFS / "W-20261104-901.diff").read_text(encoding="utf-8") == "فرق الفرع"
+
+
+def test_ci_repair_voids_a_preview_approval(env):
+    lp, lock = env
+    _card(lp, approval="معاينة", source="owner", preview_approved=True)
+    fx = Fake()
+    fx.ci = "red"
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert not _state(lp).get("preview_approved")
+
+
+def test_rounds_stop_at_five_across_the_whole_ladder(env):
+    lp, lock = env
+    _card(lp, size="متوسط")
+    fx = Fake(verify=(False,))
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == runner.MAX_ROUNDS
+
+
+def test_review_gets_a_round_after_a_late_gap(env):
+    lp, lock = env
+    _card(lp, size="متوسط")
+    fx = Fake(verify=(False, False, True))
+    fx.review_q = [["ناقص"], []]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.runs == 4
+
+
+def test_every_failed_round_is_noted_and_the_diff_is_kept(env):
+    lp, lock = env
+    _card(lp, size="متوسط")
+    assert runner.run_cycle(CFG, Fake(verify=(False,)), lp, lock) == "referred"
+    notes = [e for e in ledger.load_events(lp) if "جولة" in e["data"].get("text", "")]
+    assert len(notes) == runner.MAX_ROUNDS
+    assert (runner.FAIL_DIFFS / "W-20261104-901.diff").read_text(encoding="utf-8") == "الفرق الكامل"
+
+
+def test_ci_guards_run_in_the_container():
+    assert {"tests/test_file_size.py", "tests/test_layering.py", "tests/test_page_layouts.py"} <= set(runner.LIGHT_GUARDS)
+
