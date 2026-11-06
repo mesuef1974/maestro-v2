@@ -92,6 +92,7 @@ REVIEW_DIFF_CHARS = 40000
 # الخفيفُ يبقى محلّيّاً (قياس 2026-11-05، بلا قاعدة بيانات): الطبقات 25 ث والساعة 10 ث وحرّاسُ القراءة النصّيّة نحو ثانيةٍ لكلٍّ.
 # الوصوليّة والعيادة والحرّاسُ التي تبني قاعدةً (نحو دقيقتين كلٌّ) لـCI؛ وtest_numbering_guard خارجها لأنّه يحتاج .git.
 LIGHT_GUARDS = (
+    "tests/test_workflow_actions_pinned.py",
     "tests/test_layering.py",
     "tests/test_clock_pin_ratchet.py",
     "tests/test_attendance_erasure_flag_guard.py",
