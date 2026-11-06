@@ -66,6 +66,9 @@ class Fake(runner.Effects):
         self.mapped = account
         return getattr(self, "map_result", (True, ""))
 
+    def pdf_fallback_fonts(self, path, account):
+        return list(getattr(self, "fallback", []))
+
     def check_seed(self, path, account):
         q = getattr(self, "seed_checks", [(True, "PREVIEW_STATUS=200")])
         return q.pop(0) if len(q) > 1 else q[0]
@@ -1845,3 +1848,33 @@ def test_baseline_retries_stop_at_the_limit(monkeypatch):
     _commits(monkeypatch, [(1, runner.BASELINE_UPDATED)] * (runner.BASELINE_TRIES + 1))
     with pytest.raises(runner.RunnerError, match="تعذّر الإيداع"):
         runner.Effects(CFG).commit_push(".", "b", ["a.yml"], "m")
+
+
+def test_a_pdf_with_fallback_fonts_never_reaches_the_owner(env):
+    lp, lock = env
+    fx = Fake()
+    fx.fallback = ["DejaVu-Sans"]
+    text = _shown(lp, lock, fx)
+    assert "خطوط احتياطية" in text and "جاهز للمعاينة" not in text
+    assert not _state(lp).get("preview_seen")
+
+
+def test_only_pdf_pages_are_checked_and_view_is_stripped(monkeypatch):
+    seen = []
+    monkeypatch.setattr(runner, "fetch_as", lambda a, p: seen.append(p) or (404, b""))
+    fx = runner.Effects(CFG)
+    assert fx.pdf_fallback_fonts("/students/", "1") == [] and not seen
+    assert fx.pdf_fallback_fonts("/q/1/pdf/view/", "1") == ["لم يُفحص: HTTP 404"] and seen == ["/q/1/pdf/"]
+
+
+def test_unreadable_pdf_is_reported_not_passed(monkeypatch):
+    monkeypatch.setattr(runner, "fetch_as", lambda a, p: (200, b"not a pdf"))
+    assert runner.Effects(CFG).pdf_fallback_fonts("/q/1/pdf/", "1")[0].startswith("لم يُفحص")
+
+
+def test_real_owner_file_fonts_are_named_by_the_check(monkeypatch):
+    import fitz
+    doc = fitz.open()
+    doc.new_page()
+    monkeypatch.setattr(runner, "fetch_as", lambda a, p: (200, doc.tobytes()))
+    assert runner.Effects(CFG).pdf_fallback_fonts("/q/1/pdf/", "1") == []

@@ -752,6 +752,22 @@ class Effects:
         code = open_as(account, path)
         return code == 200, f"HTTP {code} بدخول حقيقي عبر {PREVIEW_URL}"
 
+    def pdf_fallback_fonts(self, path: str, account: str) -> list[str]:
+        """خطوطٌ احتياطيّة في PDF المعروض: الخطُّ الناقص يسقط بلا خطأ، ولا يكشفه فحصُ الحالة (#1352)."""
+        if "/pdf" not in path:
+            return []
+        import fitz  # noqa: PLC0415
+
+        try:
+            code, data = fetch_as(account, path.removesuffix("view/"))
+            if code != 200:
+                return [f"لم يُفحص: HTTP {code}"]
+            doc = fitz.open(stream=data, filetype="pdf")
+            fonts = {font[3].split("+")[-1] for page in doc for font in page.get_fonts()}
+        except (OSError, RuntimeError, ValueError) as exc:
+            return [f"لم يُفحص: {type(exc).__name__}"]
+        return sorted(f for f in fonts if f.startswith(FALLBACK_FONTS))
+
     def preview_slot(self) -> str:
         p = sh(["git", "-C", str(self._preview_script().parent.parent), "rev-parse", "--absolute-git-dir"], ".")
         f = Path(p.stdout.strip()) / "preview-state" / "slot"
@@ -1024,7 +1040,11 @@ def preview_info(card: dict, pr: int) -> dict:
 
 
 def open_as(account: str, path: str) -> int:
-    """حالةُ الصفحة كما يراها المالك؛ كلمةُ المرور تُقرأ هنا ولا تُكتب في سجلّ."""
+    return fetch_as(account, path)[0]
+
+
+def fetch_as(account: str, path: str) -> tuple[int, bytes]:
+    """الصفحةُ كما يراها المالك؛ كلمةُ المرور تُقرأ هنا ولا تُكتب في سجلّ."""
     env = (ROOT / PREVIEW_PASSWORD_AT).read_text(encoding="utf-8")
     password = re.search(r"^PREVIEW_ACCOUNTS_PASSWORD=[\"']?(.*?)[\"']?\s*$", env, re.M).group(1)
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -1033,9 +1053,10 @@ def open_as(account: str, path: str) -> int:
     form = urllib.parse.urlencode({"csrfmiddlewaretoken": token, "identifier": account, "password": password}).encode("utf-8")
     opener.open(urllib.request.Request(login, form, {"Referer": login}), timeout=30)
     try:
-        return opener.open(PREVIEW_URL + path, timeout=60).status
+        page = opener.open(PREVIEW_URL + path, timeout=120)
+        return page.status, page.read()
     except urllib.error.HTTPError as exc:
-        return exc.code
+        return exc.code, b""
 
 
 def seed_prompt(card: dict, info: dict, error: str = "") -> str:
@@ -1106,6 +1127,11 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
         if not path:  # لا «جاهز» بلا بيانات، ولا اعتماد؛ ويُعاد برأسٍ جديد أو --reseed فلا تتكرّر الكلفة كلَّ دورة
             ledger.append_event("update", cid, {"preview_seed_failed": head}, lpath)
             refer(cid, f"تعذّرت المعاينة: لم يكتمل البذر للطلب #{pr}: {error} — للإعادة: python tools/runner.py --reseed {cid}")
+            return "waiting_preview"
+        fallback = fx.pdf_fallback_fonts(path, info["account"])
+        if fallback:  # لا يصل إلى المالك ما يعرف المشغّلُ أنّه خاطئ، ولا يُعاد البذرُ فالعلّةُ في الشيفرة
+            ledger.append_event("update", cid, {"preview_seed_failed": head}, lpath)
+            refer(cid, f"لم تُعرض المعاينة: PDF الطلب #{pr} بخطوط احتياطية: {'، '.join(fallback)[:200]}")
             return "waiting_preview"
         info["url"] = PREVIEW_URL + path
         ledger.append_event("update", cid, {"preview_seen": head, "preview_info": info}, lpath)
@@ -1267,6 +1293,7 @@ VISIBLE_PATHS = ("templates/", "static/")  # ما يراه المستخدم: ي�
 GATE_SUMMARY = "ملخص بوابة الجودة"  # يحمرّ تبعاً لأيّ مهمّةٍ أُلغيت فلا يُعدّ فشلاً مستقلّاً معها
 DERIVED_CHECKS = (GATE_SUMMARY, "pytest — تغطية", "Security Summary")  # نتيجةُ غيرهما: تسقط إذا سقط shard، ولا تقول شيئاً بنفسها
 AFFECTED_TOOL = "scripts/affected_tests.py"
+FALLBACK_FONTS = ("DejaVu", "FreeSerif")
 SECRETS_BASELINE = ".secrets.baseline"
 BASELINE_TRIES = 8
 BASELINE_UPDATED = "The baseline file was updated"
