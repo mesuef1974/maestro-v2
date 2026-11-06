@@ -1834,3 +1834,14 @@ def test_security_summary_fallen_with_a_cancelled_audit_is_not_sent_to_the_model
     fx.ci, fx.failed = "red", ["pip-audit", "Security Summary", "pytest shard 6/8", "pytest — تغطية", runner.GATE_SUMMARY]
     fx.cancelled = {"pip-audit": "41", "pytest shard 6/8": "42"}
     assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and sorted(fx.reruns) == ["41", "42"] and fx.runs == 1
+
+
+def test_parallel_hook_passes_need_several_baseline_retries(monkeypatch):
+    _commits(monkeypatch, [(1, runner.BASELINE_UPDATED)] * 3 + [(0, "")])
+    assert runner.Effects(CFG).commit_push(".", "b", ["a.yml"], "m") == "h1"
+
+
+def test_baseline_retries_stop_at_the_limit(monkeypatch):
+    _commits(monkeypatch, [(1, runner.BASELINE_UPDATED)] * (runner.BASELINE_TRIES + 1))
+    with pytest.raises(runner.RunnerError, match="تعذّر الإيداع"):
+        runner.Effects(CFG).commit_push(".", "b", ["a.yml"], "m")

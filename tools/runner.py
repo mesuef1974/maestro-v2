@@ -627,9 +627,12 @@ class Effects:
     def commit_push(self, tree: str, branch: str, files: list[str], msg: str) -> str:
         sh(["git", "add", "--", *files], tree)
         p = sh(["git", "commit", "-m", msg], tree)
-        if p.returncode and BASELINE_UPDATED in p.stdout + p.stderr:
-            # تحريكُ الأسطر يغيّر أرقامَها في خطّ أساس الأسرار، فيوقف الخطّافُ الإيداعَ مرّةً (W-20261105-019).
-            # الإعادةُ تمرّ على الخطّاف نفسِه: سرٌّ جديدٌ يُسقطها ولا يدخل خطَّ الأساس.
+        for _ in range(BASELINE_TRIES):
+            if not p.returncode or BASELINE_UPDATED not in p.stdout + p.stderr:
+                break
+            # تحريكُ الأسطر يغيّر أرقامَها في خطّ أساس الأسرار، فيوقف الخطّافُ الإيداع (W-20261105-019). وعمليّاتُه المتوازية
+            # تكتب بعضُها فوق بعض، فتسعةُ ملفّاتٍ احتاجت أربعَ محاولات (W-20261106-002).
+            # كلُّ إعادةٍ تمرّ على الخطّاف نفسِه: سرٌّ جديدٌ يُسقطها ولا يدخل خطَّ الأساس.
             sh(["git", "add", "--", SECRETS_BASELINE], tree)
             p = sh(["git", "commit", "-m", msg], tree)
         if p.returncode:
@@ -1264,6 +1267,7 @@ GATE_SUMMARY = "ملخص بوابة الجودة"  # يحمرّ تبعاً لأ�
 DERIVED_CHECKS = (GATE_SUMMARY, "pytest — تغطية", "Security Summary")  # نتيجةُ غيرهما: تسقط إذا سقط shard، ولا تقول شيئاً بنفسها
 AFFECTED_TOOL = "scripts/affected_tests.py"
 SECRETS_BASELINE = ".secrets.baseline"
+BASELINE_TRIES = 8
 BASELINE_UPDATED = "The baseline file was updated"
 CI_RERUN_MAX = 1  # إعادةُ عطل البنية؛ بعدها علّةُ CI لا يصلحها النموذج
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
