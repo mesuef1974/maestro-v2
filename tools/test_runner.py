@@ -1825,3 +1825,12 @@ def test_any_other_hook_failure_does_not_touch_the_baseline(monkeypatch):
     with pytest.raises(runner.RunnerError):
         runner.Effects(CFG).commit_push(".", "b", ["a.yml"], "m")
     assert ["git", "add", "--", runner.SECRETS_BASELINE] not in calls
+
+
+def test_security_summary_fallen_with_a_cancelled_audit_is_not_sent_to_the_model(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.ci, fx.failed = "red", ["pip-audit", "Security Summary", "pytest shard 6/8", "pytest — تغطية", runner.GATE_SUMMARY]
+    fx.cancelled = {"pip-audit": "41", "pytest shard 6/8": "42"}
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and sorted(fx.reruns) == ["41", "42"] and fx.runs == 1
