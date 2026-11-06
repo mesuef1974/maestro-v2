@@ -96,3 +96,10 @@ def test_failure_is_recorded_not_raised(env, monkeypatch):
     assert lo.read_state()["ok"] is False and not lo.due()
     monkeypatch.setattr(lo, "RETRY_S", 0)
     assert lo.due()
+
+
+def test_full_name_pattern_catches_chains_and_skips_plain_words():
+    assert lo.FULL_NAME.search("زار محمد أحمد الكواري الصف")
+    assert lo.FULL_NAME.search("فاطمة بنت راشد")
+    assert not lo.FULL_NAME.search("عمر آخر حركة بالساعات")
+    assert not lo.FULL_NAME.search("سفيان في حد الحجب")

@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,10 @@ README = """# أرشيف الأتمتة
 نسخة يوميّة آليّة من دفتر المشغّل وطلباته المنتهية وفروق الفشل. المصدر هو الجهاز، وهذا الفرع نسخة استعادة.
 لا يُعدَّل يدويًّا. `MANIFEST.json` يحمل بصمة كلّ ملفّ في آخر دفعة.
 """
+# اسمٌ كامل: اسمٌ شائع يتبعه اسمٌ شائع أو نسب ثم كلمة. الاسم الأول وحده لا يُعدّ، فـ«عمر آخر حركة» كلامٌ عاديّ.
+FIRST_NAMES = ("محمد|أحمد|احمد|علي|خالد|عبدالله|عبدالرحمن|يوسف|إبراهيم|ابراهيم|حسن|حسين|سعيد|عمر|مصطفى|محمود|سالم|ناصر|فهد|جاسم|"
+               "حمد|راشد|سلطان|طارق|سفيان|فاطمة|مريم|عائشة|نورة")
+FULL_NAME = re.compile(rf"(?<![\u0621-\u064a])(?:{FIRST_NAMES})\s+(?:بن|بنت|ابن|عبد\s?[\u0621-\u064a]+|{FIRST_NAMES})\s+[\u0621-\u064a]{{2,}}")
 GIT_TIMEOUT = 300
 RETRY_S = 3600  # الدورة كلّ 5 دقائق؛ بعد فشلٍ لا يُطرق البعيد إلّا كلّ ساعة
 
@@ -116,6 +121,8 @@ def scan(files: list[Path]) -> list[str]:
         with open(f, encoding="utf-8", errors="replace") as lines:
             for line in lines:
                 found.update(f"{name}: {f.relative_to(CLONE).as_posix()}" for name in daily_push.scan_line(line))
+                if FULL_NAME.search(line):
+                    found.add(f"اسم شخص كامل: {f.relative_to(CLONE).as_posix()}")
     return sorted(found)
 
 
