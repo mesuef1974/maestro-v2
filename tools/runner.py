@@ -1617,6 +1617,16 @@ def poll(cfg: dict, cycle=run_cycle, sleep=time.sleep, clock=time.monotonic) -> 
         sleep(POLL_S)
 
 
+def offsite_tick() -> None:
+    """نسخةُ الأرشيف الخارجية في عمليّة منفصلة: تقرّر هي إن حان وقتها، وفشلُها لا يصل إلى البطاقات."""
+    try:
+        subprocess.Popen(  # noqa: S603
+            [sys.executable, str(Path(__file__).with_name("ledger_offsite.py"))],
+            cwd=Path(__file__).parent, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+    except OSError as exc:
+        print(f"تعذّر تشغيل النسخة الخارجية: {exc}")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="مشغّل البطاقات بلا جلسة")
     ap.add_argument("--dry", action="store_true")
@@ -1644,6 +1654,7 @@ def main(argv: list[str] | None = None) -> int:
         print(card["id"] if card else "idle")
         return 0
     poll(cfg)
+    offsite_tick()
     return 0
 
 
