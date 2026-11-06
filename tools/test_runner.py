@@ -101,6 +101,7 @@ class Fake(runner.Effects):
     def in_deploy_window(self, tree): return self.window
     def healthy(self): return self.is_healthy
     def pr_state(self, tree, pr): return self.merge_state, "oid1"
+    def pr_conflicted(self, tree, pr): return getattr(self, "conflicted", False)
     def prod_status(self): return self.prod, self.is_healthy
     def contains(self, tree, oid, prod): return prod == "oid1"
     def main_sha(self): return "good1234abcd"
@@ -1878,3 +1879,15 @@ def test_real_owner_file_fonts_are_named_by_the_check(monkeypatch):
     doc.new_page()
     monkeypatch.setattr(runner, "fetch_as", lambda a, p: (200, doc.tobytes()))
     assert runner.Effects(CFG).pdf_fallback_fonts("/q/1/pdf/", "1") == []
+
+
+def test_a_conflicted_pr_stops_waiting_for_the_queue_and_frees_its_slot(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.merge_state, fx.conflicted = "OPEN", True
+    closed = []
+    fx.close_pr = lambda tree, pr: closed.append(pr)
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert closed and _state(lp)["state"] == "closed" and "تعارض دمج" in runner.OWNER_QUEUE.read_text(encoding="utf-8")

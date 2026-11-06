@@ -540,9 +540,10 @@ class Effects:
         if fp._image_present(docker):
             return
         if not self.docker_up(docker):
-            exe = self.cfg.get("docker_desktop", "C:/Program Files/Docker/Docker/Docker Desktop.exe")
-            if Path(exe).is_file():
-                subprocess.Popen([exe], close_fds=True)  # noqa: S603
+            # تشغيل Docker Desktop.exe وهو يعمل يفتح لوحته ملء الشاشة فوق عمل المالك؛ هذا الأمر يشغّل المحرّك بلا لوحة.
+            subprocess.Popen(["docker", "desktop", "start"], close_fds=True, stdin=subprocess.DEVNULL,  # noqa: S603, S607
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             end = time.time() + wait_s
             while not self.docker_up(docker):
                 if time.time() >= end:
@@ -878,6 +879,9 @@ class Effects:
         except ValueError:
             return "UNKNOWN", ""
         return d.get("state", "UNKNOWN"), (d.get("mergeCommit") or {}).get("oid", "")
+
+    def pr_conflicted(self, tree: str, pr: int) -> bool:
+        return sh(["gh", "pr", "view", str(pr), "--json", "mergeStateStatus", "-q", ".mergeStateStatus"], tree).stdout.strip() == "DIRTY"
 
     def prod_status(self) -> tuple[str, bool]:
         """(commit الإنتاج من /health/، وهل status=ok وكلّ checks=ok)."""
@@ -1327,6 +1331,9 @@ def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stag
         if state != "MERGED":
             if state == "CLOSED" or now() - _since(card, "merged_wait", now) > MERGE_WAIT_S:
                 raise RunnerError(f"الطلب {pr} لم يُدمج ({state}) — أُخرج من الطابور أو انقضت مهلة 60 دقيقة")
+            if state == "OPEN" and fx.pr_conflicted(tree, pr):  # لا يدخل الطابورَ أبداً، ويحجز خانةً ساعةً كاملة (#1355)
+                fx.close_pr(tree, pr)
+                raise RunnerError(f"تعارض دمج مع main على الطلب {pr}: أُغلق، وتُعاد البطاقة من main")
             if state == "OPEN":
                 fx.merge(tree, pr)  # لا يزال مفتوحاً بلا طابور: يُعاد طلب الدمج (idempotent)
             ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
