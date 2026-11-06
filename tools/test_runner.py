@@ -657,22 +657,33 @@ def test_gate_script_comes_from_main_not_from_the_branch(tmp_path):
     assert runner.Effects(cfg_none).gate_script(str(tmp_path)) == "scripts/auto_merge_gate.py"
 
 
-def test_second_card_starts_while_first_waits_and_third_does_not(env):
+def test_cards_start_up_to_the_ceiling_and_the_next_does_not(env):
     lp, lock = env
-    for n in (901, 902, 903):
-        _card(lp, f"W-20261104-{n}")
+    for n in range(901, 901 + runner.MAX_INFLIGHT + 1):
+        _card(lp, f"W-20261104-{n}", scope_files=[f"{n}.py"])
     fx = Fake()
     fx.ci = "pending"
-    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 1
-    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2
-    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == 2  # السقف بطاقتان
-    assert _state(lp, "W-20261104-903")["state"] == "routed"
+    for started in range(1, runner.MAX_INFLIGHT + 1):
+        assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == started
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci" and fx.runs == runner.MAX_INFLIGHT
+    assert _state(lp, f"W-20261104-{901 + runner.MAX_INFLIGHT}")["state"] == "routed"
+
+
+def test_card_sharing_a_file_waits_for_the_running_one(env):
+    lp, lock = env
+    _card(lp, "W-20261104-901", scope_files=["a.py"])
+    _card(lp, "W-20261104-902", scope_files=["a.py"])
+    fx = Fake()
+    fx.ci = "pending"
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert fx.runs == 1 and _state(lp, "W-20261104-902")["state"] == "routed"
 
 
 def test_second_card_does_not_merge_until_first_is_published(env):
     lp, lock = env
-    _card(lp, "W-20261104-901")
-    _card(lp, "W-20261104-902")
+    _card(lp, "W-20261104-901", scope_files=["a.py"])
+    _card(lp, "W-20261104-902", scope_files=["b.py"])
     fx = Fake()
     fx.prod = "old0000"
     assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_deploy"  # الأولى دُمجت ولم تُنشر
@@ -899,12 +910,12 @@ class TurnsGreen(Fake):
 
 def test_waiting_card_is_published_between_rounds_of_the_other(env):
     lp, lock = env
-    _card(lp, "W-20261104-901")
+    _card(lp, "W-20261104-901", scope_files=["a.py"])
     fx = TurnsGreen()
     fx.run_model = lambda *a: Fake.run_model(fx, *a)
     fx.ci = "pending"
     assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
-    _card(lp, "W-20261104-902")
+    _card(lp, "W-20261104-902", scope_files=["b.py"])
     fx.run_model = lambda *a: TurnsGreen.run_model(fx, *a)
     fx.ci = "pending"
     runner.run_cycle(CFG, fx, lp, lock)
@@ -1915,3 +1926,38 @@ def test_a_retry_loop_in_the_ledger_ends(env):
     _attempt("W-1", "web-1", "web-2", lp)
     _attempt("W-2", "web-2", "web-1", lp)
     assert runner.earlier_attempts({"id": "W-3", "retry_of": "web-1"}, lp) == ["W-1", "W-2"]
+
+
+def _running(cid, files=(), **extra):
+    return {"id": cid, "state": "in_progress", "scope_files": list(files), "runner_resume": {"head": "h1"}, **extra}
+
+
+def test_card_shown_to_owner_does_not_hold_a_slot():
+    assert runner.awaiting_owner(_running("a", approval="معاينة", preview_seen="h1"))
+    assert not runner.awaiting_owner(_running("a", approval="معاينة", preview_seen="old"))
+    assert not runner.awaiting_owner(_running("a", approval="معاينة", preview_seen="h1", preview_approved=True))
+    assert not runner.awaiting_owner(_running("a", approval="مباشر"))
+
+
+def test_card_held_for_diff_reading_does_not_hold_a_slot():
+    assert runner.awaiting_owner(_running("a", merge_hold_told="h1"))
+    assert not runner.awaiting_owner(_running("a", merge_hold_told="h1", merge_released="h1"))
+
+
+def test_shared_file_clashes_even_with_a_card_awaiting_owner():
+    waiting = _running("a", ["x.py"], approval="معاينة", preview_seen="h1")
+    assert runner.clashes({"scope_files": ["x.py"]}, [waiting])
+    assert not runner.clashes({"scope_files": ["y.py"]}, [waiting])
+
+
+def test_unknown_scope_runs_alone_among_working_cards():
+    working = _running("a", ["x.py"])
+    assert runner.clashes({"scope_files": []}, [working])
+    assert runner.clashes({"scope_files": ["y.py"]}, [_running("b")])
+    assert not runner.clashes({"scope_files": []}, [])
+
+
+def test_unknown_scope_card_awaiting_owner_blocks_nothing():
+    waiting = _running("a", approval="معاينة", preview_seen="h1")
+    assert not runner.clashes({"scope_files": ["y.py"]}, [waiting])
+    assert not runner.clashes({"scope_files": []}, [waiting])

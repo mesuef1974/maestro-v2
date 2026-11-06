@@ -53,7 +53,7 @@ MAX_FIX_RUNS = 2  # جولاتُ الإصلاح لنموذجٍ يليه أعلى
 MAX_ROUNDS = 5  # جولاتُ البطاقة كلّها؛ ولا سقفَ ماليّاً لها بقرار المالك 2026-11-05، وسقفُ التشغيل الواحد في `sizes`
 CI_FIX_MAX = 2  # جولاتُ إصلاحٍ بعد أحمر CI على الطلب نفسه قبل الإغلاق
 LOCK_STALE_S = 3 * 3600
-MAX_INFLIGHT = 2  # بطاقتان معاً في أقصى حدّ؛ الدمجُ والنشرُ واحدةٌ تلو الأخرى (deploy_busy)
+MAX_INFLIGHT = 4  # قرار المالك 2026-11-06؛ المنتظرةُ قرارَه لا تُحسب، والبناءُ والدمجُ والنشرُ واحدةٌ تلو الأخرى (deploy_busy)
 POLL_S = 60  # الدورةُ تُعاد كلَّ دقيقةٍ داخل تشغيل المهمّة المجدولة
 POLL_WINDOW_S = 270  # أقلُّ من 5 دقائق حتى ينتهي التشغيلُ قبل موعد المهمّة التالي
 POLL_AGAIN = ("idle", "published", "referred")  # مع waiting_*؛ غيرُها (env_down وlocked) يُنهي التشغيل
@@ -235,6 +235,7 @@ def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
         i for i in items.values()
         if i.get("state") == "routed" and i.get("runner_size") and size_row(cfg, i["runner_size"])
         and i.get("accept") and i.get("spec_tier", i.get("tier")) in ("full", None, "") and not i.get("runner_hold")
+        and not clashes(i, inflight(items))
     ]
     ready.sort(key=lambda i: (ledger.PRIORITIES.index(i.get("priority", "P3")) if i.get("priority") in ledger.PRIORITIES else 9, i.get("created", "")))
     return ready[0] if ready else None
@@ -1265,6 +1266,26 @@ def deploy_busy(card_id: str, lpath=None) -> bool:
     return any(i["id"] != card_id and (i.get("runner_resume") or {}).get("stage") in ("merged_wait", "deploy_wait") for i in items.values())
 
 
+def awaiting_owner(card: dict) -> bool:
+    """معروضةٌ على 8500 أو موقوفةٌ لقراءة الفرق: لا تعمل شيئاً، فلا تحجز مكاناً (تعطّلت بها ثلاثُ بطاقاتٍ في 2026-11-06)."""
+    head = (card.get("runner_resume") or {}).get("head")
+    if not head:
+        return False
+    shown = card.get("approval") == "معاينة" and not card.get("preview_approved") and card.get("preview_seen") == head
+    held = card.get("merge_hold_told") == head and card.get("merge_released") != head
+    return shown or held
+
+
+def clashes(card: dict, active: list[dict]) -> bool:
+    """ملفٌّ مشتركٌ مع بطاقةٍ جارية يعني تعارضاً؛ وما لا تُعرف ملفّاته لا يبدأ مع بطاقةٍ عاملة ولا تبدأ بطاقةٌ بجانبه."""
+    mine = set(card.get("scope_files") or [])
+    for other in active:
+        theirs = set(other.get("scope_files") or [])
+        if mine & theirs or ((not mine or not theirs) and not awaiting_owner(other)):
+            return True
+    return False
+
+
 def inflight(items: dict[str, dict]) -> list[dict]:
     """بطاقاتٌ فتحت طلبها ولم تنتهِ، الأقدمُ أوّلاً فهي الأسبقُ إلى الدمج."""
     cards = [i for i in items.values() if i.get("state") in ("in_progress", "merged") and i.get("runner_resume")]
@@ -1605,7 +1626,7 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
             for waiting in inflight(ledger.reduce_state(ledger.load_events(lpath))):
                 out = resume(waiting, cfg, fx, lpath)
             items = ledger.reduce_state(ledger.load_events(lpath))
-            if len(inflight(items)) >= MAX_INFLIGHT:
+            if sum(not awaiting_owner(i) for i in inflight(items)) >= MAX_INFLIGHT:
                 return out
             card = pick_card(items, cfg)
             if not card:
