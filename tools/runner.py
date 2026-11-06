@@ -1464,7 +1464,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                 ledger.append_event("update", cid, {"criteria_line": card["criteria_line"]}, lpath)
             head = fx.commit_push(tree, branch, files, f"{cid}: {card.get('problem', '')[:60]}")
             pr = fx.open_pr(tree, branch, f"{cid}: {card.get('problem', '')[:60]}", pr_body(card, head, files))
-            for old_pr in fx.close_old_prs(tree, cid, pr):
+            for old_pr in (n for c in (cid, *earlier_attempts(card, lpath)) for n in fx.close_old_prs(tree, c, pr)):
                 ledger.append_event("note", cid, {"text": f"[مشغّل] أُغلق الطلب القديم #{old_pr}: حلّ محلّه #{pr}", "by": BY}, lpath)
             card["runner_resume"] = {"pr": pr, "branch": branch, "head": head, "tree": tree, "spent": spent}
             ledger.append_event("update", cid, {"pr": pr, "runner_resume": card["runner_resume"]}, lpath)
@@ -1518,6 +1518,17 @@ def resume(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
 def _split_list(fields: dict, key: str) -> list[str]:
     """قيمةٌ مفصولةٌ بالفاصلة العربيّة في ملفّ الطلب (المعايير المرقّمة، الفحوص، الملفّات) ← قائمة."""
     return [x.strip() for x in fields.get(key, "").split("،") if x.strip()]
+
+
+def earlier_attempts(card: dict, lpath=None) -> list[str]:
+    """بطاقاتُ المحاولات السابقة بسلسلة retry_of: طلباتُها لا تُغلق ببحث العنوان عن البطاقة الجديدة (#1351، #1353، #1356)."""
+    by_request = {c.get("request_file"): c for c in ledger.reduce_state(ledger.load_events(lpath)).values() if c.get("request_file")}
+    found: list[str] = []
+    prev = by_request.get(card.get("retry_of"))
+    while prev and prev["id"] not in found and prev["id"] != card.get("id"):
+        found.append(prev["id"])
+        prev = by_request.get(prev.get("retry_of"))
+    return found
 
 
 def intake_requests(cfg: dict, lpath=None) -> int:

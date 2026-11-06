@@ -1891,3 +1891,27 @@ def test_a_conflicted_pr_stops_waiting_for_the_queue_and_frees_its_slot(env):
     runner.run_cycle(CFG, fx, lp, lock)
     runner.run_cycle(CFG, fx, lp, lock)
     assert closed and _state(lp)["state"] == "closed" and "تعارض دمج" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def _attempt(cid, request, retry_of, lp):
+    ledger.append_event("created", cid, {"problem": "x", "request_file": request, "retry_of": retry_of}, lp)
+
+
+def test_a_retry_finds_every_earlier_attempt(env):
+    lp, _ = env
+    _attempt("W-1", "web-1", "", lp)
+    _attempt("W-2", "web-2", "web-1", lp)
+    assert runner.earlier_attempts({"id": "W-3", "retry_of": "web-2"}, lp) == ["W-2", "W-1"]
+
+
+def test_a_card_without_retry_has_no_earlier_attempt(env):
+    lp, _ = env
+    _attempt("W-1", "web-1", "", lp)
+    assert runner.earlier_attempts({"id": "W-2", "retry_of": ""}, lp) == []
+
+
+def test_a_retry_loop_in_the_ledger_ends(env):
+    lp, _ = env
+    _attempt("W-1", "web-1", "web-2", lp)
+    _attempt("W-2", "web-2", "web-1", lp)
+    assert runner.earlier_attempts({"id": "W-3", "retry_of": "web-1"}, lp) == ["W-1", "W-2"]
