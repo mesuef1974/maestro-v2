@@ -73,6 +73,12 @@ class Fake(runner.Effects):
         q = getattr(self, "seed_checks", [(True, "PREVIEW_STATUS=200")])
         return q.pop(0) if len(q) > 1 else q[0]
 
+    def slot_up(self, tree, port):
+        self.slots = getattr(self, "slots", []) + [port]
+        return getattr(self, "slot_ok", True), "log"
+
+    def slot_serves(self, port, head): return getattr(self, "slot_live", True)
+    def slot_down(self, port): self.downs = getattr(self, "downs", []) + [port]
     def preview_tick(self): self.ticks = getattr(self, "ticks", 0) + 1
     def preview_release(self): self.releases = getattr(self, "releases", 0) + 1
     def close_pr(self, tree, pr): self.closed_pr = pr
@@ -1444,7 +1450,7 @@ def test_expired_pin_voids_the_shown_head_and_pins_again(env):
     assert len(fx.pins) == 2 and not _state(lp)["preview_seen"]
 
 
-def test_second_card_waits_for_the_single_slot(env):
+def test_second_card_is_shown_on_a_slot_beside_8500(env):
     lp, lock = env
     _preview_card(lp, "W-20261104-901")
     _preview_card(lp, "W-20261104-902")
@@ -1457,7 +1463,7 @@ def test_second_card_waits_for_the_single_slot(env):
     fx.ci = "green"
     for _ in range(3):
         runner.run_cycle(CFG, fx, lp, lock)
-    assert len(fx.pins) == 1 and _queue().count("جاهز للمعاينة") == 1
+    assert len(fx.pins) == 1 and fx.slots == [8601] and _queue().count("جاهز للمعاينة") == 2
 
 
 class Pinned(Fake):
@@ -1577,7 +1583,7 @@ def test_no_script_in_the_answer_never_runs_anything(env):
 
 def test_check_goes_through_the_real_server_and_needs_200(monkeypatch):
     seen = []
-    monkeypatch.setattr(runner, "open_as", lambda account, path: seen.append((account, path)) or 404)
+    monkeypatch.setattr(runner, "open_as", lambda account, path, base="": seen.append((account, path)) or 404)
     ok, log = runner.Effects(CFG).check_seed("/a/", "99900001")
     assert not ok and "404" in log and seen == [("99900001", "/a/")]
 
@@ -1873,14 +1879,14 @@ def test_a_pdf_with_fallback_fonts_never_reaches_the_owner(env):
 
 def test_only_pdf_pages_are_checked_and_view_is_stripped(monkeypatch):
     seen = []
-    monkeypatch.setattr(runner, "fetch_as", lambda a, p: seen.append(p) or (404, b""))
+    monkeypatch.setattr(runner, "fetch_as", lambda a, p, base="": seen.append(p) or (404, b""))
     fx = runner.Effects(CFG)
     assert fx.pdf_fallback_fonts("/students/", "1") == [] and not seen
     assert fx.pdf_fallback_fonts("/q/1/pdf/view/", "1") == ["لم يُفحص: HTTP 404"] and seen == ["/q/1/pdf/"]
 
 
 def test_unreadable_pdf_is_reported_not_passed(monkeypatch):
-    monkeypatch.setattr(runner, "fetch_as", lambda a, p: (200, b"not a pdf"))
+    monkeypatch.setattr(runner, "fetch_as", lambda a, p, base="": (200, b"not a pdf"))
     assert runner.Effects(CFG).pdf_fallback_fonts("/q/1/pdf/", "1")[0].startswith("لم يُفحص")
 
 
@@ -1888,7 +1894,7 @@ def test_real_owner_file_fonts_are_named_by_the_check(monkeypatch):
     import fitz
     doc = fitz.open()
     doc.new_page()
-    monkeypatch.setattr(runner, "fetch_as", lambda a, p: (200, doc.tobytes()))
+    monkeypatch.setattr(runner, "fetch_as", lambda a, p, base="": (200, doc.tobytes()))
     assert runner.Effects(CFG).pdf_fallback_fonts("/q/1/pdf/", "1") == []
 
 
@@ -2024,3 +2030,73 @@ def test_fewer_mypy_errors_is_not_the_same_failure_twice():
     one = runner.failure_fingerprint("✘ mypy ratchet: فشل" + chr(10) + "    زاد: b/s.py: 17 → 19")
     two = runner.failure_fingerprint("✘ mypy ratchet: فشل" + chr(10) + "    زاد: b/s.py: 17 → 18")
     assert one != two and one == runner.failure_fingerprint("✘ mypy ratchet: فشل" + chr(10) + "    زاد: b/s.py: 17 → 19")
+
+
+def _on_preview(lp, cid, tree="/t"):
+    _preview_card(lp, cid)
+    ledger.append_event("update", cid, {"runner_resume": {"pr": 1, "branch": "b", "head": "h1", "tree": tree, "spent": 0}}, lp)
+    return ledger.reduce_state(ledger.load_events(lp))[cid]
+
+
+def test_busy_8500_gives_the_card_a_slot_and_shows_it_there(env):
+    lp, _ = env
+    card = _on_preview(lp, "W-20261104-902")
+    fx = Fake()
+    fx.pinned = "/other"
+    assert runner.preview_step(card, fx, lp, "/t", "h1", 1) == "waiting_preview"
+    got = ledger.reduce_state(ledger.load_events(lp))["W-20261104-902"]
+    assert fx.slots == [8601] and got["preview_slot_port"] == 8601 and got["preview_seen"] == "h1"
+    assert got["preview_info"]["url"].startswith("http://localhost:8601/") and fx.target == 0
+
+
+def test_free_8500_is_used_before_any_slot(env):
+    lp, _ = env
+    card = _on_preview(lp, "W-20261104-902")
+    fx = Fake()
+    runner.preview_step(card, fx, lp, "/t", "h1", 1)
+    assert fx.pins == ["/t"] and not getattr(fx, "slots", [])
+
+
+def test_all_slots_busy_keeps_the_card_waiting(env):
+    lp, _ = env
+    for n, port in (("903", 8601), ("904", 8602)):
+        _preview_card(lp, "W-20261104-" + n)
+        ledger.append_event("update", "W-20261104-" + n, {"preview_slot_port": port}, lp)
+    card = _on_preview(lp, "W-20261104-902")
+    fx = Fake()
+    fx.pinned = "/other"
+    assert runner.preview_step(card, fx, lp, "/t", "h1", 1) == "waiting_preview"
+    assert not getattr(fx, "slots", [])
+
+
+def test_failed_slot_is_reported_once_per_head(env):
+    lp, _ = env
+    card = _on_preview(lp, "W-20261104-902")
+    fx = Fake()
+    fx.pinned, fx.slot_ok = "/other", False
+    runner.preview_step(card, fx, lp, "/t", "h1", 1)
+    card = ledger.reduce_state(ledger.load_events(lp))["W-20261104-902"]
+    runner.preview_step(card, fx, lp, "/t", "h1", 1)
+    assert len(fx.slots) == 1
+
+
+def test_a_decided_card_frees_its_slot(env):
+    lp, _ = env
+    _on_preview(lp, "W-20261104-902")
+    ledger.append_event("update", "W-20261104-902", {"preview_slot_port": 8601, "preview_approved": True}, lp)
+    fx = Fake()
+    runner.preview_cycle(CFG, fx, lp)
+    assert fx.downs == [8601] and ledger.reduce_state(ledger.load_events(lp))["W-20261104-902"]["preview_slot_port"] == 0
+    assert runner.free_slot(lp) == 8601
+
+
+def test_a_slot_that_fell_is_claimed_again_and_reseeded(env):
+    lp, _ = env
+    _on_preview(lp, "W-20261104-902")
+    ledger.append_event("update", "W-20261104-902", {"preview_slot_port": 8601, "preview_seen": "h1"}, lp)
+    card = ledger.reduce_state(ledger.load_events(lp))["W-20261104-902"]
+    fx = Fake()
+    fx.pinned, fx.slot_live = "/other", False
+    runner.preview_step(card, fx, lp, "/t", "h1", 1)
+    got = ledger.reduce_state(ledger.load_events(lp))["W-20261104-902"]
+    assert fx.slots == [8601] and got["preview_slot_port"] == 8601 and got["preview_seen"] == "h1"

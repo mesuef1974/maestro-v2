@@ -788,10 +788,28 @@ class Effects:
             check_quota(str(data.get("result", "")))
         return Result(not data.get("is_error"), str(data.get("result", "")), float(data.get("total_cost_usd") or 0), int(data.get("num_turns") or 0), data)
 
+    target = 0  # منفذُ الخانة الإضافيّة الجاري بذرُها؛ صفرٌ = 8500
+
+    def slot_up(self, tree: str, port: int) -> tuple[bool, str]:
+        p = sh([GIT_BASH, str(HERE / "preview_slot.sh"), "up", tree, str(port)], ".", 400)
+        return p.returncode == 0, (p.stdout + p.stderr)[-600:]
+
+    def slot_serves(self, port: int, head: str) -> bool:
+        """الخانةُ قائمةٌ على هذا الرأس؟ إعادةُ تشغيل الجهاز أو رأسٌ جديد يُسقطانها بلا أثرٍ في الدفتر."""
+        try:
+            with urllib.request.urlopen(slot_url(port) + "/health/", timeout=5) as r:
+                commit = str(json.loads(r.read().decode("utf-8")).get("commit") or "")
+        except (OSError, ValueError):
+            return False
+        return bool(commit) and head.startswith(commit)
+
+    def slot_down(self, port: int) -> None:
+        sh([GIT_BASH, str(HERE / "preview_slot.sh"), "down", str(port)], ".", 120)
+
     def run_seed(self, script: str) -> tuple[bool, str]:
         """داخل حاوية الويب المعروضة؛ الحارسُ يوقفه إن لم تكن قاعدةَ تثبيت."""
-        st = self.preview_slot()
-        p = sh(["docker", "exec", "-i", f"schoolos-main-preview-{st}-web-1", "python", "manage.py", "shell"], ".", 300, SEED_GUARD + script)
+        name = f"preview-slot-{self.target}-web-1" if self.target else f"schoolos-main-preview-{self.preview_slot()}-web-1"
+        p = sh(["docker", "exec", "-i", name, "python", "manage.py", "shell"], ".", 300, SEED_GUARD + script)
         return p.returncode == 0 and "Traceback" not in p.stderr, (p.stdout + p.stderr)[-3000:]
 
     def map_rls(self, account: str) -> tuple[bool, str]:
@@ -799,8 +817,9 @@ class Effects:
 
     def check_seed(self, path: str, account: str) -> tuple[bool, str]:
         """دخولٌ حقيقيّ عبر 8500: `manage.py shell` يتصل بدورٍ يتجاوز RLS فيرى ما لا يراه الخادم (نجاحٌ كاذب يوم #1347)."""
-        code = open_as(account, path)
-        return code == 200, f"HTTP {code} بدخول حقيقي عبر {PREVIEW_URL}"
+        base = slot_url(self.target) if self.target else PREVIEW_URL
+        code = open_as(account, path, base)
+        return code == 200, f"HTTP {code} بدخول حقيقي عبر {base}"
 
     def pdf_fallback_fonts(self, path: str, account: str) -> list[str]:
         """خطوطٌ احتياطيّة في PDF المعروض: الخطُّ الناقص يسقط بلا خطأ، ولا يكشفه فحصُ الحالة (#1352)."""
@@ -809,7 +828,7 @@ class Effects:
         import fitz  # noqa: PLC0415
 
         try:
-            code, data = fetch_as(account, path.removesuffix("view/"))
+            code, data = fetch_as(account, path.removesuffix("view/"), slot_url(self.target) if self.target else "")
             if code != 200:
                 return [f"لم يُفحص: HTTP {code}"]
             doc = fitz.open(stream=data, filetype="pdf")
@@ -1105,21 +1124,22 @@ def preview_info(card: dict, pr: int) -> dict:
             "password_at": PREVIEW_PASSWORD_AT, "checks": checks or [card.get("problem", "")], "pr": pr}
 
 
-def open_as(account: str, path: str) -> int:
-    return fetch_as(account, path)[0]
+def open_as(account: str, path: str, base: str = "") -> int:
+    return fetch_as(account, path, base)[0]
 
 
-def fetch_as(account: str, path: str) -> tuple[int, bytes]:
+def fetch_as(account: str, path: str, base: str = "") -> tuple[int, bytes]:
     """الصفحةُ كما يراها المالك؛ كلمةُ المرور تُقرأ هنا ولا تُكتب في سجلّ."""
     env = (ROOT / PREVIEW_PASSWORD_AT).read_text(encoding="utf-8")
     password = re.search(r"^PREVIEW_ACCOUNTS_PASSWORD=[\"']?(.*?)[\"']?\s*$", env, re.M).group(1)
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-    login = PREVIEW_URL + "/auth/login/"
+    base = base or PREVIEW_URL
+    login = base + "/auth/login/"
     token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', opener.open(login, timeout=30).read().decode("utf-8")).group(1)
     form = urllib.parse.urlencode({"csrfmiddlewaretoken": token, "identifier": account, "password": password}).encode("utf-8")
     opener.open(urllib.request.Request(login, form, {"Referer": login}), timeout=30)
     try:
-        page = opener.open(PREVIEW_URL + path, timeout=120)
+        page = opener.open(base + path, timeout=120)
         return page.status, page.read()
     except urllib.error.HTTPError as exc:
         return exc.code, b""
@@ -1177,16 +1197,57 @@ def preview_message(card: dict, info: dict) -> str:
             f"للاعتماد: python tools/runner.py --approve {cid} — للرفض: python tools/runner.py --reject {cid} --reason \"السبب\" — الطلب #{info['pr']}")
 
 
+def slot_url(port: int) -> str:
+    return f"http://localhost:{port}"
+
+
+def free_slot(lpath=None) -> int:
+    used = {i.get("preview_slot_port") for i in ledger.reduce_state(ledger.load_events(lpath)).values()}
+    return next((p for p in PREVIEW_SLOTS if p not in used), 0)
+
+
+def claim_slot(card: dict, fx: Effects, lpath, tree: str, head: str) -> int:
+    """8500 مشغولٌ ببطاقةٍ أخرى: خانةٌ إضافيّة، فتصل المعاينةُ إلى المالك بلا انتظار قراره في غيرها (قراره 2026-11-07)."""
+    port = free_slot(lpath)
+    if not port or card.get("preview_slot_failed") == head:
+        return 0
+    ok, log = fx.slot_up(tree, port)
+    if not ok:
+        ledger.append_event("update", card["id"], {"preview_slot_failed": head}, lpath)
+        refer(card["id"], f"تعذّرت خانة المعاينة {port}: {failure_summary(mask(log))[:200]}")
+        return 0
+    ledger.append_event("update", card["id"], {"preview_slot_port": port}, lpath)
+    card["preview_slot_port"] = port
+    return port
+
+
 def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) -> str:
     """لا تُطلب المعاينةُ إلا بعد أن يعرض 8500 شجرةَ البطاقة فعلاً (#1347: طُلبت على خادمٍ لا يحملها)."""
     cid, st = card["id"], fx.preview_state()
     live = st.get("mode") == "pin" and int(st.get("pin_until") or 0) > time.time() and not st.get("pin_in_progress")
-    if not (live and same_tree(st.get("pin_tree", ""), tree)):
+    slot = card.get("preview_slot_port") or 0
+    if slot and not fx.slot_serves(slot, head):  # سقطت أو تخلّفت: تُطلب من جديد ويُعاد البذر
+        ledger.append_event("update", cid, {"preview_slot_port": 0}, lpath)
+        slot = 0
+    if not slot and not (live and same_tree(st.get("pin_tree", ""), tree)):
         if card.get("preview_seen"):  # انتهى التثبيت: لا يصحّ اعتمادٌ حتى يعود العرض
             ledger.append_event("update", cid, {"preview_seen": ""}, lpath)
-        if not live and not st.get("pin_request") and not st.get("pin_in_progress"):  # خانةٌ واحدة، والأقدمُ يُستأنف أوّلاً
+            card["preview_seen"] = ""
+        if not live and not st.get("pin_request") and not st.get("pin_in_progress"):  # الأقدمُ يأخذ 8500
             fx.preview_pin(tree)
-        return "waiting_preview"
+            return "waiting_preview"
+        slot = claim_slot(card, fx, lpath, tree, head) if live else 0
+        if not slot:
+            return "waiting_preview"
+    fx.target = slot
+    try:
+        return seed_and_announce(card, fx, lpath, head, pr, slot_url(slot) if slot else PREVIEW_URL)
+    finally:
+        fx.target = 0
+
+
+def seed_and_announce(card: dict, fx: Effects, lpath, head: str, pr: int, base: str) -> str:
+    cid = card["id"]
     if card.get("preview_seen") != head and card.get("preview_seed_failed") != head:
         info = preview_info(card, pr)
         path, error = seed_preview(card, info, fx, lpath)
@@ -1199,7 +1260,7 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
             ledger.append_event("update", cid, {"preview_seed_failed": head}, lpath)
             refer(cid, f"لم تُعرض المعاينة: PDF الطلب #{pr} بخطوط احتياطية: {'، '.join(fallback)[:200]}")
             return "waiting_preview"
-        info["url"] = PREVIEW_URL + path
+        info["url"] = base + path
         ledger.append_event("update", cid, {"preview_seen": head, "preview_info": info}, lpath)
         refer(cid, preview_message(card, info))
     return "waiting_preview"
@@ -1208,6 +1269,10 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
 def preview_cycle(cfg: dict, fx: Effects, lpath=None, queue: Path | None = None) -> None:
     """كلَّ دورة: يُفكّ تثبيتُ بطاقةٍ انتهى قرارها، وإلا تدور حلقةُ المتابعة. تثبيتُ غير المشغّل لا يُمسّ."""
     items = ledger.reduce_state(ledger.load_events(lpath))
+    for i in items.values():  # قُضي في البطاقة: تُفرَّغ خانتُها لغيرها
+        if i.get("preview_slot_port") and (i.get("state") in ("closed", "published", "deferred") or i.get("preview_approved") or i.get("preview_rejected")):
+            fx.slot_down(i["preview_slot_port"])
+            ledger.append_event("update", i["id"], {"preview_slot_port": 0}, lpath)
     trees = [i["runner_resume"].get("tree", "") for i in inflight(items) if i.get("approval") == "معاينة" and not i.get("preview_approved")]
     st = fx.preview_state()
     pinned = st.get("pin_tree", "").replace("\\", "/").lower()
@@ -1238,7 +1303,8 @@ def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None) -> tup
         return True, f"{cid}: سُجّل الرفض، ويغلقها المشغّل في دورته التالية"
     if card.get("preview_seen") != head:
         return False, f"{cid}: لم يُعرض الرأس {head[:8]} على 8500 بعد، فلا يُعتمد"
-    ledger.append_event("note", cid, {"text": f"[مالك] اعتمد على 8500 الرأس {head[:8]}", "by": "owner"}, lpath)
+    where = card.get("preview_slot_port") or 8500
+    ledger.append_event("note", cid, {"text": f"[مالك] اعتمد على {where} الرأس {head[:8]}", "by": "owner"}, lpath)
     ledger.append_event("update", cid, {"preview_approved": True}, lpath)
     return True, f"{cid}: سُجّل الاعتماد على الرأس {head[:8]}، ويدمجها المشغّل في دورته التالية"
 
@@ -1374,6 +1440,7 @@ def inflight(items: dict[str, dict]) -> list[dict]:
 
 
 PREVIEW_URL = "http://localhost:8500"
+PREVIEW_SLOTS = (8601, 8602)  # خانتان بجانب 8500، نحو 0.4 غيغا لكلّ خانة (قيس 2026-11-07)
 PREVIEW_PIN_MINUTES = 720  # تبقى حتى قرار المالك لا 30 دقيقة (قراره 2026-11-05): قد يقرأ الرسالة بعد ساعات
 PREVIEW_HB_STALE_S = 600
 SEED_MODEL = "sonnet"
