@@ -811,6 +811,13 @@ class Effects:
         except (OSError, SyntaxError, AttributeError, ImportError):
             return []
 
+    def mark_visual(self, tree: str, pr: int) -> None:
+        """الوسمُ ثمّ إغلاقٌ وفتحٌ ليعمل فحصُ اللقطات بحمولةٍ تحمل الوسم."""
+        for cmd in (["edit", str(pr), "--add-label", VISUAL_LABEL], ["close", str(pr)], ["reopen", str(pr)]):
+            p = sh(["gh", "pr", *cmd], tree)
+            if p.returncode:
+                raise Transient(f"تعذّر وسمُ الطلب {pr}: {p.stderr.strip()[-200:]}")
+
     def rerun_failed(self, tree: str, run_id: str) -> bool:
         return sh(["gh", "run", "rerun", run_id, "--failed"], tree).returncode == 0
 
@@ -994,6 +1001,10 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         real = [f for f in real if f not in infra and f not in DERIVED_CHECKS]
         if not real:
             return rerun_infra(card, fx, lpath, tree, pr, infra)
+    if preview and len(real) == 1 and VISUAL_CHECK in real[0]:
+        out = mark_visual_change(card, fx, lpath, tree, pr, head)
+        if out:
+            return out
     if real:
         return repair_ci(card, cfg, fx, lpath, tree, branch, pr, real)
     if preview:
@@ -1200,6 +1211,26 @@ def release_merge(cid: str, lpath=None) -> tuple[bool, str]:
     return True, f"{cid}: فُتح الدمج على الرأس {head[:8]}"
 
 
+def mark_visual_change(card: dict, fx: Effects, lpath, tree: str, pr: int, head: str) -> str:
+    """فرقُ لقطاتٍ في بطاقة معاينة: يوسم الطلب ويسمّي الصفحات في الوصف ويعرضها على المالك، واعتمادُه المعاينةَ اعتمادٌ للوسم (قراره 2026-11-07).
+
+    مرّةً لكلّ رأس، وفشلُ الحتميّة أو سجلٌّ بلا صفحات يبقى فشلاً يعود إلى النموذج. والفتحُ بعد الإغلاق لأنّ إعادة التشغيل
+    تقرأ حمولة الحدث القديمة فلا ترى الوسم، وvisual-snapshots.yml لا يعمل على labeled."""
+    cid = card["id"]
+    r = dict(card.get("runner_resume") or {})
+    pages = VISUAL_PAGE.findall(fx.ci_log(tree, pr) or "")
+    if r.get("visual_head") == head or not pages:
+        return ""
+    names = sorted({p for p, _ in pages})
+    fx.mark_visual(tree, pr)
+    r["visual_head"] = head
+    card["runner_resume"], card["visual_pages"] = r, names
+    ledger.append_event("update", cid, {"runner_resume": r, "visual_pages": names}, lpath)
+    fx.set_pr_body(tree, pr, pr_body(card, head))
+    refer(cid, f"الطلب {pr} غيّر شكل صفحات مصوّرة، فوسمته «{VISUAL_LABEL}»؛ انظرها في المعاينة: {'، '.join(names)[:300]}")
+    return "waiting_ci"
+
+
 def rerun_infra(card: dict, fx: Effects, lpath, tree: str, pr: int, infra: dict[str, str]) -> str:
     """يعيد وظائفَ عطل البنية بلا نموذج وبلا كلفة؛ وتكرارُه بعد CI_RERUN_MAX يُغلق بتقريرٍ يسمّيها."""
     cid = card["id"]
@@ -1323,6 +1354,9 @@ SECRETS_BASELINE = ".secrets.baseline"
 BASELINE_TRIES = 8
 BASELINE_UPDATED = "The baseline file was updated"
 CI_RERUN_MAX = 1  # إعادةُ عطل البنية؛ بعدها علّةُ CI لا يصلحها النموذج
+VISUAL_CHECK = "لقطات الهويّة"  # اسمُ فحص CI (visual-snapshots.yml)
+VISUAL_LABEL = "تغيير-بصريّ"
+VISUAL_PAGE = re.compile(r"(\S+\.png): ([\d.]+)%")
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
 MERGE_WAIT_S = 60 * 60
 DEPLOY_WAIT_S = 120 * 60

@@ -1961,3 +1961,50 @@ def test_unknown_scope_card_awaiting_owner_blocks_nothing():
     waiting = _running("a", approval="معاينة", preview_seen="h1")
     assert not runner.clashes({"scope_files": ["y.py"]}, [waiting])
     assert not runner.clashes({"scope_files": []}, [waiting])
+
+
+class VisualRed(Fake):
+    """فحصُ اللقطات أحمرُ بفرق صفحات؛ وبعد الوسم يخضرّ."""
+
+    def __init__(self, log="E   mobile/light/a--b.png: 0.838%\nE   desktop/light/a--b.png: 0.317%"):
+        super().__init__()
+        self.ci, self.log, self.marked = "red", log, 0
+
+    def failed_names(self, tree, pr): return ["لقطات الهويّة — حتميّةٌ ومقارنة"]
+    def infra_runs(self, tree, pr): return {}
+    def ci_log(self, tree, pr): return self.log
+    def mark_visual(self, tree, pr): self.marked += 1
+
+
+def test_visual_diff_on_a_preview_card_is_labelled_and_named_not_repaired(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = VisualRed()
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_ci"
+    assert fx.marked == 1 and fx.runs == 1
+    assert "mobile/light/a--b.png" in fx.pr_bodies[-1] and "mobile/light/a--b.png" in _queue()
+
+
+def test_visual_diff_is_marked_once_per_head_then_goes_to_the_model(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = VisualRed()
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert fx.marked == 1 and fx.runs >= 2
+
+
+def test_a_failure_without_page_diffs_is_not_labelled(env):
+    lp, lock = env
+    _preview_card(lp)
+    fx = VisualRed(log="E   determinism failed")
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert fx.marked == 0 and fx.runs >= 2
+
+
+def test_a_direct_card_is_never_labelled(env):
+    lp, lock = env
+    _card(lp)
+    fx = VisualRed()
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert fx.marked == 0
