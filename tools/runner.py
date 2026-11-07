@@ -1098,10 +1098,10 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     if st == "pending":
         return "waiting_ci"
     preview = card.get("approval") == "معاينة"
-    failed = fx.failed_names(tree, pr) if st != "green" else []
+    failed = [f for f in fx.failed_names(tree, pr) if ADVISORY_MARK not in f] if st != "green" else []  # الاستشاريّ يُقرأ ولا يمنع، والبوّابة تتجاهله منذ W-016
     # بطاقةُ المعاينة: فحصُ «سطر الاعتماد» أحمرُ بطبيعته حتى يُكتب السطرُ بعد اعتماد المالك، فليس فشلاً. قبل 2026-11-05 كان
     # يُعدّ فشلَ CI فتُغلق كلُّ بطاقة معاينةٍ بتقرير قبل أن تبلغ المعاينةَ أصلاً (W-20261105-001 مرّتين).
-    real = [f for f in failed if not (preview and APPROVAL_CHECK in f) and ADVISORY_MARK not in f]  # الاستشاريّ يُقرأ ولا يمنع
+    real = [f for f in failed if not (preview and APPROVAL_CHECK in f)]
     infra = fx.infra_runs(tree, pr) if st != "green" else {}
     if infra:  # عطلُ البنية لا يقول شيئاً عن الشيفرة، وما يُشتقّ منه يسقط معه (#1347، #1348)
         real = [f for f in real if f not in infra and f not in DERIVED_CHECKS]

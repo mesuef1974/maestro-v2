@@ -2162,3 +2162,13 @@ def test_new_files_are_visible_and_formatted_before_the_checks(monkeypatch):
     runner.Effects(CFG).prepare_for_checks("/t")
     assert calls[0] == ["git", "add", "-N", "--", "."]
     assert [c[c.index("ruff") + 1] for c in docker] == ["check", "format"] and all(c[-1] == "new.py" for c in docker)
+
+
+def test_an_advisory_red_does_not_hold_an_approved_card_from_merging(env, monkeypatch):
+    lp, _ = env
+    card = _on_preview(lp, "W-20261104-902")
+    card["preview_approved"] = True
+    fx = Fake()
+    fx.ci, fx.failed = "red", ["روابطُ المسارات الجديدة — استشاري"]
+    monkeypatch.setattr(runner, "pr_body", lambda c, h: fx.pr_body_of("/t", 1))
+    assert runner.finish(card, CFG, fx, lp, "/t", "b", "h1", 1) != "waiting_ci"
