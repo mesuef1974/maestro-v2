@@ -941,6 +941,29 @@ class Effects:
     def slot_down(self, port: int) -> None:
         sh([GIT_BASH, str(HERE / "preview_slot.sh"), "down", str(port)], ".", 120)
 
+    def containers(self) -> list[dict]:
+        """كلُّ حاويةٍ جاريةٍ: الاسمُ ومشروعُ compose وعمرُها بالثواني (قراءةٌ من docker، بلا نموذج)."""
+        p = sh(["docker", "ps", "--format", '{{.Names}}	{{.Label "com.docker.compose.project"}}	{{.CreatedAt}}'], ".", 30)
+        if p.returncode:
+            return []
+        out, now = [], time.time()
+        for ln in p.stdout.splitlines():
+            name, _, rest = ln.partition("	")
+            project, _, created = rest.partition("	")
+            try:
+                age = now - datetime.strptime(created.strip()[:25], "%Y-%m-%d %H:%M:%S %z").timestamp()
+            except ValueError:
+                continue
+            out.append({"name": name.strip(), "project": project.strip(), "age": age})
+        return out
+
+    def container_rm(self, name: str) -> None:
+        sh(["docker", "rm", "-f", name], ".", 60)
+        sh(["docker", "network", "rm", f"{name}-net"], ".", 60)
+
+    def project_down(self, project: str) -> None:
+        sh(["docker", "compose", "-p", project, "down"], ".", 180)
+
     def slot_projects(self) -> list[int]:
         """منافذُ خانات المعاينة التي لها حاويةٌ الآن (مشروعُ compose باسم preview-slot-N)."""
         p = sh(["docker", "ps", "--format", '{{.Label "com.docker.compose.project"}}'], ".", 30)
@@ -1435,10 +1458,36 @@ def sweep_slots(fx: Effects, items: dict, lpath=None, now=None) -> list[int]:
     return closed
 
 
+RUNNER_CONTAINER_TTL_S = 2 * 3600  # أطولُ فحصٍ مسموحٍ 13 دقيقة؛ فوق ساعتين بقيّةُ عملٍ انقطع
+SESSION_STACK_TTL_S = 4 * 3600  # خادمُ جلسةٍ يفتحه إنسانٌ أو جلسة: عند الحاجة لا مقيماً
+CARD_IN_NAME = re.compile(r"(w-\d{8}-\d{3})", re.IGNORECASE)
+RESIDENT_PROJECTS = ("schoolos-main-preview", "shschool-dev")  # المعاينةُ المركزيّةُ مقيمةٌ بقرار المالك؛ والتطويرُ ليس لنا
+
+
+def sweep_containers(fx: Effects, items: dict) -> list[str]:
+    """أمرُ المالك 2026-11-07 (بالكود لا بنموذج، ولا توكنز): تُغلَق (أ) حاويةُ فحصٍ `runner-*` بطاقتُها قُضيت (مدموجةٌ أو مغلقةٌ
+    أو مؤجّلة) أو عمرُها فوق ساعتين، و(ب) مشروعُ جلسةٍ `schoolos-<شجرة>` عمرُه فوق أربع ساعات. المقيمُ لا يُمسّ."""
+    done = {k.upper() for k, i in items.items() if i.get("state") in ("closed", "published", "deferred")}
+    closed: list[str] = []
+    for c in fx.containers():
+        name, project, age = c["name"], c["project"], c["age"]
+        if name.startswith("runner-"):
+            m = CARD_IN_NAME.search(name)
+            if (m and m.group(1).upper() in done) or age > RUNNER_CONTAINER_TTL_S:
+                fx.container_rm(name)
+                closed.append(name)
+        elif project.startswith("schoolos-") and not project.startswith(RESIDENT_PROJECTS) and age > SESSION_STACK_TTL_S:
+            if project not in closed:
+                fx.project_down(project)
+                closed.append(project)
+    return closed
+
+
 def preview_cycle(cfg: dict, fx: Effects, lpath=None, queue: Path | None = None) -> None:
     """كلَّ دورة: يُفكّ تثبيتُ بطاقةٍ انتهى قرارها، وإلا تدور حلقةُ المتابعة. تثبيتُ غير المشغّل لا يُمسّ."""
     items = ledger.reduce_state(ledger.load_events(lpath))
     sweep_slots(fx, items, lpath)
+    sweep_containers(fx, items)
     items = ledger.reduce_state(ledger.load_events(lpath))
     for i in items.values():  # قُضي في البطاقة: تُفرَّغ خانتُها لغيرها
         if i.get("preview_slot_port") and (i.get("state") in ("closed", "published", "deferred") or i.get("preview_approved") or i.get("preview_rejected")):

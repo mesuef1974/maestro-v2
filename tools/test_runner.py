@@ -81,6 +81,9 @@ class Fake(runner.Effects):
     def slot_serves(self, port, head): return getattr(self, "slot_live", True)
     def slot_down(self, port): self.downs = getattr(self, "downs", []) + [port]
     def slot_projects(self): return list(getattr(self, "projects", []))
+    def containers(self): return list(getattr(self, "boxes", []))
+    def container_rm(self, name): self.rm_boxes = getattr(self, "rm_boxes", []) + [name]
+    def project_down(self, project): self.downed = getattr(self, "downed", []) + [project]
     def preview_tick(self): self.ticks = getattr(self, "ticks", 0) + 1
     def preview_release(self): self.releases = getattr(self, "releases", 0) + 1
     def close_pr(self, tree, pr): self.closed_pr = pr
@@ -2289,3 +2292,28 @@ def test_a_slot_that_failed_to_start_is_torn_down(env):
     fx.slot_ok = False
     assert runner.claim_slot(card, fx, lp, "/t", "h1") == 0
     assert fx.downs == [runner.PREVIEW_SLOTS[0]]
+
+
+
+def test_sweep_containers_closes_finished_old_and_idle_stacks_but_keeps_resident(env):
+    lp, _ = env
+    ledger.append_event("created", "W-20261107-022", {"problem": "x"}, lp)
+    ledger.append_event("state", "W-20261107-022", {"state": "closed", "by": "runner"}, lp)
+    ledger.append_event("created", "W-20261107-023", {"problem": "x"}, lp)
+    ledger.append_event("state", "W-20261107-023", {"state": "in_progress", "by": "runner"}, lp)
+    fx = Fake()
+    fx.boxes = [
+        {"name": "runner-runner-w-20261107-022-x-pg", "project": "", "age": 60},  # بطاقتُها أُغلقت
+        {"name": "runner-runner-w-20261107-023-x", "project": "", "age": 60},  # حيّة وحديثة
+        {"name": "runner-runner-w-20261107-024-x", "project": "", "age": runner.RUNNER_CONTAINER_TTL_S + 1},  # قديمة
+        {"name": "schoolos-t1-web-1", "project": "schoolos-t1", "age": runner.SESSION_STACK_TTL_S + 1},
+        {"name": "schoolos-t1-worker-1", "project": "schoolos-t1", "age": runner.SESSION_STACK_TTL_S + 1},
+        {"name": "schoolos-t2-web-1", "project": "schoolos-t2", "age": 60},  # جلسةٌ حديثة
+        {"name": "schoolos-main-preview-a-web-1", "project": "schoolos-main-preview-a", "age": 10**7},  # مقيمة
+        {"name": "shschool-dev-web", "project": "shschool-dev", "age": 10**7},  # ليست لنا
+    ]
+    items = ledger.reduce_state(ledger.load_events(lp))
+    closed = runner.sweep_containers(fx, items)
+    assert fx.rm_boxes == ["runner-runner-w-20261107-022-x-pg", "runner-runner-w-20261107-024-x"]
+    assert fx.downed == ["schoolos-t1"]
+    assert closed == [*fx.rm_boxes, "schoolos-t1"]
