@@ -2137,3 +2137,28 @@ def test_only_the_cards_own_new_page_needs_a_link():
 def test_the_menu_file_is_inside_any_declared_scope():
     card = {"runner_checks": ["scope_only"], "scope_files": ["app/views.py"]}
     assert runner.criteria_failures(card, ["app/views.py", runner.MENU_FILE]) == []
+
+
+def test_an_advisory_red_alone_does_not_send_the_card_to_repair(env):
+    lp, _ = env
+    card = _on_preview(lp, "W-20261104-902")
+    fx = Fake()
+    fx.ci, fx.failed = "red", ["روابطُ المسارات الجديدة — استشاري", runner.APPROVAL_CHECK]
+    assert runner.finish(card, CFG, fx, lp, "/t", "b", "h1", 1) == "waiting_preview"
+
+
+def test_brief_names_the_synthetic_number_ranges():
+    assert "2900000000x" in runner.brief({"id": "W-1", "accept": ["x"]}, [])
+
+
+def test_new_files_are_visible_and_formatted_before_the_checks(monkeypatch):
+    import flow_pump as fp
+
+    calls, docker = [], []
+    monkeypatch.setattr(runner, "sh", lambda cmd, cwd=None, *a: calls.append(cmd) or __import__("types").SimpleNamespace(stdout=" A new.py" + chr(10), stderr="", returncode=0))
+    monkeypatch.setattr(fp, "_image_present", lambda d: True)
+    monkeypatch.setattr(fp, "_docker", lambda cmd, t: docker.append(cmd) or (0, ""))
+    monkeypatch.setattr(runner.Path, "is_file", lambda self: True)
+    runner.Effects(CFG).prepare_for_checks("/t")
+    assert calls[0] == ["git", "add", "-N", "--", "."]
+    assert [c[c.index("ruff") + 1] for c in docker] == ["check", "format"] and all(c[-1] == "new.py" for c in docker)

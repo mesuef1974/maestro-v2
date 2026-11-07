@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
         "كبير": ["sonnet", 80, 4.0],
         "تصميم": ["opus", 80, 6.0],
     },
-    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m tests.layering_ratchet:*)"],
+    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)"],
     "health_url": "https://shschoolmvp-production.up.railway.app/health/",
     "rollback_cmd": [],  # الافتراضيّ: gh workflow run rollback.yml (runbook §4)
     "worktrees": "C:/Users/mesue/delivery_manager_work_wt",
@@ -454,6 +454,7 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         if card.get("attachments_path") else "",
         "قواعد: عدّل الملفّات واكتب الاختبارات وشغّلها فقط. لا git ولا دفع ولا نشر. التعليقات بالعربيّة.",
         "قبل أن تنتهي: `ruff format <الملفّات المعدَّلة>` ثمّ `ruff check <الملفّات المعدَّلة>`؛ فحصُ الدمج يرفض ملفّاً غيرَ منسَّق.",
+        "أرقام الهويّة والجوّال في الاختبارات اصطناعيّة حصرًا: 2900000000x و+9745500000x، فحارس البيانات الشخصيّة يرفض غيرها.",
         "غيّرتَ سلوكَ دالّةٍ أو قالب؟ ابحث (Grep) في tests/ عن كلّ مستعمِلٍ له وحدّث اختباراته وشغّلها؛ اختبارٌ لم تفتحه يكسر CI.",
     ]
     parts += rules
@@ -628,10 +629,23 @@ class Effects:
         p = sh([sys.executable, "-m", "ruff", "check", "--isolated", "--select", "E9,F821,F822,F823", "--", *files], tree, 120)
         return p.returncode != 1, (p.stdout + p.stderr)[-4000:]
 
+    def prepare_for_checks(self, tree: str) -> None:
+        """يرى الفحصُ ما يراه CI: حرّاسُ `git ls-files` لا ترى الملفّ الجديد قبل إيداعه (W-013)، والتنسيقُ آليٌّ بنسخة CI لا جولةَ نموذج."""
+        import flow_pump as fp  # noqa: PLC0415
+
+        sh(["git", "add", "-N", "--", "."], tree)
+        files = [f for f in self.changed(tree) if f.endswith(".py") and (Path(tree) / f).is_file()]
+        if not files or not fp._image_present(fp._docker):
+            return
+        run = ["run", "--rm", "--network", "none", "-v", f"{tree}:/src", "-w", "/src", "-e", "HOME=/tmp", fp.PREPUSH_IMAGE, "ruff"]
+        fp._docker([*run, "check", "--fix", "--quiet", "--", *files], 120)  # ما لا يُصلَح آليًّا يحكم فيه prepush
+        fp._docker([*run, "format", "--quiet", "--", *files], 120)
+
     def verify(self, tree: str) -> tuple[bool, str]:
         """prepush داخل الحاوية كما تفعل المضخّة (صورةٌ وقاعدةُ اختبارٍ مؤقّتة)؛ علّةُ البيئة (docker/الصورة/غير مقيس) تُحال فوراً بلا تشغيل إصلاح."""
         import flow_pump as fp  # noqa: PLC0415
 
+        self.prepare_for_checks(tree)
         quick_ok, quick_log = self.quick_check(tree)
         if not quick_ok:  # لا تُهدر سبعُ دقائق حاويةٍ على خطأٍ يُرى في ثوانٍ
             return False, quick_log
@@ -1087,7 +1101,7 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     failed = fx.failed_names(tree, pr) if st != "green" else []
     # بطاقةُ المعاينة: فحصُ «سطر الاعتماد» أحمرُ بطبيعته حتى يُكتب السطرُ بعد اعتماد المالك، فليس فشلاً. قبل 2026-11-05 كان
     # يُعدّ فشلَ CI فتُغلق كلُّ بطاقة معاينةٍ بتقرير قبل أن تبلغ المعاينةَ أصلاً (W-20261105-001 مرّتين).
-    real = [f for f in failed if not (preview and APPROVAL_CHECK in f)]
+    real = [f for f in failed if not (preview and APPROVAL_CHECK in f) and ADVISORY_MARK not in f]  # الاستشاريّ يُقرأ ولا يمنع
     infra = fx.infra_runs(tree, pr) if st != "green" else {}
     if infra:  # عطلُ البنية لا يقول شيئاً عن الشيفرة، وما يُشتقّ منه يسقط معه (#1347، #1348)
         real = [f for f in real if f not in infra and f not in DERIVED_CHECKS]
@@ -1497,6 +1511,7 @@ CI_RERUN_MAX = 1  # إعادةُ عطل البنية؛ بعدها علّةُ CI 
 VISUAL_CHECK = "لقطات الهويّة"  # اسمُ فحص CI (visual-snapshots.yml)
 VISUAL_LABEL = "تغيير-بصريّ"
 VISUAL_PAGE = re.compile(r"(\S+\.png): ([\d.]+)%")
+ADVISORY_MARK = "استشاري"
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
 MERGE_WAIT_S = 60 * 60
 DEPLOY_WAIT_S = 120 * 60
