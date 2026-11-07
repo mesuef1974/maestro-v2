@@ -293,6 +293,8 @@ def failure_fingerprint(log: str) -> tuple[str, ...]:
             found.add(text[1:].rsplit(":", 1)[0].strip())
         elif text.startswith("FAILED ") and len(text.split()) > 1:
             found.add(text.split()[1])
+        elif MYPY_ERROR.match(text):  # خطأٌ جديدٌ بالعدد نفسه تقدّم: W-011 أصلحت السطر فظهر غيره فعُدّ فشلًا مكرّرًا
+            found.add(MYPY_ERROR.match(text)["path"] + ": " + text[MYPY_ERROR.match(text).end():])
     found.update(f"{path}→{count}" for path, count in WORSE_LINE.findall(log))  # نقصُ العدد تقدّمٌ لا فشلٌ مكرّر
     return tuple(sorted(found))
 

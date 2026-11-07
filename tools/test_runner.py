@@ -2100,3 +2100,11 @@ def test_a_slot_that_fell_is_claimed_again_and_reseeded(env):
     runner.preview_step(card, fx, lp, "/t", "h1", 1)
     got = ledger.reduce_state(ledger.load_events(lp))["W-20261104-902"]
     assert fx.slots == [8601] and got["preview_slot_port"] == 8601 and got["preview_seen"] == "h1"
+
+
+def test_a_different_mypy_error_with_the_same_count_is_not_a_repeat():
+    head = "✘ mypy ratchet: فشل" + chr(10) + "    زاد: b/s.py: 0 → 1" + chr(10)
+    one = runner.failure_fingerprint(head + 'b/s.py:166: error: Argument 1 has incompatible type "F"  [arg-type]')
+    two = runner.failure_fingerprint(head + 'b/s.py:166: error: Argument 1 has incompatible type "str"  [arg-type]')
+    moved = runner.failure_fingerprint(head + 'b/s.py:170: error: Argument 1 has incompatible type "F"  [arg-type]')
+    assert one != two and one == moved
