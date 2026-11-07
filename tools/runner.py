@@ -194,6 +194,8 @@ def _check_tests_in_diff(card: dict, files: list[str]) -> str:
 
 def _check_scope_only(card: dict, files: list[str]) -> str:
     declared = set(card.get("scope_files") or [])
+    if declared:
+        declared.add(MENU_FILE)  # رابط الصفحة الجديدة شرطٌ عامّ، فلا يُسقطه النطاق المعلن
     if not declared:
         return ""  # لا نطاقَ معلناً: لا شيء يُقارَن
     out = [f for f in files if f not in declared and not (f.startswith("tests/") or "/tests/" in f)]
@@ -205,7 +207,18 @@ def _check_no_migrations(card: dict, files: list[str]) -> str:
     return ("المعيار «لا هجرات»: الفرق يضمّ هجرات: " + ", ".join(out[:8])) if out else ""
 
 
+MENU_FILE = "templates/base/base.html"
+NEW_ROUTE = re.compile(r"""path\(\s*["']([^"']*)["'][^)]*?name=["'](\w+)["']""", re.S)
 CRITERIA_CHECKS = {"tests_in_diff": _check_tests_in_diff, "scope_only": _check_scope_only, "no_migrations": _check_no_migrations}
+
+
+def menu_gap(page: str, urls_diff: str, menu: str) -> list[str]:
+    """صفحة البطاقة الجديدة بلا رابط في القائمة: بناها W-010 فلم يصل إليها المالك إلا برابطها (قراره 2026-11-07)."""
+    page = page.split("?")[0].strip("/")
+    added = "\n".join(ln[1:] for ln in urls_diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
+    return [f"الصفحة الجديدة /{page}/ لا تُفتح من القائمة: أضف رابطها في {MENU_FILE} بجانب روابط قسمها، بشرط can_open على المسار"
+            for route, name in NEW_ROUTE.findall(added)
+            if route.strip("/") and "<" not in route and page.endswith(route.strip("/")) and not re.search(f":{name}['\"]", menu)]
 
 
 def criteria_failures(card: dict, files: list[str]) -> list[str]:
@@ -432,6 +445,7 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         f"معايير القبول:\n{acc_txt}",
         f"نوع الطلب: {card['req_type']}" if card.get("req_type") else "",
         f"الصفحة المعنيّة: {card['scope_page']}" if card.get("scope_page") else "",
+        f"إن كانت صفحة البطاقة جديدة فأضف رابطها في القائمة {MENU_FILE} بشرط can_open، فالمالك يفتحها من القائمة." if card.get("scope_page") else "",
         (f"الملفّات المتوقَّعة (ابدأ منها؛ {'لا تعدّل غيرها' if 'scope_only' in (card.get('runner_checks') or []) else 'وغيرها إن لزم'}): "
          + ", ".join(card["scope_files"])) if card.get("scope_files") else "",
         f"خارج النطاق (لا تمسّه): {card['out_of_scope']}" if card.get("out_of_scope") else "",
@@ -669,6 +683,13 @@ class Effects:
             return ""
         added = {path: added_lines(sh(["git", "diff", "-U0", self.cfg["base"], "--", path], tree).stdout) for path in worse}
         return "\n".join(new_mypy_errors(out, added))
+
+    def menu_gap(self, tree: str, card: dict) -> list[str]:
+        page, menu = card.get("scope_page") or "", Path(tree) / MENU_FILE
+        if not page or not menu.is_file():
+            return []
+        diff = sh(["git", "diff", self.cfg["base"], "--", "*urls.py"], tree).stdout
+        return menu_gap(page, diff, menu.read_text(encoding="utf-8"))
 
     def changed(self, tree: str) -> list[str]:
         p = sh(["git", "status", "--porcelain", "--untracked-files=all"], tree)  # بلاه يظهر المجلدُ الجديد `dir/` لا ملفّاته
@@ -1603,7 +1624,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
                         break
                     if ok:
-                        miss = criteria_failures(card, fx.changed(tree))
+                        miss = criteria_failures(card, fx.changed(tree)) + fx.menu_gap(tree, card)
                         if miss:  # الفحوص خضراء لكن معياراً آليّاً من الطلب لم يتحقّق: يُعاد إلى النموذج كإصلاح
                             ok, log = False, "\n".join(miss)
                     if ok and norm_size(card.get("runner_size", "")) not in REVIEW_SIZES:

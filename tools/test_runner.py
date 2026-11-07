@@ -77,6 +77,7 @@ class Fake(runner.Effects):
         self.slots = getattr(self, "slots", []) + [port]
         return getattr(self, "slot_ok", True), "log"
 
+    def menu_gap(self, tree, card): return getattr(self, "menu", [])
     def slot_serves(self, port, head): return getattr(self, "slot_live", True)
     def slot_down(self, port): self.downs = getattr(self, "downs", []) + [port]
     def preview_tick(self): self.ticks = getattr(self, "ticks", 0) + 1
@@ -2108,3 +2109,31 @@ def test_a_different_mypy_error_with_the_same_count_is_not_a_repeat():
     two = runner.failure_fingerprint(head + 'b/s.py:166: error: Argument 1 has incompatible type "str"  [arg-type]')
     moved = runner.failure_fingerprint(head + 'b/s.py:170: error: Argument 1 has incompatible type "F"  [arg-type]')
     assert one != two and one == moved
+
+
+URLS_DIFF = """+++ b/behavior/urls.py
++    path("daily/", views_daily.daily_report, name="daily"),
++    path(
++        "daily/export/pdf/",
++        views_daily.export_pdf,
++        name="daily_pdf",
++    ),
+"""
+
+
+def test_a_new_page_without_a_menu_link_goes_back_to_the_model():
+    gap = runner.menu_gap("behavior/daily/?date=2026-11-07", URLS_DIFF, "{% url 'behavior:statistics' %}")
+    assert len(gap) == 1 and runner.MENU_FILE in gap[0]
+    assert runner.menu_gap("/behavior/daily/", URLS_DIFF, "{% url 'behavior:daily' %}") == []
+
+
+def test_only_the_cards_own_new_page_needs_a_link():
+    assert runner.menu_gap("behavior/statistics/", URLS_DIFF, "") == []  # صفحة قائمة: لا مسار مضاف لها
+    detail = '+    path("student/<uuid:pk>/", v, name="student"),'
+    assert runner.menu_gap("behavior/student/1/", detail, "") == []
+    assert runner.menu_gap("", URLS_DIFF, "") == []
+
+
+def test_the_menu_file_is_inside_any_declared_scope():
+    card = {"runner_checks": ["scope_only"], "scope_files": ["app/views.py"]}
+    assert runner.criteria_failures(card, ["app/views.py", runner.MENU_FILE]) == []
