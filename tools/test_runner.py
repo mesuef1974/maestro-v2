@@ -2008,3 +2008,19 @@ def test_a_direct_card_is_never_labelled(env):
     fx = VisualRed()
     runner.run_cycle(CFG, fx, lp, lock)
     assert fx.marked == 0
+
+
+def test_added_lines_reads_zero_context_hunks():
+    assert runner.added_lines("@@ -3,0 +4,2 @@ x" + chr(10) + "@@ -9 +12 @@") == {4, 5, 12}
+
+
+def test_new_mypy_errors_prefers_added_lines_then_the_whole_file():
+    out = chr(10).join(["a/b.py:4: error: new  [x]", "a/b.py:9: error: old  [x]", "c.py:4: error: other  [x]"])
+    assert runner.new_mypy_errors(out, {"a/b.py": {4}}) == ["a/b.py:4: error: new  [x]"]
+    assert len(runner.new_mypy_errors(out, {"a/b.py": {50}})) == 2
+
+
+def test_fewer_mypy_errors_is_not_the_same_failure_twice():
+    one = runner.failure_fingerprint("✘ mypy ratchet: فشل" + chr(10) + "    زاد: b/s.py: 17 → 19")
+    two = runner.failure_fingerprint("✘ mypy ratchet: فشل" + chr(10) + "    زاد: b/s.py: 17 → 18")
+    assert one != two and one == runner.failure_fingerprint("✘ mypy ratchet: فشل" + chr(10) + "    زاد: b/s.py: 17 → 19")

@@ -253,6 +253,37 @@ def save_fail_diff(card_id: str, diff: str, folder: Path | None = None) -> None:
     (folder / f"{card_id}.diff").write_text(diff, encoding="utf-8")
 
 
+MYPY_SCRIPT = ("import os,sys;sys.path[:0]=['scripts','.'];import prepush_check as pc;os.environ.update(pc.MYPY_ENV);"
+               "from tests import mypy_ratchet as m;print(m.run_mypy()[1])")
+MYPY_SHOWN = 20
+WORSE_LINE = re.compile(r"زاد:\s*(\S+\.py):\s*\d+\s*→\s*(\d+)")
+MYPY_ERROR = re.compile(r"^(?P<path>[^:\s]+\.py):(?P<line>\d+)(?::\d+)?: error: ")
+DIFF_HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
+
+
+def added_lines(diff: str) -> set[int]:
+    """أرقامُ الأسطر المضافة من git diff -U0."""
+    out: set[int] = set()
+    for ln in diff.splitlines():
+        m = DIFF_HUNK.match(ln)
+        if m:
+            start = int(m[1])
+            out.update(range(start, start + int(m[2] or 1)))
+    return out
+
+
+def new_mypy_errors(output: str, added: dict[str, set[int]]) -> list[str]:
+    """أخطاءُ ملفّات «زاد» على الأسطر المضافة؛ وإن خلت فكلُّ أخطاء الملف، فقد ينشأ الخطأ على سطرٍ قديم."""
+    hits, rest = [], []
+    for ln in output.splitlines():
+        text = ln.strip()
+        m = MYPY_ERROR.match(text)
+        path = m["path"].replace("\\", "/") if m else ""
+        if path in added:
+            (hits if int(m["line"]) in added[path] else rest).append(text)
+    return (hits or rest)[:MYPY_SHOWN]
+
+
 def failure_fingerprint(log: str) -> tuple[str, ...]:
     """أسماءُ الفحوص الفاشلة ومعرّفاتُ الاختبارات وحدها، فتُقارَن جولتان؛ والفارغةُ لا تعني شيئاً (quick_check والمراجعة)."""
     found = set()
@@ -262,6 +293,7 @@ def failure_fingerprint(log: str) -> tuple[str, ...]:
             found.add(text[1:].rsplit(":", 1)[0].strip())
         elif text.startswith("FAILED ") and len(text.split()) > 1:
             found.add(text.split()[1])
+    found.update(f"{path}→{count}" for path, count in WORSE_LINE.findall(log))  # نقصُ العدد تقدّمٌ لا فشلٌ مكرّر
     return tuple(sorted(found))
 
 
@@ -618,7 +650,23 @@ class Effects:
         note_timing(f"{name} db={db_state['db']}", time.monotonic() - started, log)
         if "غير مقيس" in log or "تعذّر إنشاء" in log or "تعذّر" in log[:200]:
             raise RunnerError("بيئةٌ: الفحص غير مقيس في الحاوية — " + log.strip()[-160:])
-        return code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
+        ok, tail = code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
+        detail = "" if ok else self.mypy_detail(tree, log)
+        return ok, (tail[-1500:] + "\nأخطاء mypy الجديدة، أصلحها هي لا غيرها:\n" + detail) if detail else tail
+
+    def mypy_detail(self, tree: str, log: str) -> str:
+        """السقّاطةُ تعطي عددًا والنموذجُ لا يملك mypy، فتُجلب أسطرُ الخطأ من الصورة نفسها (W-20261107-007)."""
+        import flow_pump as fp  # noqa: PLC0415
+
+        worse = sorted({path for path, _ in WORSE_LINE.findall(log)})
+        if not worse:
+            return ""
+        rc, out = fp._docker(["run", "--rm", "--network", "none", "-v", f"{tree}:/src:ro", "-w", "/src", "-e", "HOME=/tmp",
+                              "-e", "MYPY_CACHE_DIR=/tmp/m", fp.PREPUSH_IMAGE, "python", "-c", MYPY_SCRIPT], 300)
+        if rc:
+            return ""
+        added = {path: added_lines(sh(["git", "diff", "-U0", self.cfg["base"], "--", path], tree).stdout) for path in worse}
+        return "\n".join(new_mypy_errors(out, added))
 
     def changed(self, tree: str) -> list[str]:
         p = sh(["git", "status", "--porcelain", "--untracked-files=all"], tree)  # بلاه يظهر المجلدُ الجديد `dir/` لا ملفّاته
