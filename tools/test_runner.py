@@ -2317,3 +2317,29 @@ def test_sweep_containers_closes_finished_old_and_idle_stacks_but_keeps_resident
     assert fx.rm_boxes == ["runner-runner-w-20261107-022-x-pg", "runner-runner-w-20261107-024-x"]
     assert fx.downed == ["schoolos-t1"]
     assert closed == [*fx.rm_boxes, "schoolos-t1"]
+
+
+
+def test_legal_flag_from_field_check_or_regulatory_words():
+    assert runner.legal_flagged({"legal": True})
+    assert runner.legal_flagged({"runner_checks": ["legal_source"]})
+    assert runner.legal_flagged({"problem": "إجراء المخالفة بحسب سلّم المخالفات"})
+    assert not runner.legal_flagged({"problem": "لون زر الحفظ", "impact": "تحسين", "accept": ["الاتجاه سليم"]})
+
+
+def test_legal_gap_requires_marker_and_a_citation_that_exists_in_the_source(tmp_path):
+    src = tmp_path / "AAdocs" / "x.md"
+    src.parent.mkdir()
+    src.write_text("مادة 5.3 منسق شؤون الطلبة", encoding="utf-8")
+    ok = '"""[LEGAL] عتبة الإحالة.\nالمصدر: AAdocs/x.md م5.3"""'
+    assert runner.legal_gap(ok, str(tmp_path)) == []
+    assert "[LEGAL]" in runner.legal_gap("def f(): pass", str(tmp_path))[0]
+    assert "لا إسناد" in runner.legal_gap("[LEGAL] بلا مصدر", str(tmp_path))[0]
+    assert "غير موجود" in runner.legal_gap("[LEGAL]\nالمصدر: AAdocs/none.md م1", str(tmp_path))[0]
+    assert "غير وارد" in runner.legal_gap("[LEGAL]\nالمصدر: AAdocs/x.md م9.9", str(tmp_path))[0]
+
+
+def test_brief_asks_to_read_the_source_for_a_legal_card():
+    card = {"id": "W-1", "problem": "سلّم المخالفات", "req_type": "", "accept": ["a"]}
+    assert "مصدر الحقيقة" in runner.brief(card, [])
+    assert "مصدر الحقيقة" not in runner.brief({"id": "W-2", "problem": "لون زر", "req_type": "", "accept": ["a"]}, [])
