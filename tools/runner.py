@@ -979,6 +979,8 @@ def pr_body(card: dict, head: str = "", files: list[str] | None = None) -> str:
     line = criteria_line(card, files) if files is not None else card.get("criteria_line", "")
     if line:
         body += "\n\n" + line
+    if card.get("visual_pages"):
+        body += "\n\nتغيير بصري مقصود في: " + "، ".join(card["visual_pages"])
     if card.get("source") == "owner" and card.get("approval") != "معاينة":
         body += f"\n\nاعتُمد من المالك مباشرةً بلا معاينة 8500 — {time.strftime('%Y-%m-%d')}{(' — الرأس ' + head[:8]) if head else ''} (D-520م، {card['id']})"
     if card.get("source") == "owner" and card.get("approval") == "معاينة" and card.get("preview_approved"):
