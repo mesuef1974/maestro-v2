@@ -2218,3 +2218,16 @@ def test_sibling_rule_skips_detail_pages_and_unknown_apps():
     assert runner.menu_sibling_gap("behavior/student/1/", BEHAVIOR_URLS, MENUS) == []
     assert runner.menu_sibling_gap("behavior/statistics/", "", MENUS) == []
     assert runner.menu_sibling_gap("", BEHAVIOR_URLS, MENUS) == []
+
+
+def test_docker_down_mid_card_requeues_instead_of_closing(monkeypatch):
+    fx = runner.Effects(CFG)
+    monkeypatch.setattr(fx, "changed", lambda tree: ["a.py"])
+    monkeypatch.setattr(runner.Path, "is_file", lambda self: True)
+
+    def down(*a, **k):
+        raise runner.EnvDown("docker متوقّف")
+
+    monkeypatch.setattr(fx, "preflight", down)
+    with pytest.raises(runner.EnvDown):
+        fx.autoformat("/t")

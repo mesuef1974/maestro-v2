@@ -664,6 +664,7 @@ class Effects:
         import flow_pump as fp  # noqa: PLC0415
 
         # بنسخة الصورة (0.4.4 كـCI) لا نسخة الجهاز: تنسيقُ الجهاز الأحدث يرفضه فحصُ الحاوية فتفشل البطاقةُ كلُّها (W-20261105-010)
+        self.preflight()  # المحرّكُ توقّف وسط البطاقة (W-20261107-019 أُغلقت به): يُعاد تشغيلُه أو EnvDown، لا إغلاق
         p = sh(["docker", "run", "--rm", "--network", "none", "-v", f"{tree}:/w", "-w", "/w", fp.PREPUSH_IMAGE,
                 "ruff", "format", "--no-cache", "--", *files], tree, 300)
         if p.returncode:
@@ -699,8 +700,7 @@ class Effects:
         quick_ok, quick_log = self.quick_check(tree)
         if not quick_ok:  # لا تُهدر سبعُ دقائق حاويةٍ على خطأٍ يُرى في ثوانٍ
             return False, quick_log
-        if not fp._image_present(fp._docker):
-            raise RunnerError(f"بيئةٌ: صورة {fp.PREPUSH_IMAGE} غائبة أو docker متوقّف — لا يُصلحه النموذج")
+        self.preflight()  # علّةُ بيئةٍ لا تُحسب على البطاقة: تشغيلٌ وانتظارٌ ثمّ EnvDown يعيدها إلى الطابور
         rc, gitdir = _git(tree, "rev-parse", "--absolute-git-dir")
         rc2, common = _git(tree, "rev-parse", "--path-format=absolute", "--git-common-dir")
         if rc or rc2:
