@@ -1749,12 +1749,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--approve", metavar="CARD", help="اعتماد المعاينة المعروضة على 8500")
     ap.add_argument("--reject", metavar="CARD", help="رفض المعاينة، ومعه --reason")
     ap.add_argument("--reason", default="")
+    ap.add_argument("--dismiss", metavar="CARD", help="إقرار المالك بإغلاق بطاقة فشلت، فتخرج من مكتب المعاينة")
     ap.add_argument("--reseed", metavar="CARD", help="إعادة بذر المعاينة بعد فشلها")
     ap.add_argument("--release", metavar="CARD", help="فتح دمج بطاقة موقوفة بعد قراءة فرقها")
     a = ap.parse_args(argv)
     if a.reseed:
         ledger.append_event("update", a.reseed, {"preview_seed_failed": ""})
         print(f"{a.reseed}: يُعاد البذر في الدورة التالية")
+        return 0
+    if a.dismiss:
+        ledger.append_event("note", a.dismiss, {"text": "[مالك] أقرّ إغلاق البطاقة بعد فشلها", "by": "owner"})
+        ledger.append_event("update", a.dismiss, {"owner_dismissed": True})
+        print(f"{a.dismiss}: خرجت من مكتب المعاينة")
         return 0
     if a.release:
         ok, text = release_merge(a.release)
