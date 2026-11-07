@@ -1290,7 +1290,7 @@ def seed_prompt(card: dict, info: dict, error: str = "") -> str:
         f"الدخول بحساب رقمه الوظيفي {info['account']} ({info['role']}): اربط البيانات بمدرسته ونطاقه حتى يراها، وابحث عنه بالرقم الوظيفي.",
         "الشروط: يعيد استعمال ما وُجد فلا يكرّر عند إعادة التشغيل؛ أسماءُ كلّ سجلّ جديد تبدأ بـ«[وهميّ]» ولا أسماء أشخاص حقيقيين؛ يمسّ البيانات لا البنية؛ لا شبكة ولا ملفّات.",
         "آخر سطر يطبعه السكربت بالضبط: PREVIEW_PATH=/المسار/الذي/يفتحه/المالك (السجلّ المبذور نفسه، لا صفحة عامّة).",
-        "أجب بكتلة ```python واحدة لا غير." + again,
+        "اقرأ الملفّات اللازمة فقط (النماذج والعرض المعنيّ)، ثمّ أجب بكتلة ```python واحدة لا غير." + again,
     ])
 
 
@@ -1311,7 +1311,8 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
         record_run(cid, "بذر المعاينة", res, lpath)
         body = seed_body(res.out) if res.ok else ""
         if not body:
-            error = res.out[-300:] or "لا سكربت في الجواب"
+            stop = str(res.raw.get("subtype") or "")
+            error = res.out[-300:] or (f"قُطع قبل الجواب ({stop}): اقرأ أقلّ واكتب السكربت مباشرةً" if stop.startswith("error") else "لا سكربت في الجواب")
             continue
         ok, log = fx.run_seed(body)
         path = re.findall(r"PREVIEW_PATH=(/\S*)", log)
@@ -1579,7 +1580,7 @@ PREVIEW_SLOTS = (8601, 8602)  # خانتان بجانب 8500، نحو 0.4 غيغ
 PREVIEW_PIN_MINUTES = 720  # تبقى حتى قرار المالك لا 30 دقيقة (قراره 2026-11-05): قد يقرأ الرسالة بعد ساعات
 PREVIEW_HB_STALE_S = 600
 SEED_MODEL = "sonnet"
-SEED_BUDGET_USD = 0.40
+SEED_BUDGET_USD = 1.00  # كان 0.40 فقُطع البذرُ ثلاثاً قبل أن يكتب السكربت (W-20261107-017 كلّف 0.39–0.44 لكلّ محاولة)
 SEED_ATTEMPTS = 3
 SEED_RLS = (  # الخادمُ يتصل بدور shschool_app، وRLS يخفي عنه كلَّ شيء ما لم يُربط الدور بمدرسة الحساب
     "from django.contrib.auth import get_user_model as _u\n"
