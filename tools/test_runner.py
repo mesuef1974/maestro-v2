@@ -2231,3 +2231,22 @@ def test_docker_down_mid_card_requeues_instead_of_closing(monkeypatch):
     monkeypatch.setattr(fx, "preflight", down)
     with pytest.raises(runner.EnvDown):
         fx.autoformat("/t")
+
+
+def test_a_lock_left_by_a_dead_process_is_taken_over(tmp_path):
+    lock = tmp_path / "runner.lock"
+    lock.write_text("21892", encoding="utf-8")
+    assert not runner.acquire_lock(lock, alive=lambda pid: True)  # صاحبُه حيّ: يُنتظر
+    assert runner.acquire_lock(lock, alive=lambda pid: False)  # صاحبُه ميّت: يؤخذ فورًا
+    assert lock.read_text(encoding="utf-8") == str(runner.os.getpid())
+
+
+def test_an_orphaned_build_goes_back_to_the_queue_but_an_open_request_does_not(env):
+    lp, _ = env
+    for cid in ("W-20261107-990", "W-20261107-991"):
+        ledger.append_event("created", cid, {"problem": "x"}, lp)
+        ledger.append_event("state", cid, {"state": "in_progress", "by": "runner", "held_by": "runner"}, lp)
+    ledger.append_event("update", "W-20261107-991", {"runner_resume": {"pr": 1, "tree": "/t"}}, lp)
+    assert runner.requeue_orphans(lp) == ["W-20261107-990"]
+    assert _state(lp, "W-20261107-990")["state"] == "routed"
+    assert _state(lp, "W-20261107-991")["state"] == "in_progress"

@@ -168,12 +168,32 @@ def size_row(cfg: dict, label: str):
 
 
 # ───────────────────────── القفل ─────────────────────────
-def acquire_lock(path: Path = LOCK, now=time.time) -> bool:
+def pid_alive(pid: int) -> bool:
+    """هل العمليّةُ حيّة؟ على ويندوز بـtasklist (os.kill(pid, 0) يُنهيها هناك)."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],  # noqa: S603, S607
+                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+        return f'"{pid}"' in out
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def acquire_lock(path: Path = LOCK, now=time.time, alive=pid_alive) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        if now() - path.stat().st_mtime < LOCK_STALE_S:
+        try:
+            owner = int(path.read_text(encoding="utf-8").strip() or 0)
+        except (OSError, ValueError):
+            owner = 0
+        # إعادةُ تشغيل الجهاز 2026-11-07 17:30 قطعت دورةً فبقي قفلُها ساعتين والبطاقاتُ واقفة: صاحبُ القفل الميّت لا يُنتظر
+        if now() - path.stat().st_mtime < LOCK_STALE_S and alive(owner):
             return False
-        path.unlink()  # قفلٌ ميّت (انقطع المشغّل)
+        path.unlink(missing_ok=True)  # قفلٌ ميّت (انقطع المشغّل)
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
@@ -1860,6 +1880,7 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
         return "locked"
     try:
         intake_requests(cfg, lpath)
+        requeue_orphans(lpath)
         fx = fx or Effects(cfg)
         out = "idle"
         try:
@@ -1880,6 +1901,17 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
             return report_env(str(exc))
     finally:
         release_lock(lock)
+
+
+def requeue_orphans(lpath=None) -> list[str]:
+    """بطاقةٌ بدأ بناؤها ولم تفتح طلبها ثمّ انقطعت دورتُها (إعادة تشغيل الجهاز): لا تراها inflight ولا pick_card فتبقى
+    in_progress للأبد (W-20261107-020). يُستدعى والقفلُ بيدنا، فلا دورةَ أخرى تبنيها الآن: تعود إلى الطابور."""
+    back = [i["id"] for i in ledger.reduce_state(ledger.load_events(lpath)).values()
+            if i.get("state") == "in_progress" and i.get("held_by") == BY and not i.get("runner_resume")]
+    for cid in back:
+        ledger.append_event("note", cid, {"text": "[مشغّل] انقطعت دورتُها قبل فتح الطلب؛ تعود إلى الطابور", "by": BY}, lpath)
+        ledger.append_event("state", cid, {"state": "routed", "by": BY, "held_by": ""}, lpath)
+    return back
 
 
 def poll(cfg: dict, cycle=run_cycle, sleep=time.sleep, clock=time.monotonic) -> None:
