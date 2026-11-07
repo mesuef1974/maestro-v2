@@ -47,5 +47,6 @@ if [ "$code" != 200 ]; then
   docker logs "$project-web-1" 2>&1 | tail -5
   exit 1
 fi
-PREVIEW_CONTAINER="$project-web-1" PYTHONUTF8=1 python "$TOOLS/preview_accounts.py" sync
+# المهمّة المجدولة بلا طرفية: مقبضُ الدخل غير صالح فيسقط subprocess في الابن
+PREVIEW_CONTAINER="$project-web-1" PYTHONUTF8=1 python "$TOOLS/preview_accounts.py" sync </dev/null
 echo "slot $port ready"
