@@ -2180,3 +2180,15 @@ def test_scope_covers_the_declared_app_but_not_shared_code():
     assert runner.criteria_failures(card, ok) == []
     for bad in ("behavior/models.py", "behavior/migrations/0002_x.py", "core/permissions.py", "clinic/views.py", "templates/clinic/a.html", "scripts/x.py"):
         assert bad in runner.criteria_failures(card, [bad])[0], bad
+
+
+def test_mypy_drops_are_recorded_without_a_model_round(tmp_path):
+    (tmp_path / "tests").mkdir()
+    base = tmp_path / "tests" / "mypy_ratchet_baseline.json"
+    base.write_text('{"files": {"a/x.py": 3, "b/y.py": 2, "c/z.py": 5}, "total": 10}', encoding="utf-8")
+    log = "✘ mypy ratchet: فشل" + chr(10) + "    نقص ولم يُسجَّل (python -m tests.mypy_ratchet --update): a/x.py: 3 → 2" + chr(10)
+    log += "    نقص ولم يُسجَّل (python -m tests.mypy_ratchet --update): b/y.py: 2 → 0" + chr(10)
+    assert runner.record_mypy_drops(str(tmp_path), log)
+    got = __import__("json").loads(base.read_text(encoding="utf-8"))
+    assert got == {"files": {"a/x.py": 2, "c/z.py": 5}, "total": 7}
+    assert not runner.record_mypy_drops(str(tmp_path), "لا شيء")

@@ -282,9 +282,26 @@ def save_fail_diff(card_id: str, diff: str, folder: Path | None = None) -> None:
 MYPY_SCRIPT = ("import os,sys;sys.path[:0]=['scripts','.'];import prepush_check as pc;os.environ.update(pc.MYPY_ENV);"
                "from tests import mypy_ratchet as m;print(m.run_mypy()[1])")
 MYPY_SHOWN = 20
+DROP_LINE = re.compile(r"نقص ولم يُسجَّل[^:]*:\s*(\S+\.py):\s*\d+\s*→\s*(\d+)")
 WORSE_LINE = re.compile(r"زاد:\s*(\S+\.py):\s*\d+\s*→\s*(\d+)")
 MYPY_ERROR = re.compile(r"^(?P<path>[^:\s]+\.py):(?P<line>\d+)(?::\d+)?: error: ")
 DIFF_HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
+
+
+def record_mypy_drops(tree: str, log: str) -> bool:
+    """نقصُ الأخطاء تحسّنٌ يُسجَّل حسابيًّا بما تكتبه `--update`؛ لا جولةَ نموذج عليه ولا يملك النموذجُ الأمر (W-014)."""
+    drops = DROP_LINE.findall(log)
+    path = Path(tree) / "tests" / "mypy_ratchet_baseline.json"
+    if not drops or not path.is_file():
+        return False
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for name, count in drops:
+        data["files"][name] = int(count)
+        if not int(count):
+            del data["files"][name]
+    data["total"] = sum(data["files"].values())
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    return True
 
 
 def added_lines(diff: str) -> set[int]:
@@ -694,6 +711,8 @@ class Effects:
         if "غير مقيس" in log or "تعذّر إنشاء" in log or "تعذّر" in log[:200]:
             raise RunnerError("بيئةٌ: الفحص غير مقيس في الحاوية — " + log.strip()[-160:])
         ok, tail = code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
+        if not ok and record_mypy_drops(tree, log) and log.count("✘") == 1 and not WORSE_LINE.search(log):
+            return self.verify(tree)  # لا سبب غيره؛ والإعادةُ لا تعود هنا لأنّ النقص سُجّل
         detail = "" if ok else self.mypy_detail(tree, log)
         return ok, (tail[-1500:] + "\nأخطاء mypy الجديدة، أصلحها هي لا غيرها:\n" + detail) if detail else tail
 
