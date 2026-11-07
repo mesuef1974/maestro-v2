@@ -192,13 +192,25 @@ def _check_tests_in_diff(card: dict, files: list[str]) -> str:
     return "" if any(f.startswith("tests/") or "/tests/" in f for f in files) else "المعيار «اختبار جديد أو معدَّل»: الفرق بلا أيّ ملفّ اختبار؛ أضف اختباراً يغطّي الحالة"
 
 
+def scope_area(path: str) -> str:
+    """مجال الملفّ: النطاقُ المعلن تقديرٌ لا يعرف ما يطلبه البناء (W-014: selectors وapps والمسارات في التطبيق نفسه)، فالتطبيق المعلن كلّه مسموح.
+    والمشترك والبنية والنماذج لا مجال لها، فتبقى بالاسم."""
+    parts = path.replace("\\", "/").split("/")
+    if parts[0] == "templates" and len(parts) > 2:
+        return "/".join(parts[:2])
+    if len(parts) < 2 or parts[0] in SHARED_DIRS or parts[-1] == "models.py" or "migrations" in parts:
+        return ""
+    return parts[0]
+
+
 def _check_scope_only(card: dict, files: list[str]) -> str:
     declared = set(card.get("scope_files") or [])
     if declared:
         declared.add(MENU_FILE)  # رابط الصفحة الجديدة شرطٌ عامّ، فلا يُسقطه النطاق المعلن
     if not declared:
         return ""  # لا نطاقَ معلناً: لا شيء يُقارَن
-    out = [f for f in files if f not in declared and not (f.startswith("tests/") or "/tests/" in f)]
+    areas = {scope_area(f) for f in declared} - {""}
+    out = [f for f in files if f not in declared and not (f.startswith("tests/") or "/tests/" in f) and scope_area(f) not in areas]
     return ("المعيار «لا ملفّ خارج النطاق»: عُدّل خارج الملفّات المعلنة: " + ", ".join(out[:8])) if out else ""
 
 
@@ -208,6 +220,7 @@ def _check_no_migrations(card: dict, files: list[str]) -> str:
 
 
 MENU_FILE = "templates/base/base.html"
+SHARED_DIRS = {"core", "scripts", "shschool", ".github", "docs", "static"}
 NEW_ROUTE = re.compile(r"""path\(\s*["']([^"']*)["'][^)]*?name=["'](\w+)["']""", re.S)
 CRITERIA_CHECKS = {"tests_in_diff": _check_tests_in_diff, "scope_only": _check_scope_only, "no_migrations": _check_no_migrations}
 

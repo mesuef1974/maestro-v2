@@ -2172,3 +2172,11 @@ def test_an_advisory_red_does_not_hold_an_approved_card_from_merging(env, monkey
     fx.ci, fx.failed = "red", ["روابطُ المسارات الجديدة — استشاري"]
     monkeypatch.setattr(runner, "pr_body", lambda c, h: fx.pr_body_of("/t", 1))
     assert runner.finish(card, CFG, fx, lp, "/t", "b", "h1", 1) != "waiting_ci"
+
+
+def test_scope_covers_the_declared_app_but_not_shared_code():
+    card = {"runner_checks": ["scope_only"], "scope_files": ["behavior/views.py", "templates/behavior/s.html", "core/print_policy.py"]}
+    ok = ["behavior/selectors.py", "behavior/urls.py", "templates/behavior/partials/rows.html"]
+    assert runner.criteria_failures(card, ok) == []
+    for bad in ("behavior/models.py", "behavior/migrations/0002_x.py", "core/permissions.py", "clinic/views.py", "templates/clinic/a.html", "scripts/x.py"):
+        assert bad in runner.criteria_failures(card, [bad])[0], bad
