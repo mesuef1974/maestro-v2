@@ -234,6 +234,26 @@ def menu_gap(page: str, urls_diff: str, menu: str) -> list[str]:
             if route.strip("/") and "<" not in route and page.endswith(route.strip("/")) and not re.search(f":{name}['\"]", menu)]
 
 
+def menu_sibling_gap(page: str, urls_src: str, menu: str) -> list[str]:
+    """صفحة البطاقة القائمة تُفتح من كلّ قائمةٍ فيها روابطُ تطبيقها: بُنيت إحصائيّة السلوك (W-014) ورابطُها في قائمة الأخصائيّين
+    وحدها، فلم يجدها المدير في شؤون الطلبة (قرار المالك 2026-11-07). وcan_open يُخفيه عمّن لا يملكه، فلا يتّسع به وصول."""
+    parts = page.split("?")[0].strip("/").split("/")
+    ns = re.search(r"""app_name\s*=\s*["'](\w+)["']""", urls_src)
+    if len(parts) < 2 or not ns:
+        return []
+    rest, ns = "/".join(parts[1:]), ns.group(1)
+    names = [name for route, name in NEW_ROUTE.findall(urls_src) if route.strip("/") == rest and "<" not in route]
+    if not names:
+        return []
+    link = re.compile(f":{names[0]}['\"]")
+    gaps = []
+    for chunk in menu.split('class="sd-menu')[1:]:
+        if f"'{ns}:" in chunk and not link.search(chunk):
+            box = re.search(r'id="([\w-]+)"', chunk)
+            gaps.append(box.group(1) if box else "?")
+    return [f"الصفحة /{'/'.join(parts)}/ لا تُفتح من القوائم {', '.join(gaps)} وفيها روابط {ns}: أضف رابطها في {MENU_FILE} بجانب روابط قسمها، بشرط can_open على المسار"] if gaps else []
+
+
 def criteria_failures(card: dict, files: list[str]) -> list[str]:
     """رسائلُ المعايير الآليّة التي لم تتحقّق في الفرق؛ تُعاد إلى النموذج كسجلّ فشل فيصلحها في المحاولة التالية."""
     return [m for c in card.get("runner_checks") or [] if c in CRITERIA_CHECKS for m in [CRITERIA_CHECKS[c](card, files)] if m]
@@ -735,7 +755,10 @@ class Effects:
         if not page or not menu.is_file():
             return []
         diff = sh(["git", "diff", self.cfg["base"], "--", "*urls.py"], tree).stdout
-        return menu_gap(page, diff, menu.read_text(encoding="utf-8"))
+        text = menu.read_text(encoding="utf-8")
+        urls = Path(tree) / page.strip("/").split("/")[0] / "urls.py"
+        src = urls.read_text(encoding="utf-8") if urls.is_file() else ""
+        return menu_gap(page, diff, text) or menu_sibling_gap(page, src, text)
 
     def changed(self, tree: str) -> list[str]:
         p = sh(["git", "status", "--porcelain", "--untracked-files=all"], tree)  # بلاه يظهر المجلدُ الجديد `dir/` لا ملفّاته

@@ -2192,3 +2192,29 @@ def test_mypy_drops_are_recorded_without_a_model_round(tmp_path):
     got = __import__("json").loads(base.read_text(encoding="utf-8"))
     assert got == {"files": {"a/x.py": 2, "c/z.py": 5}, "total": 7}
     assert not runner.record_mypy_drops(str(tmp_path), "لا شيء")
+
+
+BEHAVIOR_URLS = """app_name = "behavior"
+urlpatterns = [
+    path("statistics/", views.behavior_statistics, name="statistics"),
+    path("daily/", views_daily.daily_report, name="daily_report"),
+    path("student/<uuid:pk>/", views.student, name="student"),
+]
+"""
+MENUS = """<div class="sd-menu" id="m-sa"><a href="{% url 'behavior:daily_report' %}">x</a></div>
+<div class="sd-menu" id="m-sw"><a href="{% url 'behavior:statistics' %}">x</a></div>
+<div class="sd-menu" id="m-staff"><a href="{% url 'staff_list' %}">x</a></div>
+"""
+
+
+def test_an_existing_page_is_linked_in_every_menu_of_its_app():
+    gap = runner.menu_sibling_gap("behavior/statistics/?month=2026-10", BEHAVIOR_URLS, MENUS)
+    assert len(gap) == 1 and "m-sa" in gap[0] and "m-sw" not in gap[0] and "m-staff" not in gap[0]
+    fixed = MENUS.replace("behavior:daily_report' %}\">x</a>", "behavior:daily_report' %}\">x</a>{% url 'behavior:statistics' %}")
+    assert runner.menu_sibling_gap("behavior/statistics/", BEHAVIOR_URLS, fixed) == []
+
+
+def test_sibling_rule_skips_detail_pages_and_unknown_apps():
+    assert runner.menu_sibling_gap("behavior/student/1/", BEHAVIOR_URLS, MENUS) == []
+    assert runner.menu_sibling_gap("behavior/statistics/", "", MENUS) == []
+    assert runner.menu_sibling_gap("", BEHAVIOR_URLS, MENUS) == []
