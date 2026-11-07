@@ -80,6 +80,7 @@ class Fake(runner.Effects):
     def menu_gap(self, tree, card): return getattr(self, "menu", [])
     def slot_serves(self, port, head): return getattr(self, "slot_live", True)
     def slot_down(self, port): self.downs = getattr(self, "downs", []) + [port]
+    def slot_projects(self): return list(getattr(self, "projects", []))
     def preview_tick(self): self.ticks = getattr(self, "ticks", 0) + 1
     def preview_release(self): self.releases = getattr(self, "releases", 0) + 1
     def close_pr(self, tree, pr): self.closed_pr = pr
@@ -2259,3 +2260,32 @@ def test_brief_warns_about_the_guards_that_keep_failing_cards(monkeypatch):
     monkeypatch.setattr(runner, "sh", lambda *a, **k: types.SimpleNamespace(stdout=src, stderr="", returncode=0))
     text = runner.brief({"id": "W-1", "accept": ["x"]}, [])
     assert "≤ 60 سطرًا" in text and "pin_clock" in text and "mypy" in text
+
+
+def _slot_card(lp, cid, port, since):
+    ledger.append_event("created", cid, {"problem": "x"}, lp)
+    ledger.append_event("state", cid, {"state": "in_progress", "by": "runner"}, lp)
+    ledger.append_event("update", cid, {"preview_slot_port": port, "preview_slot_since": since, "runner_resume": {"head": "h1", "tree": "/t"}}, lp)
+
+
+def test_sweep_closes_orphan_slots_and_idle_ones_but_keeps_a_fresh_one(env):
+    lp, _ = env
+    now = 1_000_000
+    _slot_card(lp, "W-20261107-980", 8601, now - 60)  # حيّة وحديثة
+    _slot_card(lp, "W-20261107-981", 8602, now - runner.PREVIEW_PIN_MINUTES * 60 - 1)  # خاملة
+    fx = Fake()
+    fx.projects = [8601, 8602, 8603]  # 8603 بلا بطاقة: يتيمة
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.sweep_slots(fx, items, lp, now=now) == [8602, 8603]
+    assert sorted(fx.downs) == [8602, 8603]
+    idle = ledger.reduce_state(ledger.load_events(lp))["W-20261107-981"]
+    assert idle["preview_slot_port"] == 0 and idle["preview_idle_closed"] == "h1"
+
+
+def test_a_slot_that_failed_to_start_is_torn_down(env):
+    lp, _ = env
+    card = _on_preview(lp, "W-20261104-903")
+    fx = Fake()
+    fx.slot_ok = False
+    assert runner.claim_slot(card, fx, lp, "/t", "h1") == 0
+    assert fx.downs == [runner.PREVIEW_SLOTS[0]]

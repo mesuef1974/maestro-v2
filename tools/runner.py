@@ -941,6 +941,13 @@ class Effects:
     def slot_down(self, port: int) -> None:
         sh([GIT_BASH, str(HERE / "preview_slot.sh"), "down", str(port)], ".", 120)
 
+    def slot_projects(self) -> list[int]:
+        """منافذُ خانات المعاينة التي لها حاويةٌ الآن (مشروعُ compose باسم preview-slot-N)."""
+        p = sh(["docker", "ps", "--format", '{{.Label "com.docker.compose.project"}}'], ".", 30)
+        if p.returncode:
+            return []
+        return sorted({int(m.group(1)) for ln in p.stdout.splitlines() if (m := re.fullmatch(r"preview-slot-(\d+)", ln.strip()))})
+
     def run_seed(self, script: str) -> tuple[bool, str]:
         """داخل حاوية الويب المعروضة؛ الحارسُ يوقفه إن لم تكن قاعدةَ تثبيت."""
         name = f"preview-slot-{self.target}-web-1" if self.target else f"schoolos-main-preview-{self.preview_slot()}-web-1"
@@ -1349,10 +1356,11 @@ def claim_slot(card: dict, fx: Effects, lpath, tree: str, head: str) -> int:
         return 0
     ok, log = fx.slot_up(tree, port)
     if not ok:
+        fx.slot_down(port)  # أمرُ المالك 2026-11-07: لا خادمَ يبقى بعد مهمّته، ومنها إقلاعٌ فشل
         ledger.append_event("update", card["id"], {"preview_slot_failed": head}, lpath)
         refer(card["id"], f"تعذّرت خانة المعاينة {port}: {failure_summary(mask(log))[:200]}")
         return 0
-    ledger.append_event("update", card["id"], {"preview_slot_port": port}, lpath)
+    ledger.append_event("update", card["id"], {"preview_slot_port": port, "preview_slot_since": int(time.time()), "preview_idle_closed": ""}, lpath)
     card["preview_slot_port"] = port
     return port
 
@@ -1362,6 +1370,8 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
     cid, st = card["id"], fx.preview_state()
     live = st.get("mode") == "pin" and int(st.get("pin_until") or 0) > time.time() and not st.get("pin_in_progress")
     slot = card.get("preview_slot_port") or 0
+    if card.get("preview_idle_closed") == head and not slot:
+        return "waiting_preview"  # أُطفئت لخمولها: تعود بـ--reseed لا من تلقاء المشغّل
     if slot and not fx.slot_serves(slot, head):  # سقطت أو تخلّفت: تُطلب من جديد ويُعاد البذر
         ledger.append_event("update", cid, {"preview_slot_port": 0}, lpath)
         slot = 0
@@ -1402,8 +1412,33 @@ def seed_and_announce(card: dict, fx: Effects, lpath, head: str, pr: int, base: 
     return "waiting_preview"
 
 
+def sweep_slots(fx: Effects, items: dict, lpath=None, now=None) -> list[int]:
+    """أمرُ المالك 2026-11-07: لا خادمَ ولا حاويةَ تبقى بعد مهمّتها. يُطفأ (أ) كلُّ مشروعٍ preview-slot-N لا تملكه بطاقةٌ حيّة
+    (انقطاعٌ بين الإقلاع والتسجيل، بطاقةٌ أُغلقت يدويًّا)، و(ب) كلُّ خانةٍ تنتظر قرارًا أكثر من PREVIEW_PIN_MINUTES (مؤقّتُ خمولٍ
+    كمؤقّت تثبيت 8500). الخاملةُ تُرصد في الدفتر وتعود بـ`--reseed`."""
+    now = now or time.time()
+    owned = {i["preview_slot_port"]: i for i in items.values() if i.get("preview_slot_port")}
+    closed: list[int] = []
+    for port in fx.slot_projects():
+        card = owned.get(port)
+        if card is None:
+            fx.slot_down(port)
+            closed.append(port)
+            continue
+        since = int(card.get("preview_slot_since") or 0)
+        if since and now - since > PREVIEW_PIN_MINUTES * 60 and not card.get("preview_approved"):
+            fx.slot_down(port)
+            head = (card.get("runner_resume") or {}).get("head", "")
+            ledger.append_event("update", card["id"], {"preview_slot_port": 0, "preview_idle_closed": head}, lpath)
+            refer(card["id"], f"أُطفئت خانة المعاينة {port} لخمولها {PREVIEW_PIN_MINUTES // 60} ساعة بلا قرار — للإعادة: python tools/runner.py --reseed {card['id']}")
+            closed.append(port)
+    return closed
+
+
 def preview_cycle(cfg: dict, fx: Effects, lpath=None, queue: Path | None = None) -> None:
     """كلَّ دورة: يُفكّ تثبيتُ بطاقةٍ انتهى قرارها، وإلا تدور حلقةُ المتابعة. تثبيتُ غير المشغّل لا يُمسّ."""
+    items = ledger.reduce_state(ledger.load_events(lpath))
+    sweep_slots(fx, items, lpath)
     items = ledger.reduce_state(ledger.load_events(lpath))
     for i in items.values():  # قُضي في البطاقة: تُفرَّغ خانتُها لغيرها
         if i.get("preview_slot_port") and (i.get("state") in ("closed", "published", "deferred") or i.get("preview_approved") or i.get("preview_rejected")):
@@ -1970,7 +2005,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--release", metavar="CARD", help="فتح دمج بطاقة موقوفة بعد قراءة فرقها")
     a = ap.parse_args(argv)
     if a.reseed:
-        ledger.append_event("update", a.reseed, {"preview_seed_failed": ""})
+        ledger.append_event("update", a.reseed, {"preview_seed_failed": "", "preview_idle_closed": ""})
         print(f"{a.reseed}: يُعاد البذر في الدورة التالية")
         return 0
     if a.dismiss:
