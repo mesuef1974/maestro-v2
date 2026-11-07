@@ -503,6 +503,25 @@ def referenced_tests(tree: str, changed: list[str]) -> list[str]:
     return sorted(set(direct) | set(hits))
 
 
+def guard_rules(repo: str = DEFAULT_CONFIG["repo"]) -> list[str]:
+    """حرّاسُ المستودع التي تُسقط البطاقاتِ مرّةً بعد مرّة (W-20261107-020: الطبقات وتثبيت الساعة؛ W-018: mypy) تُقال
+    للنموذج قبل أن يكتب لا بعد سبع دقائق فحص؛ والسقوفُ تُقرأ من المستودع فلا تتقادم هنا."""
+    caps = {"MAX_LINES": "60", "MAX_ORM": "5"}
+    src = sh(["git", "-C", repo, "show", "origin/main:tests/layering_ratchet.py"]).stdout
+    for key in caps:
+        m = re.search(rf"^{key}\s*=\s*(\d+)", src, re.M)
+        if m:
+            caps[key] = m.group(1)
+    return [
+        f"حارس الطبقات (tests/test_layering.py): دالّةُ العرض ≤ {caps['MAX_LINES']} سطرًا و≤ {caps['MAX_ORM']} استدعاءاتِ ORM، "
+        "وملفُّ عرضٍ مسجَّلٌ في tests/layering_baseline.json لا يزيد عن سجلّه: القراءةُ في selectors.py والكتابةُ في services.py "
+        "واقرأ request.school، والشاشةُ الجديدة في ملفّ عرضٍ جديد داخل التطبيق لا في views.py كبير.",
+        "حارس الساعة (tests/test_clock_pin_ratchet.py): ملفُّ اختبارٍ جديد يقرأ اليوم (timezone.now/localdate أو date.today) "
+        "يضع `pytestmark = pytest.mark.pin_clock` أو يستعمل frozen_clock، ولا يستعمل date.today/datetime.now المباشرتين.",
+        "حارس mypy (tests/mypy_ratchet): لا خطأ أنواعٍ جديد في أيّ ملفّ تعدّله؛ اكتب أنواع الدوالّ الجديدة كاملةً.",
+    ]
+
+
 def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> str:
     """موجزٌ من قالب: المواصفةُ والمعايير والقواعدُ ذات الصلة فقط، لا تاريخ ولا رسائل."""
     acc = card.get("accept")
@@ -528,6 +547,10 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         "غيّرتَ سلوكَ دالّةٍ أو قالب؟ ابحث (Grep) في tests/ عن كلّ مستعمِلٍ له وحدّث اختباراته وشغّلها؛ اختبارٌ لم تفتحه يكسر CI.",
     ]
     parts += rules
+    try:
+        parts += guard_rules()
+    except OSError:  # المستودعُ غير مقروء: تبقى القواعدُ بلا الحرّاس
+        pass
     if fail_log:
         parts += ["فشلت الفحوص؛ أصلح السبب فقط:", fail_log[-4000:], "الفرق الحاليّ:", diff[-4000:]]
     return "\n\n".join(p for p in parts if p)

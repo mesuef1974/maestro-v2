@@ -2250,3 +2250,12 @@ def test_an_orphaned_build_goes_back_to_the_queue_but_an_open_request_does_not(e
     assert runner.requeue_orphans(lp) == ["W-20261107-990"]
     assert _state(lp, "W-20261107-990")["state"] == "routed"
     assert _state(lp, "W-20261107-991")["state"] == "in_progress"
+
+
+def test_brief_warns_about_the_guards_that_keep_failing_cards(monkeypatch):
+    import types
+
+    src = "MAX_LINES = 60" + chr(10) + "MAX_ORM = 5" + chr(10)
+    monkeypatch.setattr(runner, "sh", lambda *a, **k: types.SimpleNamespace(stdout=src, stderr="", returncode=0))
+    text = runner.brief({"id": "W-1", "accept": ["x"]}, [])
+    assert "≤ 60 سطرًا" in text and "pin_clock" in text and "mypy" in text
