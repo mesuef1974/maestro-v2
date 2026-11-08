@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 import sys
 
 sys.path.insert(0, os.path.join(os.getcwd(), "scripts"))
@@ -52,6 +53,45 @@ import check_migration_collisions as cmc  # noqa: E402 — من scripts/ الم�
 import git_open_prs  # noqa: E402 — بجوار هذا الملف (/runner)
 
 pc.check_migration_collisions = lambda: git_open_prs.check(pc, cmc)  # صورةٌ بلا gh: فروعُ git بدل gh pr list (W-20261026-014)
-pc.check_pre_commit_hook = _direct_ruff
+
+
+def _timed(name, fn):
+    """يطبع زمنَ كلّ فحصٍ بسطرٍ [timing] يجمعه المشغّل في ledger/prepush_timing.log."""
+    def run(*a, **k):
+        start = time.monotonic()
+        out = fn(*a, **k)
+        print(f"[timing] {name} {time.monotonic() - start:.0f}s", flush=True)
+        return out
+    return run
+
+
+pc.check_pre_commit_hook = lambda hook_id: _timed(hook_id, _direct_ruff(hook_id))
+for _name in ("check_personal_data", "check_secrets", "check_complexity", "check_identity", "check_structure", "check_migration_collisions", "check_types"):
+    if hasattr(pc, _name):
+        setattr(pc, _name, _timed(_name, getattr(pc, _name)))
 pc.write_receipt = lambda: None
-sys.exit(pc.main(sys.argv[1:]))
+if os.environ.get("PREPUSH_BUILD_DB"):
+    # قاعدةٌ نظيفةٌ تُحفظ قبل أيّ اختبارٍ حقيقيّ: اختباراتُ المعاملات تفرّغ الجداولَ فلا يصلح ما بعدها للحفظ
+    probe = "tests/test_zz_build_db.py"
+    with open(probe, "w", encoding="utf-8") as fh:
+        fh.write("import pytest" + chr(10) + chr(10) + chr(10) + "@pytest.mark.django_db" + chr(10) + "def test_build():" + chr(10) + "    pass" + chr(10))
+    sys.exit(subprocess.run([sys.executable, "-m", "pytest", probe, "-q", "-p", "no:cacheprovider", "--no-header", "--reuse-db", "--create-db"]).returncode)
+rc = pc.main(sys.argv[1:])
+# اختباراتٌ تذكر ما عدّله النموذج (PREPUSH_EXTRA_TESTS من runner.referenced_tests): بعد نجاح prepush وفي الحاوية نفسها؛
+# فشلُها فشلُ الفحص (رمز 1) لا «غير مقيس». prepush وحده ثابتٌ فلا يرى كسرَ مستعمِلٍ لم يُفتح (#1338).
+extra = os.environ.get("PREPUSH_EXTRA_TESTS", "").split()
+if rc == 0 and extra:
+    print(f"… اختباراتٌ تذكر المعدَّل ({len(extra)})", flush=True)
+    extra_start = time.monotonic()
+    reuse = ["--reuse-db"] if os.environ.get("PREPUSH_REUSE_DB") else []
+    proc = subprocess.run([sys.executable, "-m", "pytest", *extra, "-q", "-p", "no:cacheprovider", "--no-header", *reuse],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    sys.stdout.write((proc.stdout + proc.stderr)[-4000:])
+    print(f"[timing] extra_tests {time.monotonic() - extra_start:.0f}s", flush=True)
+    if proc.returncode != 0:
+        rc = 1
+if rc == 0:
+    import affected_guards  # noqa: E402 — بجوار هذا الملف (/runner)
+
+    rc = affected_guards.run(skip=extra)
+sys.exit(rc)
