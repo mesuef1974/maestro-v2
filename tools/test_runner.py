@@ -1275,6 +1275,7 @@ def test_autoformat_and_prepush_use_the_same_image(tmp_path, monkeypatch):
     (tmp_path / "a.py").write_text("x=1", encoding="utf-8")
     monkeypatch.setattr(fx, "changed", lambda tree: ["a.py"])
     monkeypatch.setattr(runner, "sh", lambda cmd, *a: seen.append(cmd) or runner.subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(runner.Effects, "preflight", lambda self, *a, **k: None)  # لا محرّك حاويات في CI
     fx.autoformat(str(tmp_path))
     assert fp.PREPUSH_IMAGE in seen[0] and fp.PREPUSH_IMAGE in fp.prepush_command("t", "g", "g", "n", "net")
 
