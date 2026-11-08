@@ -29,7 +29,7 @@ jobs:
       - name: bash الخاصّ بـGit قبل bash الخاصّ بـWSL (اختبارات release_follow)
         shell: pwsh
         run: Add-Content $env:GITHUB_PATH "C:\Program Files\Git\bin"
-      - name: تثبيت pytest وtzdata وtiktoken (منطقة Asia/Qatar على Windows)
-        run: python -m pip install pytest tzdata tiktoken
+      - name: تثبيت pytest وtzdata وtiktoken وpymupdf (منطقة Asia/Qatar، وفحص خطوط PDF في المشغّل)
+        run: python -m pip install pytest tzdata tiktoken pymupdf
       - name: اختبارات tools
         run: python -m pytest tools -q -p no:cacheprovider

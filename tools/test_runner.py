@@ -579,6 +579,7 @@ def test_autoformat_uses_the_image_ruff_on_changed_python_only(tmp_path, monkeyp
         return real(cmd, cwd, timeout, *rest) if timeout else real(cmd, cwd)
 
     monkeypatch.setattr(runner, "sh", spy)
+    monkeypatch.setattr(runner.Effects, "preflight", lambda self, *a, **k: None)  # لا محرّك حاويات في CI (windows-latest)
     assert runner.Effects(CFG).autoformat(str(tmp_path)) == ["a.py"]
     assert seen[0][-1] == "a.py" and "--network" in seen[0] and "ruff" in seen[0]  # لا ruff الجهاز ولا b.txt
 
