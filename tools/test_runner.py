@@ -377,6 +377,13 @@ def test_no_change_after_green_checks_escalates_instead_of_publishing(env):
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 2
 
 
+def test_no_change_report_names_the_real_reason_not_the_green_check_log(env):
+    lp, lock = env
+    _card(lp)
+    runner.run_cycle(CFG, Fake(files=()), lp, lock)
+    assert "لم يُحدث النموذجُ أيَّ تغيير" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
 def test_haiku_over_turn_cap_with_green_checks_never_runs_sonnet(env):
     lp, lock = env
     _card(lp)

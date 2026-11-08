@@ -1922,6 +1922,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     last_fp = fp
                     if ok and not fx.changed(tree):
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
+                        log = "لم يُحدث النموذجُ أيَّ تغيير؛ جوابُه: " + (res.out or "—")[-400:]  # لا سجلَّ الفحص الأخضر: هو ما أخفى السببَ في 8 محاولات (ضغط الأصول)
                         break
                     if ok:
                         miss = criteria_failures(card, fx.changed(tree)) + fx.menu_gap(tree, card) + fx.legal_gap(tree, card)
