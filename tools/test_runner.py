@@ -79,6 +79,7 @@ class Fake(runner.Effects):
 
     def menu_gap(self, tree, card): return getattr(self, "menu", [])
     def asset_gap(self, tree, card): return []
+    def parent_of(self, tree, oid): return "good1234abcd"
     def slot_serves(self, port, head): return getattr(self, "slot_live", True)
     def slot_down(self, port): self.downs = getattr(self, "downs", []) + [port]
     def slot_projects(self): return list(getattr(self, "projects", []))
@@ -1301,6 +1302,70 @@ def test_preview_failure_is_retried_twice_after_ten_minutes_then_left_to_the_own
 def test_a_preview_failure_with_no_recorded_time_is_retried_at_once(env):
     lp, _ = env
     assert runner.auto_retry_preview({"id": "W-3", "preview_slot_failed": "h"}, "h", lp) is True
+
+
+MIG = "مساراتٌ محظورةٌ على الدمج الآليّ: behavior/migrations/0026_x.py (يطابق */migrations/*)"
+
+
+def test_only_forbidden_paths_make_an_owner_merge_not_a_failure():
+    assert runner.owner_merge_only(MIG) is True
+    assert runner.owner_merge_only(MIG + " | فحصٌ فاشل: pytest (FAILURE)") is False
+    assert runner.owner_merge_only("لا فحوصَ CI مسجَّلةٌ بعدُ على الطلب") is False
+    assert runner.owner_merge_only("") is False
+
+
+class _OwnerMerge(Fake):
+    def gate_reasons(self, tree, pr): return MIG
+
+
+def _owner_merge_card(lp, **extra):
+    _card(lp, approval="معاينة", source="owner", preview_approved=True, **extra)
+    ledger.append_event("state", "W-20261104-901", {"state": "in_progress", "by": "runner", "held_by": "runner"}, lp)
+    ledger.append_event("update", "W-20261104-901", {"pr": 7, "runner_resume": {"pr": 7, "branch": "b", "head": "h1", "tree": "t", "spent": 0}}, lp)
+    return ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+
+
+def test_a_gate_refusal_for_a_migration_waits_for_the_owner_instead_of_closing(env):
+    lp, _ = env
+    card = _owner_merge_card(lp)
+    fx = _OwnerMerge(gate=False)
+    fx.merge_state = "OPEN"
+    fx.pr_body_of = lambda tree, pr: runner.pr_body(card, "h1")
+    out = runner.finish(card, CFG, fx, lp, "t", "b", "h1", 7)
+    st = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert out == "waiting_owner_merge" and st["state"] == "in_progress"
+    assert st["owner_action"]["kind"] == "merge" and st["owner_action"]["pr"] == 7 and st["owner_action"]["head"] == "h1"
+    assert runner.awaiting_owner(st) is True  # لا تحجز المسار عن البطاقات الأخرى
+    assert "ينتظر دمجك" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_the_owner_merging_by_hand_continues_to_publish_without_a_hand(env):
+    lp, _ = env
+    card = _owner_merge_card(lp, owner_action={"kind": "merge", "pr": 7, "head": "h1", "since": 1, "told": 1, "reason": MIG})
+    card["owner_action"] = {"kind": "merge", "pr": 7, "head": "h1", "since": 1, "told": 1, "reason": MIG}
+    fx = _OwnerMerge(gate=False)  # الطلب MERGED افتراضيّاً في Fake
+    out = runner.resume(card, CFG, fx, lp)
+    st = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert out == "published" and st["state"] == "published" and not st.get("owner_action")
+
+
+def test_a_pr_closed_without_merge_ends_the_waiting_with_a_report(env):
+    lp, _ = env
+    card = _owner_merge_card(lp)
+    card["owner_action"] = {"kind": "merge", "pr": 7, "head": "h1", "since": 1, "told": 1, "reason": MIG}
+    fx = _OwnerMerge(gate=False)
+    fx.merge_state = "CLOSED"
+    assert runner.resume(card, CFG, fx, lp) == "referred"
+    assert ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]["state"] == "closed"
+
+
+def test_a_real_gate_failure_still_closes_the_card(env):
+    lp, _ = env
+    card = _owner_merge_card(lp)
+    fx = Fake(gate=False)
+    fx.pr_body_of = lambda tree, pr: runner.pr_body(card, "h1")
+    with pytest.raises(runner.RunnerError):
+        runner.finish(card, CFG, fx, lp, "t", "b", "h1", 7)
 
 
 def test_record_run_keeps_tokens_beside_the_unchanged_text(env):

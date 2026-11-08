@@ -1231,6 +1231,11 @@ class Effects:
     def merge(self, tree: str, pr: int) -> bool:
         return sh(["gh", "pr", "merge", str(pr), "--auto"], tree).returncode == 0  # كما تفعل البوّابة: الطابورُ يفرض استراتيجيّته
 
+    def parent_of(self, tree: str, oid: str) -> str:
+        """أبُ commit الدمج الأوّل: آخرُ نشرٍ سليمٍ قبل دمج المالك، هدفُ التراجع إن فشلت الصحّة."""
+        sh(["git", "fetch", "-q", "origin", "main"], tree)
+        return sh(["git", "rev-parse", f"{oid}^1"], tree).stdout.strip()
+
     def in_deploy_window(self, tree: str) -> bool:
         return sh([sys.executable, "scripts/deploy_window.py"], tree).returncode == 0
 
@@ -1378,7 +1383,10 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     if card.get("merge_hold") and card.get("merge_released") != head:
         return hold_for_owner(card, lpath, pr, head)
     if not fx.gate_allows(tree, pr):
-        raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {fx.gate_reasons(tree, pr)}")
+        reasons = fx.gate_reasons(tree, pr)
+        if owner_merge_only(reasons):  # هجرةٌ أو مسارٌ محظورٌ على الآليّ: الدمجُ للمالك بتصميم البوّابة، لا فشلُ بطاقة
+            return wait_owner_merge(card, fx, lpath, tree, pr, head, reasons)
+        raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {reasons}")
     if fx.remote_head(branch) != head:
         raise Transient("الرأسُ تغيّر بعد الفحص")
     if not fx.in_deploy_window(tree):  # الدمجُ نشرٌ فوريّ: خارجَ النافذة لا دمج، ويبقى الطلبُ مفتوحاً
@@ -1680,6 +1688,52 @@ def hold_for_owner(card: dict, lpath, pr: int, head: str) -> str:
     return "waiting_owner"
 
 
+OWNER_MERGE_MARK = "مساراتٌ محظورةٌ على الدمج الآليّ"
+OWNER_MERGE_REMIND_S = 24 * 3600
+OWNER_MERGE_GIVE_UP_S = 14 * 24 * 3600
+
+
+def owner_merge_only(reasons: str) -> bool:
+    """كلُّ أسباب رفض البوّابة هي المساراتُ المحظورةُ وحدَها (هجرة، صلاحيات…): والباقي فشلٌ حقيقيٌّ يبقى فشلاً."""
+    lines = [x.strip() for x in reasons.split(" | ") if x.strip()]
+    return bool(lines) and all(x.startswith(OWNER_MERGE_MARK) for x in lines)
+
+
+def wait_owner_merge(card: dict, fx: Effects, lpath, tree: str, pr: int, head: str, reasons: str, now=None) -> str:
+    """دمجٌ يدويٌّ للمالك تتابعه الأتمتةُ حتى النشر: البطاقةُ لا تُغلق ولا تحجز المسار، وتظهر في ميزان «ينتظر دمجك».
+
+    كلُّ دورةٍ تقرأ حالةَ الطلب: MERGED فيُكمَل النشرُ والصحّةُ بلا يد، وCLOSED يُغلق بتقرير، وOPEN يبقى؛ وتذكيرٌ في اليوم
+    ثمّ إغلاقٌ بتقريرٍ بعد 14 يوماً. (W-20261108-027: أُغلقت وطلبُها أخضرُ ينتظر فلم يرَ المالكُ شيئاً.)"""
+    now = now or time.time
+    cid = card["id"]
+    state, oid = fx.pr_state(tree, pr)
+    resume_ = dict(card.get("runner_resume") or {})
+    if state == "MERGED":
+        resume_.update(stage="deploy_wait", oid=oid, good=fx.parent_of(tree, oid) or resume_.get("good", ""), deploy_wait_since=now())
+        card["runner_resume"] = resume_
+        ledger.append_event("note", cid, {"text": f"[مالك] دمج الطلب {pr} يدويّاً؛ تتابع الأتمتةُ النشرَ والصحّة", "by": "owner"}, lpath)
+        ledger.append_event("update", cid, {"runner_resume": resume_, "owner_action": None}, lpath)
+        ledger.append_event("state", cid, {"state": "merged", "by": BY, "merge_commit": oid}, lpath)
+        return merge_and_publish(card, fx, lpath, tree, pr)
+    if state == "CLOSED":
+        raise RunnerError(f"أُغلق الطلب {pr} دون دمج")
+    action = card.get("owner_action") or {}
+    if action.get("kind") != "merge" or action.get("head") != head:
+        action = {"kind": "merge", "pr": pr, "head": head, "since": int(now()), "told": int(now()),
+                  "reason": reasons[:240], "url": f"https://github.com/sh-school/shschool_mvp/pull/{pr}"}
+        card["owner_action"] = action
+        ledger.append_event("update", cid, {"owner_action": action}, lpath)
+        refer(cid, f"الطلب {pr} أخضر وينتظر دمجك بيدك ({reasons[:140]}). بعد دمجه تُكمل الأتمتةُ النشرَ والصحّةَ بلا يد.")
+    elif now() - float(action.get("since") or now()) > OWNER_MERGE_GIVE_UP_S:
+        raise RunnerError(f"الطلب {pr} ينتظر دمجَ المالك منذ أكثر من 14 يوماً فأُغلقت البطاقةُ بتقرير")
+    elif now() - float(action.get("told") or now()) > OWNER_MERGE_REMIND_S:
+        action = dict(action, told=int(now()))
+        card["owner_action"] = action
+        ledger.append_event("update", cid, {"owner_action": action}, lpath)
+        refer(cid, f"تذكير: الطلب {pr} ما زال ينتظر دمجك.")
+    return "waiting_owner_merge"
+
+
 def release_merge(cid: str, lpath=None) -> tuple[bool, str]:
     card = ledger.reduce_state(ledger.load_events(lpath)).get(cid)
     head = ((card or {}).get("runner_resume") or {}).get("head", "")
@@ -1783,7 +1837,8 @@ def awaiting_owner(card: dict) -> bool:
         return False
     shown = card.get("approval") == "معاينة" and not card.get("preview_approved") and card.get("preview_seen") == head
     held = card.get("merge_hold_told") == head and card.get("merge_released") != head
-    return shown or held
+    owner_merge = (card.get("owner_action") or {}).get("kind") == "merge" and (card.get("owner_action") or {}).get("head") == head
+    return shown or held or owner_merge
 
 
 def clashes(card: dict, active: list[dict]) -> bool:
@@ -2040,8 +2095,11 @@ def resume(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     """بطاقةٌ فتحت طلبها وتنتظر الفحوص أو النافذة: تُكمَل من البوّابة بلا تشغيل نموذج."""
     r = card["runner_resume"]
     try:
+        action = card.get("owner_action") or {}
         if r.get("stage") in ("merged_wait", "deploy_wait"):  # بعد الدمج: لا إعادةَ فحوصٍ ولا بوّابة
             out = merge_and_publish(card, fx, lpath, r["tree"], r["pr"])
+        elif action.get("kind") == "merge" and action.get("head") == r.get("head"):  # بانتظار دمج المالك: تُقرأ حالةُ الطلب لا الفحوص
+            out = wait_owner_merge(card, fx, lpath, r["tree"], r["pr"], r["head"], action.get("reason", ""))
         else:
             out = finish(card, cfg, fx, lpath, r["tree"], r["branch"], r["head"], r["pr"])
     except RunnerError as exc:
