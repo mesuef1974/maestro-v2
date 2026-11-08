@@ -1254,6 +1254,47 @@ def test_quota_text_does_not_match_the_run_budget():
         runner.check_quota("Usage limit reached")
 
 
+@pytest.mark.parametrize("text", [
+    "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE: usually a TLS-inspecting corporate proxy",
+    "read ECONNRESET",
+])
+def test_network_and_tls_errors_are_environment_not_a_model_failure(text):
+    with pytest.raises(runner.EnvDown):
+        runner.check_quota(text)
+    runner.check_quota("ruff: 3 errors in the model's own output")  # نصٌّ عاديّ لا يُحسب عطلًا
+
+
+def test_a_failure_line_is_what_makes_a_verify_log_actionable():
+    assert runner.has_failure_marker("... ok" + chr(10) + "✘ ruff check: فشل") is True
+    assert runner.has_failure_marker("FAILED tests/test_x.py::test_a - assert 1 == 2") is True
+    assert runner.has_failure_marker("app/x.py:3: error: Incompatible types") is True
+    assert runner.has_failure_marker("393 passed, 6 skipped in 48s" + chr(10) + "[timing] extra_tests 51s") is False
+
+
+def test_unreadable_verify_failure_saves_the_whole_log_and_never_calls_the_model_again(tmp_path):
+    path = runner.save_verify_log("runner-w-1", 1, "x" * 5000 + " tail", folder=tmp_path)
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("exit=1") and text.endswith("tail") and len(text) > 5000
+
+
+def test_preview_failure_is_retried_twice_after_ten_minutes_then_left_to_the_owner(env):
+    lp, _ = env
+    card = {"id": "W-1", "preview_seed_failed": "h1", "preview_fail_at": 1000}
+    assert runner.auto_retry_preview(card, "h1", lp, now=1100) is False  # لم تمضِ عشرُ دقائق
+    assert runner.auto_retry_preview(card, "h1", lp, now=1700) is True and card["preview_seed_failed"] == ""
+    card.update(preview_slot_failed="h1", preview_fail_at=2000)
+    assert runner.auto_retry_preview(card, "h1", lp, now=2700) is True and card["preview_retries"] == 2
+    card.update(preview_seed_failed="h1", preview_fail_at=3000)
+    assert runner.auto_retry_preview(card, "h1", lp, now=9000) is False  # استُنفدت الإعادتان
+    assert runner.auto_retry_preview({"id": "W-2", "preview_seed_failed": "old"}, "new", lp) is False  # رأسٌ آخر
+
+
+def test_a_preview_failure_with_no_recorded_time_is_retried_at_once(env):
+    lp, _ = env
+    assert runner.auto_retry_preview({"id": "W-3", "preview_slot_failed": "h"}, "h", lp) is True
+
+
 def test_record_run_keeps_tokens_beside_the_unchanged_text(env):
     lp, _ = env
     runner.record_run("W-1", "haiku تشغيل 1", runner.Result(True, "", 0.5, 2, {"usage": {"input_tokens": 3, "output_tokens": 4, "x": {}}}), lp)

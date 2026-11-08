@@ -131,6 +131,7 @@ REVIEW_SIZES = ("متوسط", "كبير", "تصميم")  # البطاقةُ ال
 COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول|بذر المعاينة): كلفة=([\d.]+)\$")
 # نصوصُ claude 2.1.312 المستخرجة من البرنامج نفسه؛ لا يدخل فيها «Budget limit» فهو سقفُ التشغيل --max-budget-usd
 USAGE_LIMIT = re.compile(r"usage limit reached|you(?:'|’)ve hit your|out of extra usage", re.I)
+NET_DOWN = re.compile(r"ENOTFOUND|EAI_AGAIN|ECONNRESET|ETIMEDOUT|Can.t reach the API server|UNABLE_TO_VERIFY|TLS-inspecting", re.I)
 ESCALATE = {"haiku": "sonnet"}  # الأعلى لا يُستعمل آليّاً أبداً
 
 
@@ -147,6 +148,8 @@ def check_quota(text: str) -> None:
     """نفادُ حصّة الاشتراك علّةُ بيئة: لا يُحسب فشلاً للنموذج ولا يصعد السلّم ولا يُغلق البطاقة."""
     if USAGE_LIMIT.search(text):
         raise EnvDown(f"نفدت حصّة الاشتراك: {text.strip()[:160]}")
+    if NET_DOWN.search(text):  # انقطاعُ الشبكة أو شهادةُ TLS علّةُ بيئةٍ كذلك: تعود البطاقةُ إلى الطابور بلا كلفةٍ ولا صعودٍ في السلّم (W-20261108-017 و020 و021)
+        raise EnvDown(f"تعذّر الوصولُ إلى واجهة النموذج: {text.strip()[:160]}")
 
 
 def load_config(path: Path = CONFIG) -> dict:
@@ -423,6 +426,27 @@ def give_up(cid: str, message: str, log: str, fx: "Effects", tree: str, lpath=No
     if safe:
         ledger.append_event("note", cid, {"text": f"[مشغّل] آخر سجلّ فشل: {safe[-FAIL_NOTE_CHARS:]}", "by": BY}, lpath)
     return RunnerError(message)
+
+
+VERIFY_LOGS = ROOT / "archive_local" / "verify_logs"  # مستثنى من git
+
+
+def has_failure_marker(log: str) -> bool:
+    """أفي السجلّ ما يصلح النموذجُ بناءً عليه؟ سطرُ ✘ أو FAILED أو خطأُ mypy أو زيادةُ سقّاطة."""
+    for ln in log.splitlines():
+        text = ln.lstrip()
+        if text.startswith(("✘", "FAILED", "ERROR")) or MYPY_ERROR.match(text):
+            return True
+    return bool(WORSE_LINE.search(log))
+
+
+def save_verify_log(name: str, code: int, log: str, folder: Path | None = None) -> Path:
+    """السجلُّ الكاملُ لفحصٍ فشل بلا سببٍ مقروء؛ ملاحظةُ الدفتر تقصّه عند 1500 حرف فلا يُرى فيها سببُ الفشل."""
+    folder = folder or VERIFY_LOGS
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{name}-{int(time.time())}.log"
+    path.write_text(f"exit={code}" + chr(10) + mask(log), encoding="utf-8")
+    return path
 
 
 def failure_summary(log: str) -> str:
@@ -811,6 +835,9 @@ class Effects:
         if "غير مقيس" in log or "تعذّر إنشاء" in log or "تعذّر" in log[:200]:
             raise RunnerError("بيئةٌ: الفحص غير مقيس في الحاوية — " + log.strip()[-160:])
         ok, tail = code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
+        if not ok and not has_failure_marker(log):  # لا سببَ يُقرأ: إعادةُ النموذج لإصلاح ما لا يراه تهدر كلفةَ كلّ جولة (ضغط الأصول: 7 محاولات)
+            saved = save_verify_log(name, code, log)
+            raise RunnerError(f"بيئةٌ: الفحص في الحاوية انتهى برمز {code} بلا سطر فشلٍ مقروء ولا سطر نجاح؛ السجلّ الكامل: {saved}")
         if not ok and record_mypy_drops(tree, log) and log.count("✘") == 1 and not WORSE_LINE.search(log):
             return self.verify(tree)  # لا سبب غيره؛ والإعادةُ لا تعود هنا لأنّ النقص سُجّل
         detail = "" if ok else self.mypy_detail(tree, log)
@@ -1434,7 +1461,7 @@ def claim_slot(card: dict, fx: Effects, lpath, tree: str, head: str) -> int:
     ok, log = fx.slot_up(tree, port)
     if not ok:
         fx.slot_down(port)  # أمرُ المالك 2026-11-07: لا خادمَ يبقى بعد مهمّته، ومنها إقلاعٌ فشل
-        ledger.append_event("update", card["id"], {"preview_slot_failed": head}, lpath)
+        ledger.append_event("update", card["id"], {"preview_slot_failed": head, "preview_fail_at": int(time.time())}, lpath)
         refer(card["id"], f"تعذّرت خانة المعاينة {port}: {failure_summary(mask(log))[:200]}")
         return 0
     ledger.append_event("update", card["id"], {"preview_slot_port": port, "preview_slot_since": int(time.time()), "preview_idle_closed": ""}, lpath)
@@ -1442,8 +1469,29 @@ def claim_slot(card: dict, fx: Effects, lpath, tree: str, head: str) -> int:
     return port
 
 
+PREVIEW_AUTO_RETRIES = 2   # إعادةٌ آليّةٌ لفشل البذر أو الخانة قبل أن تنتظر أمرَ --reseed (أمرُ المالك: لا توقّفات يدويّة)
+PREVIEW_RETRY_SECONDS = 600
+
+
+def auto_retry_preview(card: dict, head: str, lpath=None, now: float | None = None) -> bool:
+    """فشلُ البذر أو إقلاعُ الخانة علّةٌ عابرةٌ في الغالب وكلفتُه صفرُ توكنز: يُمحى علَمُ الفشل مرّتين بعد عشر دقائق، ثمّ يبقى للمالك."""
+    now = now or time.time()
+    for key in ("preview_seed_failed", "preview_slot_failed"):
+        if card.get(key) != head:
+            continue
+        tries, at = int(card.get("preview_retries") or 0), int(card.get("preview_fail_at") or 0)
+        if tries >= PREVIEW_AUTO_RETRIES or (at and now - at < PREVIEW_RETRY_SECONDS):
+            return False
+        ledger.append_event("update", card["id"], {key: "", "preview_retries": tries + 1, "preview_fail_at": 0}, lpath)
+        ledger.append_event("note", card["id"], {"text": f"[مشغّل] إعادةٌ آليّةٌ للمعاينة ({tries + 1}/{PREVIEW_AUTO_RETRIES}) بعد فشل سابق", "by": BY}, lpath)
+        card[key], card["preview_retries"], card["preview_fail_at"] = "", tries + 1, 0
+        return True
+    return False
+
+
 def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) -> str:
     """لا تُطلب المعاينةُ إلا بعد أن يعرض 8500 شجرةَ البطاقة فعلاً (#1347: طُلبت على خادمٍ لا يحملها)."""
+    auto_retry_preview(card, head, lpath)
     cid, st = card["id"], fx.preview_state()
     live = st.get("mode") == "pin" and int(st.get("pin_until") or 0) > time.time() and not st.get("pin_in_progress")
     slot = card.get("preview_slot_port") or 0
@@ -1475,12 +1523,12 @@ def seed_and_announce(card: dict, fx: Effects, lpath, head: str, pr: int, base: 
         info = preview_info(card, pr)
         path, error = seed_preview(card, info, fx, lpath)
         if not path:  # لا «جاهز» بلا بيانات، ولا اعتماد؛ ويُعاد برأسٍ جديد أو --reseed فلا تتكرّر الكلفة كلَّ دورة
-            ledger.append_event("update", cid, {"preview_seed_failed": head}, lpath)
+            ledger.append_event("update", cid, {"preview_seed_failed": head, "preview_fail_at": int(time.time())}, lpath)
             refer(cid, f"تعذّرت المعاينة: لم يكتمل البذر للطلب #{pr}: {error} — للإعادة: python tools/runner.py --reseed {cid}")
             return "waiting_preview"
         fallback = fx.pdf_fallback_fonts(path, info["account"])
         if fallback:  # لا يصل إلى المالك ما يعرف المشغّلُ أنّه خاطئ، ولا يُعاد البذرُ فالعلّةُ في الشيفرة
-            ledger.append_event("update", cid, {"preview_seed_failed": head}, lpath)
+            ledger.append_event("update", cid, {"preview_seed_failed": head, "preview_fail_at": int(time.time())}, lpath)
             refer(cid, f"لم تُعرض المعاينة: PDF الطلب #{pr} بخطوط احتياطية: {'، '.join(fallback)[:200]}")
             return "waiting_preview"
         info["url"] = base + path
