@@ -2220,6 +2220,15 @@ def test_an_existing_page_is_linked_in_every_menu_of_its_app():
     assert runner.menu_sibling_gap("behavior/statistics/", BEHAVIOR_URLS, fixed) == []
 
 
+def test_sibling_rule_skips_the_personal_user_menu_and_names_the_snippet():
+    link = "{% url " + chr(39) + "behavior:daily_report" + chr(39) + " %}"
+    user = '<div class="sd-menu" id="m-user"><a href="' + link + '">x</a></div>' + chr(10)
+    gap = runner.menu_sibling_gap("behavior/statistics/", BEHAVIOR_URLS, MENUS + user)
+    assert len(gap) == 1 and "m-user" not in gap[0] and "m-sa" in gap[0]
+    assert "can_open" in gap[0] and "behavior:statistics" in gap[0]
+    assert runner.menu_sibling_gap("behavior/statistics/", BEHAVIOR_URLS, user) == []
+
+
 def test_sibling_rule_skips_detail_pages_and_unknown_apps():
     assert runner.menu_sibling_gap("behavior/student/1/", BEHAVIOR_URLS, MENUS) == []
     assert runner.menu_sibling_gap("behavior/statistics/", "", MENUS) == []

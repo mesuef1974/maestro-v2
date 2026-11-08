@@ -269,6 +269,8 @@ def legal_gap(added: str, tree: str) -> list[str]:
 
 
 MENU_FILE = "templates/base/base.html"
+#: قوائمُ شخصيّةٌ لا أقسام: لا يُطلب فيها رابطُ صفحةٍ إداريّة
+PERSONAL_MENUS = frozenset({"m-user"})
 SHARED_DIRS = {"core", "scripts", "shschool", ".github", "docs", "static"}
 NEW_ROUTE = re.compile(r"""path\(\s*["']([^"']*)["'][^)]*?name=["'](\w+)["']""", re.S)
 CRITERIA_CHECKS = {"tests_in_diff": _check_tests_in_diff, "scope_only": _check_scope_only, "no_migrations": _check_no_migrations}
@@ -297,10 +299,13 @@ def menu_sibling_gap(page: str, urls_src: str, menu: str) -> list[str]:
     link = re.compile(f":{names[0]}['\"]")
     gaps = []
     for chunk in menu.split('class="sd-menu')[1:]:
+        box = re.search(r'id="([\w-]+)"', chunk)
+        if box and box.group(1) in PERSONAL_MENUS:
+            continue  # قائمةُ المستخدم الشخصيّة ليست قسمًا: فيها روابطُ تطبيقاتٍ لصاحبها وحده (W-20261108-006 أُغلقت خمسَ جولاتٍ عليها)
         if f"'{ns}:" in chunk and not link.search(chunk):
-            box = re.search(r'id="([\w-]+)"', chunk)
             gaps.append(box.group(1) if box else "?")
-    return [f"الصفحة /{'/'.join(parts)}/ لا تُفتح من القوائم {', '.join(gaps)} وفيها روابط {ns}: أضف رابطها في {MENU_FILE} بجانب روابط قسمها، بشرط can_open على المسار"] if gaps else []
+    snippet = f"{{% if request.user|can_open:\"{ns}:{names[0]}\" %}}<a href=\"{{% url '{ns}:{names[0]}' %}}\">…</a>{{% endif %}}"
+    return [f"الصفحة /{'/'.join(parts)}/ لا تُفتح من القوائم {', '.join(gaps)} وفيها روابط {ns}: أضف رابطها في {MENU_FILE} داخل كلٍّ منها بجانب روابط {ns} هذه بالصيغة {snippet}"] if gaps else []
 
 
 def criteria_failures(card: dict, files: list[str]) -> list[str]:
