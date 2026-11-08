@@ -78,6 +78,7 @@ class Fake(runner.Effects):
         return getattr(self, "slot_ok", True), "log"
 
     def menu_gap(self, tree, card): return getattr(self, "menu", [])
+    def asset_gap(self, tree, card): return []
     def slot_serves(self, port, head): return getattr(self, "slot_live", True)
     def slot_down(self, port): self.downs = getattr(self, "downs", []) + [port]
     def slot_projects(self): return list(getattr(self, "projects", []))

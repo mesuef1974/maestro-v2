@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
         "كبير": ["sonnet", 80, 4.0],
         "تصميم": ["opus", 80, 6.0],
     },
-    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)"],
+    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)", f"Bash(python {(HERE / 'img_tool.py').as_posix()}:*)"],
     "health_url": "https://shschoolmvp-production.up.railway.app/health/",
     "rollback_cmd": [],  # الافتراضيّ: gh workflow run rollback.yml (runbook §4)
     "worktrees": "C:/Users/mesue/delivery_manager_work_wt",
@@ -309,6 +309,34 @@ def menu_sibling_gap(page: str, urls_src: str, menu: str) -> list[str]:
             gaps.append(box.group(1) if box else "?")
     snippet = f"{{% if request.user|can_open:\"{ns}:{names[0]}\" %}}<a href=\"{{% url '{ns}:{names[0]}' %}}\">…</a>{{% endif %}}"
     return [f"الصفحة /{'/'.join(parts)}/ لا تُفتح من القوائم {', '.join(gaps)} وفيها روابط {ns}: أضف رابطها في {MENU_FILE} داخل كلٍّ منها بجانب روابط {ns} هذه بالصيغة {snippet}"] if gaps else []
+
+
+IMAGE_EXT = (".png", ".jpg", ".jpeg")
+ASSET_WORDS = re.compile(r"ضغط|تصغير|أخفّ|أخف |تقليل حجم")
+
+
+def image_files(card: dict) -> list[str]:
+    """ملفّاتُ الصور في نطاق البطاقة المعلن (مسارٌ صريحٌ بصيغة صورة)."""
+    return [f for f in card.get("scope_files") or [] if f.lower().endswith(IMAGE_EXT)]
+
+
+def asset_shrink_flagged(card: dict) -> bool:
+    return bool(image_files(card)) and bool(ASSET_WORDS.search(card.get("problem", "")) or "assets_smaller" in (card.get("runner_checks") or []))
+
+
+def asset_gap(card: dict, sizes: dict[str, tuple[int, int]]) -> list[str]:
+    """بطاقةُ ضغط أصولٍ لا تنجح إلا إن صغُرت صورُها فعلاً: sizes = {مسار: (قبل، بعد)}، وغيابُ المسار يعني أنّه لم يُلمس."""
+    if not asset_shrink_flagged(card):
+        return []
+    todo = image_files(card)
+    untouched = [f for f in todo if f not in sizes]
+    bigger = [f"{f} ({b}←{a})" for f, (b, a) in sizes.items() if a >= b]
+    out = []
+    if len(untouched) == len(todo):
+        out.append("المعيار «الحجم أقلّ»: لم تُصغَّر أيّ صورةٍ من النطاق: " + "، ".join(todo[:6]) + " — استعمل أداة img_tool المذكورة في الموجز")
+    if bigger:
+        out.append("المعيار «الحجم أقلّ»: صورةٌ لم يصغر حجمها: " + "، ".join(bigger[:6]))
+    return out
 
 
 def criteria_failures(card: dict, files: list[str]) -> list[str]:
@@ -596,6 +624,8 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         (f"الملفّات المتوقَّعة (ابدأ منها؛ {'لا تعدّل غيرها' if 'scope_only' in (card.get('runner_checks') or []) else 'وغيرها إن لزم'}): "
          + ", ".join(card["scope_files"])) if card.get("scope_files") else "",
         f"خارج النطاق (لا تمسّه): {card['out_of_scope']}" if card.get("out_of_scope") else "",
+        (f"لتصغير صورة أو ضغطها لا تشغّل Python: استعمل `python {(HERE / 'img_tool.py').as_posix()} resize <مسار> <عرض> <ارتفاع>` "
+         "أو `optimize <مسار>` (يحفظ الشفافية ويطبع الحجم قبل وبعد)؛ والحجمُ شرطُ قبولٍ يفحصه المشغّل.") if image_files(card) else "",
         ("هذه البطاقة تمسّ لائحةً: اقرأ نصّ مصدر الحقيقة (AAdocs/ministry_data/2026_2027/08_conduct_policy_2026.md أو ما يخصّ الموضوع) قبل أن تكتب، "
          "وانقل كلّ رقمٍ وعتبةٍ من نصّه لا من الذاكرة؛ ثمّ أسنِد في وصف الاختبار: `[LEGAL]` وسطرَ `المصدر: <مسار الملفّ md> م<رقم>`. "
          "ما لا تجد نصّه في المصدر فلا تُقدم عليه ولا تخمّنه.") if legal_flagged(card) else "",
@@ -883,6 +913,17 @@ class Effects:
         urls = Path(tree) / page.strip("/").split("/")[0] / "urls.py"
         src = urls.read_text(encoding="utf-8") if urls.is_file() else ""
         return menu_gap(page, diff, text) or menu_sibling_gap(page, src, text)
+
+    def asset_gap(self, tree: str, card: dict) -> list[str]:
+        if not asset_shrink_flagged(card):
+            return []
+        sizes = {}
+        for f in image_files(card):
+            now = Path(tree) / f
+            before = sh(["git", "cat-file", "-s", f"{self.cfg['base']}:{f}"], tree).stdout.strip()
+            if now.is_file() and before.isdigit() and now.stat().st_size != int(before):
+                sizes[f] = (int(before), now.stat().st_size)
+        return asset_gap(card, sizes)
 
     def changed(self, tree: str) -> list[str]:
         p = sh(["git", "status", "--porcelain", "--untracked-files=all"], tree)  # بلاه يظهر المجلدُ الجديد `dir/` لا ملفّاته
@@ -1925,7 +1966,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         log = "لم يُحدث النموذجُ أيَّ تغيير؛ جوابُه: " + (res.out or "—")[-400:]  # لا سجلَّ الفحص الأخضر: هو ما أخفى السببَ في 8 محاولات (ضغط الأصول)
                         break
                     if ok:
-                        miss = criteria_failures(card, fx.changed(tree)) + fx.menu_gap(tree, card) + fx.legal_gap(tree, card)
+                        miss = criteria_failures(card, fx.changed(tree)) + fx.menu_gap(tree, card) + fx.legal_gap(tree, card) + fx.asset_gap(tree, card)
                         if miss:  # الفحوص خضراء لكن معياراً آليّاً من الطلب لم يتحقّق: يُعاد إلى النموذج كإصلاح
                             ok, log = False, "\n".join(miss)
                     if ok and norm_size(card.get("runner_size", "")) not in REVIEW_SIZES:
