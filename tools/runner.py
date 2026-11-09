@@ -373,13 +373,18 @@ def attachment_leak(tree: str, files: list[str], card: dict) -> list[str]:
 
 
 # ───────────────────────── الاختيار ─────────────────────────
+def unmet_deps(card: dict, items: dict[str, dict]) -> list[str]:
+    """بطاقاتٌ يعتمد عليها هذا الطلبُ ولم تُنشر بعد: لا يبدأ بناؤه قبل اندماج ما يقوم عليه ونشرِه (002 إلى 009، 2026-11-09)."""
+    return [d for d in card.get("depends_on") or [] if (items.get(d) or {}).get("state") != "published"]
+
+
 def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
     """أوّلُ بطاقةٍ موجَّهةٍ لها مواصفةٌ كاملة ومعايير قبول ووسمُ حجمٍ معروف، بالأولويّة ثمّ العمر."""
     ready = [
         i for i in items.values()
         if i.get("state") == "routed" and i.get("runner_size") and size_row(cfg, i["runner_size"])
         and i.get("accept") and i.get("spec_tier", i.get("tier")) in ("full", None, "") and not i.get("runner_hold")
-        and not clashes(i, inflight(items))
+        and not clashes(i, inflight(items)) and not unmet_deps(i, items)
     ]
     ready.sort(key=lambda i: (ledger.PRIORITIES.index(i.get("priority", "P3")) if i.get("priority") in ledger.PRIORITIES else 9, i.get("created", "")))
     return ready[0] if ready else None
@@ -2195,7 +2200,7 @@ def intake_requests(cfg: dict, lpath=None) -> int:
         approval = "معاينة" if fields.get("الاعتماد") == "معاينة" or (not fields.get("الاعتماد") and fields["الوسم"] == "تصميم") else "مباشر"
         extra = {"request_file": f.stem, "retry_of": fields.get("إعادة لـ", ""), "req_type": fields.get("النوع", ""), "criteria_ids": [int(x) for x in _split_list(fields, "معايير مرقّمة") if x.isdigit()],
                  "runner_checks": [c for c in _split_list(fields, "فحوص المشغّل") if c in CRITERIA_CHECKS],
-                 "legal": fields.get("يلمس لائحة", "") == "نعم", "scope_page": fields.get("الصفحة", ""), "scope_files": _split_list(fields, "الملفات"), "out_of_scope": fields.get("خارج النطاق", ""),
+                 "legal": fields.get("يلمس لائحة", "") == "نعم", "scope_page": fields.get("الصفحة", ""), "scope_files": _split_list(fields, "الملفات"), "out_of_scope": fields.get("خارج النطاق", ""), "depends_on": [d for d in re.split(r"[\s,،]+", fields.get("يعتمد على", "")) if re.fullmatch(r"W-\d{8}-\d{3}", d)],
                  "attachments_dir": fields.get("المرفقات", "") if Path(fields.get("المرفقات", "") or "/nonexistent").is_dir() else "",
                  "attachments": [{"name": n, "sha256": h} for n, _, h in (x.partition("|") for x in _split_list(fields, "ملفات المرفقات")) if n and len(h) == 64]}
         ledger.append_event("created", cid, {"problem": fields["العنوان"], "impact": fields["المطلوب"],

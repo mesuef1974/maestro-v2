@@ -2475,3 +2475,17 @@ def test_fail_kind_classifies_the_closing_reason_into_a_fixed_family():
     assert runner.fail_kind("فحوصُ CI حمراء على الطلب 5") == "ci"
     assert runner.fail_kind("تعذّر الدفع: behind") == "إيداع"
     assert runner.fail_kind("شيءٌ آخر") == "أخرى"
+
+
+def test_pick_waits_for_published_dependencies(env):
+    """بطاقةٌ تعتمد على أخرى لا تُلتقط قبل أن تُنشر الأخرى (002 إلى 009، 2026-11-09)."""
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="in_progress")
+    _card(lp, "W-20261104-902")
+    ledger.append_event("update", "W-20261104-902", {"depends_on": ["W-20261104-901"]}, lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.unmet_deps(items["W-20261104-902"], items) == ["W-20261104-901"]
+    assert runner.pick_card(items, CFG) is None
+    ledger.append_event("state", "W-20261104-901", {"state": "published"}, lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.pick_card(items, CFG)["id"] == "W-20261104-902"
