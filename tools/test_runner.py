@@ -479,12 +479,12 @@ def test_intake_design_size_defaults_to_preview(env):
     assert list(ledger.reduce_state(ledger.load_events(lp)).values())[0]["approval"] == "معاينة"
 
 
-def test_intake_forbidden_touch_is_held_early_and_referred(env):
+def test_intake_forbidden_touch_is_built_then_waits_for_the_owner_merge_not_held(env):
     lp, _ = env
     _write_req(env, **{"يمسّ": "الهجرات"})
     runner.intake_requests(CFG, lp)
     c = list(ledger.reduce_state(ledger.load_events(lp)).values())[0]
-    assert c["runner_hold"] and runner.pick_card({c["id"]: c}, CFG) is None
+    assert not c.get("runner_hold") and runner.pick_card({c["id"]: c}, CFG) is not None
     assert "الهجرات" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
 
 

@@ -2168,9 +2168,8 @@ def intake_requests(cfg: dict, lpath=None) -> int:
                                               "runner_size": fields["الوسم"], "source": "owner",
                                               "touches": touches, **{k: v for k, v in extra.items() if v}}, lpath)
         ledger.append_event("state", cid, {"state": "routed", "by": BY}, lpath)
-        if touches:  # الأمن والصلاحيات والأدوار والهجرات تردّها البوّابة: لا نبني ثم نُرَدّ
-            ledger.append_event("update", cid, {"runner_hold": True}, lpath)
-            refer(cid, "يمسّ " + "، ".join(touches) + " فلن يُدمج آليًّا — يلزم قرارك")
+        if touches:  # البوّابة تردّ دمجَ هذه المسارات آليًّا، لكن دمجَ المالك اليدويّ صار حالةً حيّة (wait_owner_merge): تُبنى ثم تنتظر دمجه، ولا حجزَ مسبقاً
+            refer(cid, "يمسّ " + "، ".join(touches) + " — ستُبنى وتنتظر دمجَك اليدويّ ثم تُنشر")
         n += 1
     return n
 
