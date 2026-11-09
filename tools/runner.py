@@ -1389,7 +1389,8 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         real = [f for f in real if f not in infra and f not in DERIVED_CHECKS]
         if not real:
             return rerun_infra(card, fx, lpath, tree, pr, infra)
-    if preview and len(real) == 1 and VISUAL_CHECK in real[0]:
+    own = [f for f in real if f not in DERIVED_CHECKS]  # ملخّصُ البوّابة يحمرّ تبعًا لفحصٍ آخر فلا يُعدّ ثانيًا (013، 2026-11-09)
+    if preview and len(own) == 1 and VISUAL_CHECK in own[0]:
         out = mark_visual_change(card, fx, lpath, tree, pr, head)
         if out:
             return out
