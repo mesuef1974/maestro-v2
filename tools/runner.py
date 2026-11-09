@@ -125,6 +125,18 @@ LIGHT_GUARDS = (
     "tests/test_ci_gate_needs.py",
     "tests/test_ci_docs_only.py",
     "tests/test_page_layouts.py",
+    # أسقطت العقدَ المركزيّ للتصدير (#1414) في CI وحدَه: ساكنةٌ سريعةٌ تقرأ المصدرَ لا قاعدة بيانات (W-20261109)
+    "tests/test_national_id_never_bulk.py",
+    "tests/test_sticky_table_header.py",
+    "tests/test_no_web_page_print_button.py",
+    "tests/test_no_external_pages.py",
+    "tests/test_tailwind_freeze.py",
+    "tests/test_flexible_table_columns.py",
+    "tests/test_dead_classes.py",
+    "tests/test_rtl_logical_properties.py",
+    "tests/test_dark_parity.py",
+    "tests/test_contrast_ratios.py",
+    "tests/test_identity_reference_fresh.py",
 )
 FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير المالك
 FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
