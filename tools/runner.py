@@ -1324,6 +1324,13 @@ class Effects:
         cmd = self.cfg.get("rollback_cmd") or ["gh", "workflow", "run", "rollback.yml", "-f", "commit_sha={sha}", "-f", "reason={reason}"]
         return sh([c.format(sha=good_sha, reason=reason) for c in cmd], self.cfg["repo"]).returncode == 0
 
+    def restore_tree(self, branch: str, tree: str) -> None:
+        """شجرةٌ جديدة من فرع الطلب البعيد بعد أن حُذفت عند الإغلاق (استئناف 013)."""
+        sh(["git", "fetch", "-q", "origin", branch], self.cfg["repo"])
+        p = sh(["git", "worktree", "add", "-q", "-B", branch, tree, "origin/" + branch], self.cfg["repo"])
+        if p.returncode:
+            raise RunnerError("بيئةٌ: تعذّر إنشاء شجرة الاستئناف — " + (p.stdout + p.stderr).strip()[-200:])
+
     def remove_tree(self, tree: str) -> None:
         if not Path(tree).resolve().is_relative_to(Path(self.cfg["worktrees"]).resolve()):
             return  # لا يُزال إلا ما أنشأه المشغّل تحت مجلّد أشجاره (الشجرة الرئيسة لا تُمسّ أبداً)
@@ -1403,6 +1410,8 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         return repair_ci(card, cfg, fx, lpath, tree, branch, pr, real)
     if preview:
         if card.get("preview_rejected"):
+            if int((card.get("runner_resume") or {}).get("revisions") or 0) < REVISION_MAX:  # تعديلٌ على الطلب نفسه لا بطاقةٌ جديدة (013، 2026-11-09)
+                return revise_rejected(card, cfg, fx, lpath, tree, branch, pr)
             fx.close_pr(tree, pr)
             raise RunnerError(f"رفض المالك المعاينة على الطلب {pr}: {card['preview_rejected']}"[:600])
         if not card.get("preview_approved"):
@@ -1704,7 +1713,7 @@ def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None) -> tup
             return False, "الرفض يحتاج سببًا: --reason"
         ledger.append_event("note", cid, {"text": f"[مالك] رفض المعاينة: {reason}"[:400], "by": "owner"}, lpath)
         ledger.append_event("update", cid, {"preview_rejected": reason[:300]}, lpath)
-        return True, f"{cid}: سُجّل الرفض، ويغلقها المشغّل في دورته التالية"
+        return True, f"{cid}: سُجّل الرفض، ويعدّل المشغّل الطلب نفسه بسببك (جولتان) ثم يعيد المعاينة"
     if card.get("preview_seen") != head:
         return False, f"{cid}: لم يُعرض الرأس {head[:8]} على 8500 بعد، فلا يُعتمد"
     where = card.get("preview_slot_port") or 8500
@@ -1854,6 +1863,40 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
         card["preview_approved"], card["preview_seen"] = False, ""
     else:
         fx.set_pr_body(tree, pr, pr_body(card, head))
+    return "waiting_ci"
+
+
+REVISION_MAX = 2  # جولتا تعديلٍ بسبب المالك على الطلب نفسه، ثم تُغلق بتقرير
+
+
+def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, pr: int) -> str:
+    """رفضُ المالك بسببٍ يعود إلى النموذج على الفرع والطلب نفسَيهما، فلا يُبنى طلبٌ جديدٌ ولا تُدفع كلفةُ بناءٍ كامل."""
+    cid, reason = card["id"], str(card["preview_rejected"])
+    r = dict(card.get("runner_resume") or {})
+    done, spent = int(r.get("revisions") or 0), float(r.get("spent") or 0)
+    model, _, budget = _tiers(cfg, card)[-1]
+    rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
+    res = fx.run_model(tree, brief(card, rules, "رفض المالك المعاينة بهذا السبب، عدِّل ما يلزم ليُحقّقه: " + reason, fx.branch_diff(tree)), model, budget)
+    record_run(cid, f"{model} تعديل بعد رفض {done + 1}", res, lpath)
+    r.update(revisions=done + 1, spent=spent + res.cost)
+    card["runner_resume"] = r
+    ledger.append_event("update", cid, {"runner_resume": r}, lpath)
+    if not res.ok:
+        return "waiting_ci"
+    fx.autoformat(tree)
+    files = fx.changed(tree)
+    if not files:
+        save_fail_diff(cid, fx.branch_diff(tree))
+        raise RunnerError(f"لم يُحدث النموذجُ أيَّ تغيير بعد رفض المالك على الطلب {pr}: {reason[:300]}")
+    ok, vlog = fx.verify(tree)
+    if not ok:
+        ledger.append_event("note", cid, {"text": f"[مشغّل] تعديلٌ بعد الرفض فشل: {failure_summary(mask(vlog))}", "by": BY}, lpath)
+        return "waiting_ci"
+    require_preview(card, files, lpath)
+    r["head"] = fx.commit_push(tree, branch, files, f"{cid}: تعديلٌ بعد رفض المعاينة")
+    card["runner_resume"] = r
+    ledger.append_event("update", cid, {"runner_resume": r, "preview_rejected": "", "preview_approved": False, "preview_seen": ""}, lpath)
+    ledger.append_event("note", cid, {"text": f"[مشغّل] عُدّل الطلب {pr} بعد رفضك وأُعيد إلى الفحوص والمعاينة", "by": BY}, lpath)
     return "waiting_ci"
 
 
@@ -2165,6 +2208,36 @@ def note_waiting(card: dict, out: str, lpath=None, now=None) -> None:
     ledger.append_event("update", card["id"], {"waiting": {"stage": out, "text": WAIT_TEXT.get(out, out), "since": int((now or time.time)())}}, lpath)
 
 
+def last_resume(cid: str, lpath=None) -> dict:
+    """آخرُ runner_resume غيرِ فارغٍ في أحداث البطاقة: الطلبُ والفرعُ والشجرة قبل أن يصفّرها الإغلاق."""
+    found: dict = {}
+    for e in ledger.load_events(lpath):
+        r = (e.get("data") or {}).get("runner_resume") if e.get("id") == cid and e.get("kind") == "update" else None
+        if r:
+            found = r
+    return found
+
+
+def reopen_card(cid: str, fx: Effects | None = None, lpath=None) -> tuple[bool, str]:
+    """استئنافُ بطاقةٍ أُغلقت وطلبُها ما زال مفتوحاً على فرعه: تعود إلى الفحوص والمعاينة بلا بناءٍ جديد (013، 2026-11-09)."""
+    card = ledger.reduce_state(ledger.load_events(lpath)).get(cid)
+    if not card or card.get("state") != "closed":
+        return False, f"{cid}: ليست مغلقة"
+    r = last_resume(cid, lpath)
+    if not r.get("pr") or not r.get("branch"):
+        return False, f"{cid}: لا طلبَ مفتوحاً مسجَّلاً لها فلا تُستأنف (استعمل الإعادة)"
+    fx = fx or Effects(load_config())
+    state, _ = fx.pr_state(fx.cfg["repo"], r["pr"])
+    if state != "OPEN":
+        return False, f"{cid}: الطلب {r['pr']} حالته {state} لا OPEN"
+    fx.restore_tree(r["branch"], r["tree"])
+    r = {k: v for k, v in r.items() if k not in ("ci_fixes", "ci_fp", "ci_fp_head", "revisions")}
+    ledger.append_event("note", cid, {"text": f"[مالك] استئناف على الطلب {r['pr']}", "by": "owner"}, lpath)
+    ledger.append_event("update", cid, {"runner_hold": False, "runner_resume": r, "waiting": None}, lpath)
+    ledger.append_event("state", cid, {"state": "in_progress", "by": BY}, lpath)
+    return True, f"{cid}: استؤنفت على الطلب {r['pr']}"
+
+
 def _split_list(fields: dict, key: str) -> list[str]:
     """قيمةٌ مفصولةٌ بالفاصلة العربيّة في ملفّ الطلب (المعايير المرقّمة، الفحوص، الملفّات) ← قائمة."""
     return [x.strip() for x in fields.get(key, "").split("،") if x.strip()]
@@ -2311,6 +2384,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reason", default="")
     ap.add_argument("--dismiss", metavar="CARD", help="إقرار المالك بإغلاق بطاقة فشلت، فتخرج من مكتب المعاينة")
     ap.add_argument("--reseed", metavar="CARD", help="إعادة بذر المعاينة بعد فشلها")
+    ap.add_argument("--reopen", metavar="CARD", help="استئناف بطاقة أُغلقت وطلبها مفتوح")
     ap.add_argument("--release", metavar="CARD", help="فتح دمج بطاقة موقوفة بعد قراءة فرقها")
     a = ap.parse_args(argv)
     if a.reseed:
@@ -2322,6 +2396,10 @@ def main(argv: list[str] | None = None) -> int:
         ledger.append_event("update", a.dismiss, {"owner_dismissed": True})
         print(f"{a.dismiss}: خرجت من مكتب المعاينة")
         return 0
+    if a.reopen:
+        ok, text = reopen_card(a.reopen)
+        print(text)
+        return 0 if ok else 1
     if a.release:
         ok, text = release_merge(a.release)
         print(text)

@@ -1549,12 +1549,31 @@ def test_approved_card_merges_and_its_pin_is_released(env):
     assert fx.merged
 
 
-def test_reject_needs_a_reason_then_closes_card_and_pr(env):
+def test_reject_needs_a_reason_then_revises_the_same_pr_without_closing(env):
+    """الرفض يعدّل الطلب نفسه بسببه ثم يعيد المعاينة، فلا يُغلق ولا يُبنى طلبٌ جديد (013، 2026-11-09)."""
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    prompts = []
+    orig = fx.run_model
+    fx.run_model = lambda tree, prompt, model, budget: (prompts.append(prompt), orig(tree, prompt, model, budget))[1]
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert not runner.decide_preview("W-20261104-901", False, " ", lp)[0]
+    assert runner.decide_preview("W-20261104-901", False, "العلامة مائلة", lp)[0]
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert not getattr(fx, "closed_pr", False) and not fx.merged
+    assert any("العلامة مائلة" in p for p in prompts)
+    card = _state(lp)
+    assert card["state"] == "in_progress" and not card.get("preview_rejected") and card["runner_resume"]["revisions"] == 1
+
+
+def test_reject_after_the_revision_cap_closes_card_and_pr(env):
     lp, lock = env
     _preview_card(lp)
     fx = Fake()
     runner.run_cycle(CFG, fx, lp, lock)
-    assert not runner.decide_preview("W-20261104-901", False, " ", lp)[0]
+    r = dict(_state(lp)["runner_resume"], revisions=runner.REVISION_MAX)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": r}, lp)
     assert runner.decide_preview("W-20261104-901", False, "العلامة مائلة", lp)[0]
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.closed_pr and not fx.merged
     assert "العلامة مائلة" in _queue()
@@ -2500,3 +2519,29 @@ def test_waiting_reason_is_written_once_per_stage(env):
     assert card["waiting"] == {"stage": "waiting_ci", "text": runner.WAIT_TEXT["waiting_ci"], "since": 50}
     runner.note_waiting(card, "waiting_ci", lp, now=lambda: 90)  # لا يُصفَّر الزمنُ والمرحلةُ ثابتة
     assert _state(lp)["waiting"]["since"] == 50
+
+
+def test_reopen_resumes_a_closed_card_on_its_open_pr(env):
+    """بطاقةٌ أُغلقت وطلبها مفتوح تعود إلى الفحوص على الطلب نفسه بلا بناءٍ جديد (013، 2026-11-09)."""
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="in_progress")
+    rr = {"pr": 9, "branch": "claude/x", "head": "abc", "tree": "/t", "ci_fixes": 2, "spent": 1.0}
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": rr}, lp)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
+    ledger.append_event("state", "W-20261104-901", {"state": "closed"}, lp)
+    fx, restored = Fake(), []
+    fx.merge_state = "OPEN"
+    fx.restore_tree = lambda branch, tree: restored.append((branch, tree))
+    ok, _ = runner.reopen_card("W-20261104-901", fx, lp)
+    card = _state(lp)
+    assert ok and restored == [("claude/x", "/t")] and card["state"] == "in_progress"
+    assert card["runner_resume"]["pr"] == 9 and "ci_fixes" not in card["runner_resume"] and card["runner_resume"]["spent"] == 1.0
+
+
+def test_reopen_refuses_a_merged_or_unrecorded_pr(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="closed")
+    assert not runner.reopen_card("W-20261104-901", Fake(), lp)[0]  # لا طلبَ مسجَّلاً
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": {"pr": 9, "branch": "b", "tree": "/t"}}, lp)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
+    assert not runner.reopen_card("W-20261104-901", Fake(), lp)[0]  # MERGED
