@@ -2545,3 +2545,17 @@ def test_reopen_refuses_a_merged_or_unrecorded_pr(env):
     ledger.append_event("update", "W-20261104-901", {"runner_resume": {"pr": 9, "branch": "b", "tree": "/t"}}, lp)
     ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
     assert not runner.reopen_card("W-20261104-901", Fake(), lp)[0]  # MERGED
+
+
+def test_decision_events_record_who_decided(env):
+    """كلُّ اعتمادٍ ورفضٍ يحمل مصدرَه، فلا يبقى فاعلٌ مجهول (013، 2026-11-09)."""
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert runner.decide_preview("W-20261104-901", True, lpath=lp, via="mizan ip=127.0.0.1 ua=Chrome")[0]
+    notes = [e for e in ledger.load_events(lp) if e.get("kind") == "note" and "اعتمد" in e["data"].get("text", "")]
+    assert notes[-1]["data"]["via"] == "mizan ip=127.0.0.1 ua=Chrome"
+    assert runner.decide_preview("W-20261104-901", False, "س", lp)[0]
+    assert ledger.load_events(lp)[-2]["data"]["via"].startswith("cli pid=")

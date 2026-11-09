@@ -1702,8 +1702,9 @@ def preview_cycle(cfg: dict, fx: Effects, lpath=None, queue: Path | None = None)
             refer("RUNNER", f"{mark}: لا نبض لدورة 8500 منذ {int((time.time() - beat) / 60)} دقيقة، والمعاينات تنتظر", queue)
 
 
-def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None) -> tuple[bool, str]:
-    """قرارُ المالك مربوطٌ بالرأس المعروض: لا اعتمادَ لما لم يُعرض على 8500."""
+def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None, via: str = "") -> tuple[bool, str]:
+    """قرارُ المالك مربوطٌ بالرأس المعروض: لا اعتمادَ لما لم يُعرض على 8500. `via` مصدرُ القرار يُكتب في الحدث ليُعرف الفاعل (اعتمادُ 013 سُجّل بلا أثر، 2026-11-09)."""
+    via = via or f"cli pid={os.getpid()} ppid={os.getppid()}"
     card = ledger.reduce_state(ledger.load_events(lpath)).get(cid)
     head = ((card or {}).get("runner_resume") or {}).get("head", "")
     if not head or card.get("approval") != "معاينة":
@@ -1711,13 +1712,13 @@ def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None) -> tup
     if not approve:
         if not reason.strip():
             return False, "الرفض يحتاج سببًا: --reason"
-        ledger.append_event("note", cid, {"text": f"[مالك] رفض المعاينة: {reason}"[:400], "by": "owner"}, lpath)
+        ledger.append_event("note", cid, {"text": f"[مالك] رفض المعاينة: {reason}"[:400], "by": "owner", "via": via[:160]}, lpath)
         ledger.append_event("update", cid, {"preview_rejected": reason[:300]}, lpath)
         return True, f"{cid}: سُجّل الرفض، ويعدّل المشغّل الطلب نفسه بسببك (جولتان) ثم يعيد المعاينة"
     if card.get("preview_seen") != head:
         return False, f"{cid}: لم يُعرض الرأس {head[:8]} على 8500 بعد، فلا يُعتمد"
     where = card.get("preview_slot_port") or 8500
-    ledger.append_event("note", cid, {"text": f"[مالك] اعتمد على {where} الرأس {head[:8]}", "by": "owner"}, lpath)
+    ledger.append_event("note", cid, {"text": f"[مالك] اعتمد على {where} الرأس {head[:8]}", "by": "owner", "via": via[:160]}, lpath)
     ledger.append_event("update", cid, {"preview_approved": True}, lpath)
     return True, f"{cid}: سُجّل الاعتماد على الرأس {head[:8]}، ويدمجها المشغّل في دورته التالية"
 
@@ -2384,6 +2385,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--approve", metavar="CARD", help="اعتماد المعاينة المعروضة على 8500")
     ap.add_argument("--reject", metavar="CARD", help="رفض المعاينة، ومعه --reason")
     ap.add_argument("--reason", default="")
+    ap.add_argument("--via", default="", help="مصدر القرار للتدقيق (ميزان يمرّر عنوان العميل والمتصفح)")
     ap.add_argument("--dismiss", metavar="CARD", help="إقرار المالك بإغلاق بطاقة فشلت، فتخرج من مكتب المعاينة")
     ap.add_argument("--reseed", metavar="CARD", help="إعادة بذر المعاينة بعد فشلها")
     ap.add_argument("--reopen", metavar="CARD", help="استئناف بطاقة أُغلقت وطلبها مفتوح")
@@ -2407,7 +2409,7 @@ def main(argv: list[str] | None = None) -> int:
         print(text)
         return 0 if ok else 1
     if a.approve or a.reject:
-        ok, text = decide_preview(a.approve or a.reject, bool(a.approve), a.reason)
+        ok, text = decide_preview(a.approve or a.reject, bool(a.approve), a.reason, via=a.via)
         print(text)
         return 0 if ok else 1
     cfg = load_config()
