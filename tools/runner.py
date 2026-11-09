@@ -993,8 +993,21 @@ class Effects:
         """pending | green | red من `gh pr checks`."""
         out = sh(["gh", "pr", "checks", str(pr)], tree).stdout.lower()
         if not out.strip() or any(w in out for w in ("pending", "queued", "in_progress", "waiting")):
+            self.unstick_pending(tree, pr)
             return "pending"
         return "red" if "fail" in out or "cancel" in out else "green"
+
+    def unstick_pending(self, tree: str, pr: int) -> None:
+        """فحصٌ «معلَّق» وتشغيلُه منتهٍ عند GitHub حالةٌ عالقة (نافذة النشر على 1415 ساعةً كاملة، 2026-11-09): يُعاد تشغيلُه
+        فلا ينتظر المشغّلُ للأبد. تشغيلٌ جارٍ فعلًا لا يُمسّ."""
+        p = sh(["gh", "pr", "checks", str(pr), "--json", "name,bucket,link"], tree)
+        try:
+            rows = json.loads(p.stdout or "[]")
+        except ValueError:
+            return
+        for run in {m.group(1) for r in rows if r.get("bucket") == "pending" and (m := re.search(r"/runs/(\d+)", r.get("link") or ""))}:
+            if sh(["gh", "run", "view", run, "--json", "status", "--jq", ".status"], tree).stdout.strip() == "completed":
+                sh(["gh", "run", "rerun", run], tree)
 
     def branch_diff(self, tree: str) -> str:
         return sh(["git", "diff", f"{self.cfg['base']}...HEAD"], tree).stdout
