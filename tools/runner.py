@@ -2197,7 +2197,9 @@ def resume(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     return out
 
 
-WAIT_TEXT = {"waiting_ci": "ينتظر فحوص CI على الطلب", "waiting_window": "ينتظر نافذة النشر", "waiting_turn": "ينتظر دور النشر (نشرٌ آخر في الطريق)"}
+WAIT_TEXT = {"waiting_ci": "ينتظر فحوص CI على الطلب", "waiting_window": "ينتظر نافذة النشر", "waiting_turn": "ينتظر دور النشر (نشرٌ آخر في الطريق)",
+             "waiting_preview": "يجهّز المعاينة (بذرٌ وتثبيتٌ على خادم المعاينة)", "waiting_owner": "ينتظر قرارك", "waiting_owner_merge": "ينتظر دمجك اليدويّ",
+             "waiting_merge": "ينتظر اكتمال الدمج", "waiting_deploy": "ينتظر ظهور النشر في الصحّة"}
 
 
 def note_waiting(card: dict, out: str, lpath=None, now=None) -> None:
