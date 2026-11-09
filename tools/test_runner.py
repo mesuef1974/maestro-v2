@@ -2468,3 +2468,10 @@ def test_brief_asks_to_read_the_source_for_a_legal_card():
     card = {"id": "W-1", "problem": "سلّم المخالفات", "req_type": "", "accept": ["a"]}
     assert "مصدر الحقيقة" in runner.brief(card, [])
     assert "مصدر الحقيقة" not in runner.brief({"id": "W-2", "problem": "لون زر", "req_type": "", "accept": ["a"]}, [])
+
+
+def test_fail_kind_classifies_the_closing_reason_into_a_fixed_family():
+    assert runner.fail_kind("فشل النموذج بعد السلّم الكامل: x") == "نموذج"
+    assert runner.fail_kind("فحوصُ CI حمراء على الطلب 5") == "ci"
+    assert runner.fail_kind("تعذّر الدفع: behind") == "إيداع"
+    assert runner.fail_kind("شيءٌ آخر") == "أخرى"

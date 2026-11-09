@@ -41,6 +41,7 @@ import ledger  # noqa: E402
 
 CONFIG = ROOT / "runner_config.json"
 LOCK = ROOT / "ledger" / "runner.lock"
+BEAT = ROOT / "ledger" / "runner.beat"  # نبضُ المشغّل: يُكتب أولَ كلّ دورة فيكشف ميزان توقّفَ المهمة المجدولة
 TIMING_LOG = ROOT / "ledger" / "prepush_timing.log"
 DB_CACHE = ROOT / "ledger"  # ledger/prepush_testdb_<بصمة>.dump، خارج git
 TEST_DB = "test_db"
@@ -2081,11 +2082,20 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     return "referred"
 
 
+FAIL_KINDS = (("السلّم الكامل", "نموذج"), ("CI حمراء", "ci"), ("لم يُحدث النموذجُ", "بلا_تغيير"), ("الإيداع", "إيداع"), ("تعذّر الدفع", "إيداع"),
+              ("بوّابةُ الدمج", "بوّابة"), ("تعارض دمج", "تعارض"), ("بيئةٌ", "بيئة"), ("API Error", "بيئة"))
+
+
+def fail_kind(text: str) -> str:
+    """فئةٌ ثابتةٌ لسبب الإغلاق بتقرير: تُحصى في ميزان فيُعرف أكبرُ مصدرٍ للفشل بدل «أخرى»."""
+    return next((k for needle, k in FAIL_KINDS if needle in text), "أخرى")
+
+
 def fail(card: dict, exc: Exception, fx: Effects, lpath=None) -> str:
     """إغلاقٌ بتقرير: لا يُنتظر ردٌّ من المالك (D-521م)؛ سطرُ تقرير وملاحظةٌ في الدفتر وحالةُ closed."""
     cid = card["id"]
     ledger.append_event("note", cid, {"text": f"[مشغّل] أُغلقت بتقرير: {exc}"[:800], "by": BY}, lpath)
-    ledger.append_event("update", cid, {"runner_hold": True, "runner_resume": None}, lpath)
+    ledger.append_event("update", cid, {"runner_hold": True, "runner_resume": None, "fail_kind": fail_kind(str(exc))}, lpath)
     ledger.append_event("state", cid, {"state": "closed", "by": BY, "held_by": ""}, lpath)
     refer(cid, str(exc)[:700])  # يتّسع للرأس والمعايير الناقصة وآخر سبب، فلا يُقصّ السببُ من التقرير
     return "referred"
@@ -2185,6 +2195,10 @@ def report_env(msg: str, queue: Path | None = None) -> str:
 
 def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lock: Path = LOCK) -> str:
     cfg = cfg or load_config()
+    try:
+        BEAT.write_text(str(int(time.time())), encoding="utf-8")
+    except OSError:
+        pass  # النبضُ لا يوقف الدورة
     if not acquire_lock(lock):
         return "locked"
     try:
