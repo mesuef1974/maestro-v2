@@ -2147,9 +2147,22 @@ def resume(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     except RunnerError as exc:
         out = fail(card, exc, fx, lpath)
     if not out.startswith("waiting"):
-        ledger.append_event("update", card["id"], {"runner_resume": None}, lpath)
+        ledger.append_event("update", card["id"], {"runner_resume": None, "waiting": None}, lpath)
         fx.remove_tree(r["tree"])
+    else:
+        note_waiting(card, out, lpath)
     return out
+
+
+WAIT_TEXT = {"waiting_ci": "ينتظر فحوص CI على الطلب", "waiting_window": "ينتظر نافذة النشر", "waiting_turn": "ينتظر دور النشر (نشرٌ آخر في الطريق)"}
+
+
+def note_waiting(card: dict, out: str, lpath=None, now=None) -> None:
+    """سببُ الانتظار ومنذ متى يُكتب في الدفتر عند تغيّره فقط، فيعرضه ميزان: «لماذا لا يتحرّك؟» لا تحتاج فحصًا يدويًّا (013، 2026-11-09)."""
+    cur = card.get("waiting") or {}
+    if cur.get("stage") == out:
+        return
+    ledger.append_event("update", card["id"], {"waiting": {"stage": out, "text": WAIT_TEXT.get(out, out), "since": int((now or time.time)())}}, lpath)
 
 
 def _split_list(fields: dict, key: str) -> list[str]:

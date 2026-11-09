@@ -2489,3 +2489,14 @@ def test_pick_waits_for_published_dependencies(env):
     ledger.append_event("state", "W-20261104-901", {"state": "published"}, lp)
     items = ledger.reduce_state(ledger.load_events(lp))
     assert runner.pick_card(items, CFG)["id"] == "W-20261104-902"
+
+
+def test_waiting_reason_is_written_once_per_stage(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="in_progress")
+    card = _state(lp)
+    runner.note_waiting(card, "waiting_ci", lp, now=lambda: 50)
+    card = _state(lp)
+    assert card["waiting"] == {"stage": "waiting_ci", "text": runner.WAIT_TEXT["waiting_ci"], "since": 50}
+    runner.note_waiting(card, "waiting_ci", lp, now=lambda: 90)  # لا يُصفَّر الزمنُ والمرحلةُ ثابتة
+    assert _state(lp)["waiting"]["since"] == 50
