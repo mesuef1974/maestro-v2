@@ -82,6 +82,7 @@ class Fake(runner.Effects):
     def asset_gap(self, tree, card): return []
     def parent_of(self, tree, oid): return "good1234abcd"
     def slot_serves(self, port, head): return getattr(self, "slot_live", True)
+    def wake_docker(self, docker=None): return getattr(self, "docker_alive", True)
     def slot_down(self, port): self.downs = getattr(self, "downs", []) + [port]
     def slot_projects(self): return list(getattr(self, "projects", []))
     def containers(self): return list(getattr(self, "boxes", []))
@@ -2643,3 +2644,11 @@ def test_settle_layering_records_an_improvement_but_never_licenses_growth(tmp_pa
     assert fx.settle_layering(str(tmp_path)) is False and len(calls) == n + 1  # زيادةٌ قائمة: لا تثبيت
     answer[0] = "[0, 0]"
     assert fx.settle_layering(str(tmp_path)) is False
+
+
+def test_preview_step_wakes_docker_and_waits_without_touching_the_card_budget(env):
+    fx = Fake()
+    fx.docker_alive = False
+    card = {"id": "W-1", "preview_retries": 0}
+    assert runner.preview_step(card, fx, None, "t", "h1", 1) == "waiting_preview"
+    assert card["preview_env_wait"] == "h1" and not card.get("preview_seed_failed") and card["preview_retries"] == 0

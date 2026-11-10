@@ -776,6 +776,18 @@ class Effects:
         rc, _ = docker(["info", "--format", "ok"], 60)
         return rc == 0
 
+    def wake_docker(self, docker=None) -> bool:
+        """للمعاينة: المحرّكُ متوقّفٌ يُشغَّل بلا لوحةٍ وبلا انتظار، والدورةُ التالية تكمل. بغيره تبقى البطاقةُ «تجهّز المعاينة»
+        حتى يشغّله المالكُ بيده (003 و005، 2026-11-10: توقّف دوكر ثلاثَ مرّاتٍ في يوم)."""
+        import flow_pump as fp  # noqa: PLC0415
+
+        if self.docker_up(docker or fp._docker):
+            return True
+        subprocess.Popen(["docker", "desktop", "start"], close_fds=True, stdin=subprocess.DEVNULL,  # noqa: S603, S607
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return False
+
     def build_image(self, docker=None) -> None:
         """الصورةُ غائبةٌ والمحرّكُ يعمل: تُبنى من Dockerfile المرفق (IMAGE_DIR) بلا انتظار يدٍ تبنيها.
 
@@ -1616,9 +1628,21 @@ def auto_retry_preview(card: dict, head: str, lpath=None, now: float | None = No
     return False
 
 
+def env_wait(card: dict, head: str, lpath=None) -> None:
+    """ملاحظةٌ واحدةٌ لكلّ رأس: المعاينةُ تنتظر دوكر، ولا تُحسب على البطاقة."""
+    if card.get("preview_env_wait") == head:
+        return
+    ledger.append_event("update", card["id"], {"preview_env_wait": head}, lpath)
+    ledger.append_event("note", card["id"], {"text": "[مشغّل] دوكر غير متاح: شُغّل آليًّا والمعاينة تنتظر عودته وتُعاد كلَّ دورةٍ دون استهلاك الإعادات", "by": BY}, lpath)
+    card["preview_env_wait"] = head
+
+
 def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) -> str:
     """لا تُطلب المعاينةُ إلا بعد أن يعرض 8500 شجرةَ البطاقة فعلاً (#1347: طُلبت على خادمٍ لا يحملها)."""
     auto_retry_preview(card, head, lpath)
+    if not fx.wake_docker():
+        env_wait(card, head, lpath)
+        return "waiting_preview"
     cid, st = card["id"], fx.preview_state()
     live = st.get("mode") == "pin" and int(st.get("pin_until") or 0) > time.time() and not st.get("pin_in_progress")
     slot = card.get("preview_slot_port") or 0
@@ -1656,10 +1680,7 @@ def seed_and_announce(card: dict, fx: Effects, lpath, head: str, pr: int, base: 
         info = preview_info(card, pr)
         path, error = seed_preview(card, info, fx, lpath)
         if not path and DOCKER_DOWN.search(error or ""):  # علّةُ بيئةٍ لا بطاقة: لا تُحرق ميزانيّةَ الإعادة، وتُعاد كلَّ دورةٍ حتى يعود دوكر
-            if card.get("preview_env_wait") != head:
-                ledger.append_event("update", cid, {"preview_env_wait": head}, lpath)
-                ledger.append_event("note", cid, {"text": "[مشغّل] دوكر غير متاح: البذر ينتظر عودته ويُعاد كلَّ دورةٍ دون استهلاك الإعادات", "by": BY}, lpath)
-                card["preview_env_wait"] = head
+            env_wait(card, head, lpath)
             return "waiting_preview"
         if not path:  # لا «جاهز» بلا بيانات، ولا اعتماد؛ ويُعاد برأسٍ جديد أو --reseed فلا تتكرّر الكلفة كلَّ دورة
             ledger.append_event("update", cid, {"preview_seed_failed": head, "preview_fail_at": int(time.time())}, lpath)
