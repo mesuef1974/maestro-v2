@@ -86,7 +86,9 @@ if rc == 0 and extra:
     reuse = ["--reuse-db"] if os.environ.get("PREPUSH_REUSE_DB") else []
     proc = subprocess.run([sys.executable, "-m", "pytest", *extra, "-q", "-p", "no:cacheprovider", "--no-header", *reuse],
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
-    sys.stdout.write((proc.stdout + proc.stderr)[-4000:])
+    from fail_digest import failure_digest  # noqa: E402, PLC0415 — بجوار هذا الملف (/runner)
+
+    sys.stdout.write(failure_digest(proc.stdout + proc.stderr))
     print(f"[timing] extra_tests {time.monotonic() - extra_start:.0f}s", flush=True)
     if proc.returncode != 0:
         rc = 1

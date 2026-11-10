@@ -1950,13 +1950,16 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
 
 
 REVISION_MAX = 2  # جولتا تعديلٍ بسبب المالك على الطلب نفسه، ثم تُغلق بتقرير
+REVISE_TRIES_MAX = 3  # محاولاتُ النموذج لرفضٍ واحد: سقوطُ الفحص المحلّي لا يُحسب جولةً على المالك (005 أُغلقت بجولتين لم تبلغاه)
 
 
 def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, pr: int) -> str:
     """رفضُ المالك بسببٍ يعود إلى النموذج على الفرع والطلب نفسَيهما، فلا يُبنى طلبٌ جديدٌ ولا تُدفع كلفةُ بناءٍ كامل."""
     cid, reason = card["id"], str(card["preview_rejected"])
     r = dict(card.get("runner_resume") or {})
-    done, spent = int(r.get("revisions") or 0), float(r.get("spent") or 0)
+    done, spent, tries = int(r.get("revisions") or 0), float(r.get("spent") or 0), int(r.get("revise_tries") or 0)
+    if tries >= REVISE_TRIES_MAX:
+        raise RunnerError(f"تعديلُ الطلب {pr} بعد رفضك أسقط الفحصَ المحلّي {tries} مرّات: {str(r.get('revise_fail') or '')[:300]}")
     model, _, budget = _tiers(cfg, card)[-1]
     rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
     ask = "رفض المالك المعاينة بهذا السبب، عدِّل ما يلزم ليُحقّقه: " + reason
@@ -1964,7 +1967,7 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
         ask += "\n\nمحاولتك السابقة أسقطت الفحص المحلّي، فلا تكرّر سببه:\n" + str(r["revise_fail"])
     res = fx.run_model(tree, brief(card, rules, ask, fx.branch_diff(tree)), model, budget)
     record_run(cid, f"{model} تعديل بعد رفض {done + 1}", res, lpath)
-    r.update(revisions=done + 1, spent=spent + res.cost)
+    r.update(revise_tries=tries + 1, spent=spent + res.cost)
     card["runner_resume"] = r
     ledger.append_event("update", cid, {"runner_resume": r}, lpath)
     if not res.ok:
@@ -1983,6 +1986,8 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
         ledger.append_event("note", cid, {"text": f"[مشغّل] تعديلٌ بعد الرفض فشل: {summary}", "by": BY}, lpath)
         return "waiting_ci"
     r.pop("revise_fail", None)
+    r.pop("revise_tries", None)
+    r["revisions"] = done + 1  # الجولةُ تُحسب حين تبلغ المالكَ معاينةٌ جديدة لا حين يحاول النموذج
     require_preview(card, files, lpath)
     r["head"] = fx.commit_push(tree, branch, files, f"{cid}: تعديلٌ بعد رفض المعاينة")
     card["runner_resume"] = r
