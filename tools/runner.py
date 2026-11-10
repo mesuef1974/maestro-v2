@@ -23,6 +23,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -41,10 +42,12 @@ import ledger  # noqa: E402
 
 CONFIG = ROOT / "runner_config.json"
 LOCK = ROOT / "ledger" / "runner.lock"
+BEAT = ROOT / "ledger" / "runner.beat"  # نبضُ المشغّل: يُكتب أولَ كلّ دورة فيكشف ميزان توقّفَ المهمة المجدولة
 TIMING_LOG = ROOT / "ledger" / "prepush_timing.log"
 DB_CACHE = ROOT / "ledger"  # ledger/prepush_testdb_<بصمة>.dump، خارج git
 TEST_DB = "test_db"
 FAIL_DIFFS = ROOT / "archive_local" / "fail_diffs"  # مستثنى من git
+SEED_SCRIPTS = ROOT / "archive_local" / "seed_scripts"  # سكربتُ بذرٍ نجح يُعاد بلا نموذج (005: سبعُ مرّات بذرٍ بـ2.6$ لبطاقةٍ واحدة)
 DB_CACHE_KEEP = 5
 OWNER_QUEUE = ROOT / "owner_queue.md"
 REQUESTS = ROOT / "requests"
@@ -67,7 +70,7 @@ DEFAULT_CONFIG = {
         "كبير": ["sonnet", 80, 4.0],
         "تصميم": ["opus", 80, 6.0],
     },
-    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)"],
+    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)", "Bash(python -m tests.file_size_ratchet:*)", f"Bash(python {(HERE / 'img_tool.py').as_posix()}:*)"],
     "health_url": "https://shschoolmvp-production.up.railway.app/health/",
     "rollback_cmd": [],  # الافتراضيّ: gh workflow run rollback.yml (runbook §4)
     "worktrees": "C:/Users/mesue/delivery_manager_work_wt",
@@ -124,6 +127,18 @@ LIGHT_GUARDS = (
     "tests/test_ci_gate_needs.py",
     "tests/test_ci_docs_only.py",
     "tests/test_page_layouts.py",
+    # أسقطت العقدَ المركزيّ للتصدير (#1414) في CI وحدَه: ساكنةٌ سريعةٌ تقرأ المصدرَ لا قاعدة بيانات (W-20261109)
+    "tests/test_national_id_never_bulk.py",
+    "tests/test_sticky_table_header.py",
+    "tests/test_no_web_page_print_button.py",
+    "tests/test_no_external_pages.py",
+    "tests/test_tailwind_freeze.py",
+    "tests/test_flexible_table_columns.py",
+    "tests/test_dead_classes.py",
+    "tests/test_rtl_logical_properties.py",
+    "tests/test_dark_parity.py",
+    "tests/test_contrast_ratios.py",
+    "tests/test_identity_reference_fresh.py",
 )
 FAIL_REPORT_CHARS = 300  # من آخر سجلّ فشل في تقرير المالك
 FAIL_NOTE_CHARS = 1500  # ومنه في ملاحظة الدفتر
@@ -131,6 +146,8 @@ REVIEW_SIZES = ("متوسط", "كبير", "تصميم")  # البطاقةُ ال
 COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول|بذر المعاينة): كلفة=([\d.]+)\$")
 # نصوصُ claude 2.1.312 المستخرجة من البرنامج نفسه؛ لا يدخل فيها «Budget limit» فهو سقفُ التشغيل --max-budget-usd
 USAGE_LIMIT = re.compile(r"usage limit reached|you(?:'|’)ve hit your|out of extra usage", re.I)
+DOCKER_DOWN = re.compile(r"docker API|dockerDesktopLinuxEngine|Cannot connect to the Docker daemon|error during connect|database system is starting up", re.I)
+NET_DOWN = re.compile(r"ENOTFOUND|EAI_AGAIN|ECONNRESET|ETIMEDOUT|Can.t reach the API server|UNABLE_TO_VERIFY|TLS-inspecting", re.I)
 ESCALATE = {"haiku": "sonnet"}  # الأعلى لا يُستعمل آليّاً أبداً
 
 
@@ -147,6 +164,8 @@ def check_quota(text: str) -> None:
     """نفادُ حصّة الاشتراك علّةُ بيئة: لا يُحسب فشلاً للنموذج ولا يصعد السلّم ولا يُغلق البطاقة."""
     if USAGE_LIMIT.search(text):
         raise EnvDown(f"نفدت حصّة الاشتراك: {text.strip()[:160]}")
+    if NET_DOWN.search(text):  # انقطاعُ الشبكة أو شهادةُ TLS علّةُ بيئةٍ كذلك: تعود البطاقةُ إلى الطابور بلا كلفةٍ ولا صعودٍ في السلّم (W-20261108-017 و020 و021)
+        raise EnvDown(f"تعذّر الوصولُ إلى واجهة النموذج: {text.strip()[:160]}")
 
 
 def load_config(path: Path = CONFIG) -> dict:
@@ -308,6 +327,34 @@ def menu_sibling_gap(page: str, urls_src: str, menu: str) -> list[str]:
     return [f"الصفحة /{'/'.join(parts)}/ لا تُفتح من القوائم {', '.join(gaps)} وفيها روابط {ns}: أضف رابطها في {MENU_FILE} داخل كلٍّ منها بجانب روابط {ns} هذه بالصيغة {snippet}"] if gaps else []
 
 
+IMAGE_EXT = (".png", ".jpg", ".jpeg")
+ASSET_WORDS = re.compile(r"ضغط|تصغير|أخفّ|أخف |تقليل حجم")
+
+
+def image_files(card: dict) -> list[str]:
+    """ملفّاتُ الصور في نطاق البطاقة المعلن (مسارٌ صريحٌ بصيغة صورة)."""
+    return [f for f in card.get("scope_files") or [] if f.lower().endswith(IMAGE_EXT)]
+
+
+def asset_shrink_flagged(card: dict) -> bool:
+    return bool(image_files(card)) and bool(ASSET_WORDS.search(card.get("problem", "")) or "assets_smaller" in (card.get("runner_checks") or []))
+
+
+def asset_gap(card: dict, sizes: dict[str, tuple[int, int]]) -> list[str]:
+    """بطاقةُ ضغط أصولٍ لا تنجح إلا إن صغُرت صورُها فعلاً: sizes = {مسار: (قبل، بعد)}، وغيابُ المسار يعني أنّه لم يُلمس."""
+    if not asset_shrink_flagged(card):
+        return []
+    todo = image_files(card)
+    untouched = [f for f in todo if f not in sizes]
+    bigger = [f"{f} ({b}←{a})" for f, (b, a) in sizes.items() if a >= b]
+    out = []
+    if len(untouched) == len(todo):
+        out.append("المعيار «الحجم أقلّ»: لم تُصغَّر أيّ صورةٍ من النطاق: " + "، ".join(todo[:6]) + " — استعمل أداة img_tool المذكورة في الموجز")
+    if bigger:
+        out.append("المعيار «الحجم أقلّ»: صورةٌ لم يصغر حجمها: " + "، ".join(bigger[:6]))
+    return out
+
+
 def criteria_failures(card: dict, files: list[str]) -> list[str]:
     """رسائلُ المعايير الآليّة التي لم تتحقّق في الفرق؛ تُعاد إلى النموذج كسجلّ فشل فيصلحها في المحاولة التالية."""
     return [m for c in card.get("runner_checks") or [] if c in CRITERIA_CHECKS for m in [CRITERIA_CHECKS[c](card, files)] if m]
@@ -329,13 +376,18 @@ def attachment_leak(tree: str, files: list[str], card: dict) -> list[str]:
 
 
 # ───────────────────────── الاختيار ─────────────────────────
+def unmet_deps(card: dict, items: dict[str, dict]) -> list[str]:
+    """بطاقاتٌ يعتمد عليها هذا الطلبُ ولم تُنشر بعد: لا يبدأ بناؤه قبل اندماج ما يقوم عليه ونشرِه (002 إلى 009، 2026-11-09)."""
+    return [d for d in card.get("depends_on") or [] if (items.get(d) or {}).get("state") != "published"]
+
+
 def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
     """أوّلُ بطاقةٍ موجَّهةٍ لها مواصفةٌ كاملة ومعايير قبول ووسمُ حجمٍ معروف، بالأولويّة ثمّ العمر."""
     ready = [
         i for i in items.values()
         if i.get("state") == "routed" and i.get("runner_size") and size_row(cfg, i["runner_size"])
         and i.get("accept") and i.get("spec_tier", i.get("tier")) in ("full", None, "") and not i.get("runner_hold")
-        and not clashes(i, inflight(items))
+        and not clashes(i, inflight(items)) and not unmet_deps(i, items)
     ]
     ready.sort(key=lambda i: (ledger.PRIORITIES.index(i.get("priority", "P3")) if i.get("priority") in ledger.PRIORITIES else 9, i.get("created", "")))
     return ready[0] if ready else None
@@ -425,6 +477,27 @@ def give_up(cid: str, message: str, log: str, fx: "Effects", tree: str, lpath=No
     return RunnerError(message)
 
 
+VERIFY_LOGS = ROOT / "archive_local" / "verify_logs"  # مستثنى من git
+
+
+def has_failure_marker(log: str) -> bool:
+    """أفي السجلّ ما يصلح النموذجُ بناءً عليه؟ سطرُ ✘ أو FAILED أو خطأُ mypy أو زيادةُ سقّاطة."""
+    for ln in log.splitlines():
+        text = ln.lstrip()
+        if text.startswith(("✘", "FAILED", "ERROR")) or MYPY_ERROR.match(text):
+            return True
+    return bool(WORSE_LINE.search(log))
+
+
+def save_verify_log(name: str, code: int, log: str, folder: Path | None = None) -> Path:
+    """السجلُّ الكاملُ لفحصٍ فشل بلا سببٍ مقروء؛ ملاحظةُ الدفتر تقصّه عند 1500 حرف فلا يُرى فيها سببُ الفشل."""
+    folder = folder or VERIFY_LOGS
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{name}-{int(time.time())}.log"
+    path.write_text(f"exit={code}" + chr(10) + mask(log), encoding="utf-8")
+    return path
+
+
 def failure_summary(log: str) -> str:
     """ما فشل لا ما نجح: سطورُ ✘ وFAILED وتفاصيلُها المزاحة؛ وإن غابت فآخرُ السجلّ."""
     keep, inside = [], False
@@ -437,6 +510,13 @@ def failure_summary(log: str) -> str:
         else:
             inside = False
     return " ".join(" ".join(keep or [log[-FAIL_REPORT_CHARS:]]).split())[:FAIL_REPORT_CHARS]
+
+
+def fail_detail(log: str, limit: int = 1500) -> str:
+    """ما يحتاجه النموذجُ ليصلح لا ما يكفي المالكَ ليعرف: سطورُ `E` من pytest (نصُّ التأكيد: أيُّ ملفٍّ وكم زاد) مع سطور FAILED.
+    الملخّصُ وحدَه اسمُ اختبارٍ بلا سبب، فأسقطت 005 حارسَ الطبقات ثلاثَ جولاتٍ وهي لا ترى «student_list: 88 → 91»."""
+    keep = [ln.strip() for ln in log.splitlines() if ln.lstrip().startswith(("E  ", "FAILED", "✘"))]
+    return "\n".join(dict.fromkeys(keep))[:limit] or failure_summary(log)
 
 
 def migrations_key(tree: str, db_image: str) -> str:
@@ -553,6 +633,7 @@ def guard_rules(repo: str = DEFAULT_CONFIG["repo"]) -> list[str]:
         "حارس الساعة (tests/test_clock_pin_ratchet.py): ملفُّ اختبارٍ جديد يقرأ اليوم (timezone.now/localdate أو date.today) "
         "يضع `pytestmark = pytest.mark.pin_clock` أو يستعمل frozen_clock، ولا يستعمل date.today/datetime.now المباشرتين.",
         "حارس mypy (tests/mypy_ratchet): لا خطأ أنواعٍ جديد في أيّ ملفّ تعدّله؛ اكتب أنواع الدوالّ الجديدة كاملةً.",
+        "حارس الحجم (tests/test_file_size.py): ملفٌّ صغُر يجب تثبيتُ نقصه: بعد التعديل شغّل `python -m tests.file_size_ratchet --update` وأودع السجلّ المتغيّر (فشل 011 مرّتين لنسيانه).",
     ]
 
 
@@ -572,6 +653,8 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         (f"الملفّات المتوقَّعة (ابدأ منها؛ {'لا تعدّل غيرها' if 'scope_only' in (card.get('runner_checks') or []) else 'وغيرها إن لزم'}): "
          + ", ".join(card["scope_files"])) if card.get("scope_files") else "",
         f"خارج النطاق (لا تمسّه): {card['out_of_scope']}" if card.get("out_of_scope") else "",
+        (f"لتصغير صورة أو ضغطها لا تشغّل Python: استعمل `python {(HERE / 'img_tool.py').as_posix()} resize <مسار> <عرض> <ارتفاع>` "
+         "أو `optimize <مسار>` (يحفظ الشفافية ويطبع الحجم قبل وبعد)؛ والحجمُ شرطُ قبولٍ يفحصه المشغّل.") if image_files(card) else "",
         ("هذه البطاقة تمسّ لائحةً: اقرأ نصّ مصدر الحقيقة (AAdocs/ministry_data/2026_2027/08_conduct_policy_2026.md أو ما يخصّ الموضوع) قبل أن تكتب، "
          "وانقل كلّ رقمٍ وعتبةٍ من نصّه لا من الذاكرة؛ ثمّ أسنِد في وصف الاختبار: `[LEGAL]` وسطرَ `المصدر: <مسار الملفّ md> م<رقم>`. "
          "ما لا تجد نصّه في المصدر فلا تُقدم عليه ولا تخمّنه.") if legal_flagged(card) else "",
@@ -694,6 +777,18 @@ class Effects:
         rc, _ = docker(["info", "--format", "ok"], 60)
         return rc == 0
 
+    def wake_docker(self, docker=None) -> bool:
+        """للمعاينة: المحرّكُ متوقّفٌ يُشغَّل بلا لوحةٍ وبلا انتظار، والدورةُ التالية تكمل. بغيره تبقى البطاقةُ «تجهّز المعاينة»
+        حتى يشغّله المالكُ بيده (003 و005، 2026-11-10: توقّف دوكر ثلاثَ مرّاتٍ في يوم)."""
+        import flow_pump as fp  # noqa: PLC0415
+
+        if self.docker_up(docker or fp._docker):
+            return True
+        subprocess.Popen(["docker", "desktop", "start"], close_fds=True, stdin=subprocess.DEVNULL,  # noqa: S603, S607
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return False
+
     def build_image(self, docker=None) -> None:
         """الصورةُ غائبةٌ والمحرّكُ يعمل: تُبنى من Dockerfile المرفق (IMAGE_DIR) بلا انتظار يدٍ تبنيها.
 
@@ -760,11 +855,28 @@ class Effects:
         p = sh([sys.executable, "-m", "ruff", "check", "--isolated", "--select", "E9,F821,F822,F823", "--", *files], tree, 120)
         return p.returncode != 1, (p.stdout + p.stderr)[-4000:]
 
+    def settle_layering(self, tree: str) -> bool:
+        """تحسّنٌ في سقّاطة الطبقات لم يُثبَّت يُسقط الفحص (005: قلّص النموذجُ الدالّةَ فسقطت الجولة): تثبيتُه خطوةٌ آليّةٌ كالتنسيق.
+        لا يُثبَّت إلا إذا لم تزد مخالفةٌ واحدة، فالتثبيتُ يكتب اللقطةَ كلَّها ولا يجوز أن يرخّص زيادة."""
+        if not (Path(tree) / "tests" / "layering_ratchet.py").is_file():
+            return False
+        probe = ("import json;from tests import layering_ratchet as r;"
+                 "w,s=r.compare(json.loads(r.BASELINE.read_text(encoding='utf-8')),r.snapshot());print(json.dumps([len(w),len(s)]))")
+        p = sh([sys.executable, "-c", probe], tree, 120)
+        try:
+            worse, stale = json.loads((p.stdout or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return False
+        if worse or not stale:
+            return False
+        return sh([sys.executable, "-m", "tests.layering_ratchet", "--update"], tree, 120).returncode == 0
+
     def prepare_for_checks(self, tree: str) -> None:
         """يرى الفحصُ ما يراه CI: حرّاسُ `git ls-files` لا ترى الملفّ الجديد قبل إيداعه (W-013)، والتنسيقُ آليٌّ بنسخة CI لا جولةَ نموذج."""
         import flow_pump as fp  # noqa: PLC0415
 
         sh(["git", "add", "-N", "--", "."], tree)
+        self.settle_layering(tree)
         files = [f for f in self.changed(tree) if f.endswith(".py") and (Path(tree) / f).is_file()]
         if not files or not fp._image_present(fp._docker):
             return
@@ -811,6 +923,9 @@ class Effects:
         if "غير مقيس" in log or "تعذّر إنشاء" in log or "تعذّر" in log[:200]:
             raise RunnerError("بيئةٌ: الفحص غير مقيس في الحاوية — " + log.strip()[-160:])
         ok, tail = code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
+        if not ok and not has_failure_marker(log):  # لا سببَ يُقرأ: إعادةُ النموذج لإصلاح ما لا يراه تهدر كلفةَ كلّ جولة (ضغط الأصول: 7 محاولات)
+            saved = save_verify_log(name, code, log)
+            raise RunnerError(f"بيئةٌ: الفحص في الحاوية انتهى برمز {code} بلا سطر فشلٍ مقروء ولا سطر نجاح؛ السجلّ الكامل: {saved}")
         if not ok and record_mypy_drops(tree, log) and log.count("✘") == 1 and not WORSE_LINE.search(log):
             return self.verify(tree)  # لا سبب غيره؛ والإعادةُ لا تعود هنا لأنّ النقص سُجّل
         detail = "" if ok else self.mypy_detail(tree, log)
@@ -856,6 +971,17 @@ class Effects:
         urls = Path(tree) / page.strip("/").split("/")[0] / "urls.py"
         src = urls.read_text(encoding="utf-8") if urls.is_file() else ""
         return menu_gap(page, diff, text) or menu_sibling_gap(page, src, text)
+
+    def asset_gap(self, tree: str, card: dict) -> list[str]:
+        if not asset_shrink_flagged(card):
+            return []
+        sizes = {}
+        for f in image_files(card):
+            now = Path(tree) / f
+            before = sh(["git", "cat-file", "-s", f"{self.cfg['base']}:{f}"], tree).stdout.strip()
+            if now.is_file() and before.isdigit() and now.stat().st_size != int(before):
+                sizes[f] = (int(before), now.stat().st_size)
+        return asset_gap(card, sizes)
 
     def changed(self, tree: str) -> list[str]:
         p = sh(["git", "status", "--porcelain", "--untracked-files=all"], tree)  # بلاه يظهر المجلدُ الجديد `dir/` لا ملفّاته
@@ -911,8 +1037,21 @@ class Effects:
         """pending | green | red من `gh pr checks`."""
         out = sh(["gh", "pr", "checks", str(pr)], tree).stdout.lower()
         if not out.strip() or any(w in out for w in ("pending", "queued", "in_progress", "waiting")):
+            self.unstick_pending(tree, pr)
             return "pending"
         return "red" if "fail" in out or "cancel" in out else "green"
+
+    def unstick_pending(self, tree: str, pr: int) -> None:
+        """فحصٌ «معلَّق» وتشغيلُه منتهٍ عند GitHub حالةٌ عالقة (نافذة النشر على 1415 ساعةً كاملة، 2026-11-09): يُعاد تشغيلُه
+        فلا ينتظر المشغّلُ للأبد. تشغيلٌ جارٍ فعلًا لا يُمسّ."""
+        p = sh(["gh", "pr", "checks", str(pr), "--json", "name,bucket,link"], tree)
+        try:
+            rows = json.loads(p.stdout or "[]")
+        except ValueError:
+            return
+        for run in {m.group(1) for r in rows if r.get("bucket") == "pending" and (m := re.search(r"/runs/(\d+)", r.get("link") or ""))}:
+            if sh(["gh", "run", "view", run, "--json", "status", "--jq", ".status"], tree).stdout.strip() == "completed":
+                sh(["gh", "run", "rerun", run], tree)
 
     def branch_diff(self, tree: str) -> str:
         return sh(["git", "diff", f"{self.cfg['base']}...HEAD"], tree).stdout
@@ -1163,6 +1302,11 @@ class Effects:
     def merge(self, tree: str, pr: int) -> bool:
         return sh(["gh", "pr", "merge", str(pr), "--auto"], tree).returncode == 0  # كما تفعل البوّابة: الطابورُ يفرض استراتيجيّته
 
+    def parent_of(self, tree: str, oid: str) -> str:
+        """أبُ commit الدمج الأوّل: آخرُ نشرٍ سليمٍ قبل دمج المالك، هدفُ التراجع إن فشلت الصحّة."""
+        sh(["git", "fetch", "-q", "origin", "main"], tree)
+        return sh(["git", "rev-parse", f"{oid}^1"], tree).stdout.strip()
+
     def in_deploy_window(self, tree: str) -> bool:
         return sh([sys.executable, "scripts/deploy_window.py"], tree).returncode == 0
 
@@ -1218,6 +1362,23 @@ class Effects:
             return False
         cmd = self.cfg.get("rollback_cmd") or ["gh", "workflow", "run", "rollback.yml", "-f", "commit_sha={sha}", "-f", "reason={reason}"]
         return sh([c.format(sha=good_sha, reason=reason) for c in cmd], self.cfg["repo"]).returncode == 0
+
+    def reopen_pr(self, pr: int) -> None:
+        sh(["gh", "pr", "reopen", str(pr)], self.cfg["repo"])
+
+    def restore_tree(self, branch: str, tree: str) -> None:
+        """شجرةٌ جديدة من فرع الطلب البعيد بعد أن حُذفت عند الإغلاق (استئناف 013)."""
+        sh(["git", "fetch", "-q", "origin", branch], self.cfg["repo"])
+        add = ["git", "worktree", "add", "-q", "-B", branch, tree, "origin/" + branch]
+        p = sh(add, self.cfg["repo"])
+        if p.returncode and Path(tree).exists():  # بقايا مجلّدٍ غير مسجَّل من إغلاقٍ ناقص: يُنظَّف ثمّ تُعاد المحاولة
+            sh(["git", "worktree", "prune"], self.cfg["repo"])
+            self.remove_tree(tree)
+            if Path(tree).exists() and Path(tree).resolve().is_relative_to(Path(self.cfg["worktrees"]).resolve()):
+                shutil.rmtree(tree, ignore_errors=True)  # غيرُ مسجَّلٍ في غيت فلا يزيله worktree remove
+            p = sh(add, self.cfg["repo"])
+        if p.returncode:
+            raise RunnerError("بيئةٌ: تعذّر إنشاء شجرة الاستئناف — " + (p.stdout + p.stderr).strip()[-200:])
 
     def remove_tree(self, tree: str) -> None:
         if not Path(tree).resolve().is_relative_to(Path(self.cfg["worktrees"]).resolve()):
@@ -1289,7 +1450,8 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         real = [f for f in real if f not in infra and f not in DERIVED_CHECKS]
         if not real:
             return rerun_infra(card, fx, lpath, tree, pr, infra)
-    if preview and len(real) == 1 and VISUAL_CHECK in real[0]:
+    own = [f for f in real if f not in DERIVED_CHECKS]  # ملخّصُ البوّابة يحمرّ تبعًا لفحصٍ آخر فلا يُعدّ ثانيًا (013، 2026-11-09)
+    if preview and len(own) == 1 and VISUAL_CHECK in own[0]:
         out = mark_visual_change(card, fx, lpath, tree, pr, head)
         if out:
             return out
@@ -1297,6 +1459,8 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         return repair_ci(card, cfg, fx, lpath, tree, branch, pr, real)
     if preview:
         if card.get("preview_rejected"):
+            if int((card.get("runner_resume") or {}).get("revisions") or 0) < REVISION_MAX:  # تعديلٌ على الطلب نفسه لا بطاقةٌ جديدة (013، 2026-11-09)
+                return revise_rejected(card, cfg, fx, lpath, tree, branch, pr)
             fx.close_pr(tree, pr)
             raise RunnerError(f"رفض المالك المعاينة على الطلب {pr}: {card['preview_rejected']}"[:600])
         if not card.get("preview_approved"):
@@ -1310,7 +1474,10 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
     if card.get("merge_hold") and card.get("merge_released") != head:
         return hold_for_owner(card, lpath, pr, head)
     if not fx.gate_allows(tree, pr):
-        raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {fx.gate_reasons(tree, pr)}")
+        reasons = fx.gate_reasons(tree, pr)
+        if owner_merge_only(reasons):  # هجرةٌ أو مسارٌ محظورٌ على الآليّ: الدمجُ للمالك بتصميم البوّابة، لا فشلُ بطاقة
+            return wait_owner_merge(card, fx, lpath, tree, pr, head, reasons)
+        raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {reasons}")
     if fx.remote_head(branch) != head:
         raise Transient("الرأسُ تغيّر بعد الفحص")
     if not fx.in_deploy_window(tree):  # الدمجُ نشرٌ فوريّ: خارجَ النافذة لا دمج، ويبقى الطلبُ مفتوحاً
@@ -1390,6 +1557,16 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
     mapped, log = fx.map_rls(info["account"])
     if not mapped:
         return "", failure_summary(mask(log))[:200]
+    saved = SEED_SCRIPTS / f"{cid}.py"
+    if saved.is_file():  # إعادةُ تثبيتٍ أو رأسٌ جديد أو إقلاعٌ بعد توقّف: السكربتُ الذي نجح يُجرَّب أوّلاً بصفر توكنز
+        ok, log = fx.run_seed(saved.read_text(encoding="utf-8"))
+        path = re.findall(r"PREVIEW_PATH=(/\S*)", log)
+        if ok and path and fx.check_seed(path[-1], info["account"])[0]:
+            ledger.append_event("note", cid, {"text": "[مشغّل] بذر المعاينة من السكربت المحفوظ بلا نموذج", "by": BY}, lpath)
+            return path[-1], ""
+        error = log or "السكربت المحفوظ لم يطبع PREVIEW_PATH"
+        if DOCKER_DOWN.search(error):
+            return "", failure_summary(mask(error))[:200]
     for _ in range(SEED_ATTEMPTS):
         res = fx.seed_script(tree, seed_prompt(card, info, error))
         record_run(cid, "بذر المعاينة", res, lpath)
@@ -1405,6 +1582,8 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
             continue
         opened, check_log = fx.check_seed(path[-1], info["account"])
         if opened:
+            SEED_SCRIPTS.mkdir(parents=True, exist_ok=True)
+            saved.write_text(body, encoding="utf-8")
             return path[-1], ""
         error = f"الرابط {path[-1]} لم يُفتح بالحساب {info['account']}:\n{check_log}"
     return "", failure_summary(mask(error))[:200]
@@ -1434,7 +1613,7 @@ def claim_slot(card: dict, fx: Effects, lpath, tree: str, head: str) -> int:
     ok, log = fx.slot_up(tree, port)
     if not ok:
         fx.slot_down(port)  # أمرُ المالك 2026-11-07: لا خادمَ يبقى بعد مهمّته، ومنها إقلاعٌ فشل
-        ledger.append_event("update", card["id"], {"preview_slot_failed": head}, lpath)
+        ledger.append_event("update", card["id"], {"preview_slot_failed": head, "preview_fail_at": int(time.time())}, lpath)
         refer(card["id"], f"تعذّرت خانة المعاينة {port}: {failure_summary(mask(log))[:200]}")
         return 0
     ledger.append_event("update", card["id"], {"preview_slot_port": port, "preview_slot_since": int(time.time()), "preview_idle_closed": ""}, lpath)
@@ -1442,8 +1621,41 @@ def claim_slot(card: dict, fx: Effects, lpath, tree: str, head: str) -> int:
     return port
 
 
+PREVIEW_AUTO_RETRIES = 2   # إعادةٌ آليّةٌ لفشل البذر أو الخانة قبل أن تنتظر أمرَ --reseed (أمرُ المالك: لا توقّفات يدويّة)
+PREVIEW_RETRY_SECONDS = 600
+
+
+def auto_retry_preview(card: dict, head: str, lpath=None, now: float | None = None) -> bool:
+    """فشلُ البذر أو إقلاعُ الخانة علّةٌ عابرةٌ في الغالب وكلفتُه صفرُ توكنز: يُمحى علَمُ الفشل مرّتين بعد عشر دقائق، ثمّ يبقى للمالك."""
+    now = now or time.time()
+    for key in ("preview_seed_failed", "preview_slot_failed"):
+        if card.get(key) != head:
+            continue
+        tries, at = int(card.get("preview_retries") or 0), int(card.get("preview_fail_at") or 0)
+        if tries >= PREVIEW_AUTO_RETRIES or (at and now - at < PREVIEW_RETRY_SECONDS):
+            return False
+        ledger.append_event("update", card["id"], {key: "", "preview_retries": tries + 1, "preview_fail_at": 0}, lpath)
+        ledger.append_event("note", card["id"], {"text": f"[مشغّل] إعادةٌ آليّةٌ للمعاينة ({tries + 1}/{PREVIEW_AUTO_RETRIES}) بعد فشل سابق", "by": BY}, lpath)
+        card[key], card["preview_retries"], card["preview_fail_at"] = "", tries + 1, 0
+        return True
+    return False
+
+
+def env_wait(card: dict, head: str, lpath=None) -> None:
+    """ملاحظةٌ واحدةٌ لكلّ رأس: المعاينةُ تنتظر دوكر، ولا تُحسب على البطاقة."""
+    if card.get("preview_env_wait") == head:
+        return
+    ledger.append_event("update", card["id"], {"preview_env_wait": head}, lpath)
+    ledger.append_event("note", card["id"], {"text": "[مشغّل] دوكر غير متاح: شُغّل آليًّا والمعاينة تنتظر عودته وتُعاد كلَّ دورةٍ دون استهلاك الإعادات", "by": BY}, lpath)
+    card["preview_env_wait"] = head
+
+
 def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) -> str:
     """لا تُطلب المعاينةُ إلا بعد أن يعرض 8500 شجرةَ البطاقة فعلاً (#1347: طُلبت على خادمٍ لا يحملها)."""
+    auto_retry_preview(card, head, lpath)
+    if not fx.wake_docker():
+        env_wait(card, head, lpath)
+        return "waiting_preview"
     cid, st = card["id"], fx.preview_state()
     live = st.get("mode") == "pin" and int(st.get("pin_until") or 0) > time.time() and not st.get("pin_in_progress")
     slot = card.get("preview_slot_port") or 0
@@ -1452,6 +1664,12 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
     if slot and not fx.slot_serves(slot, head):  # سقطت أو تخلّفت: تُطلب من جديد ويُعاد البذر
         ledger.append_event("update", cid, {"preview_slot_port": 0}, lpath)
         slot = 0
+    if not slot and live and same_tree(st.get("pin_tree", ""), tree) and not st.get("pin_request") and card.get("repin_head") != head and not fx.slot_serves(8500, head):
+        # مثبَّتٌ على شجرتها لكنّه يخدم رأساً أقدم (رفضٌ عُدّل أو إصلاحُ CI): يُعاد التثبيتُ مرّةً لكلّ رأس، وإلا بقيت «جاهزة» كاذبةً أو غائبةً للأبد (005، 2026-11-10)
+        ledger.append_event("update", cid, {"repin_head": head, "preview_seen": ""}, lpath)
+        card["repin_head"], card["preview_seen"] = head, ""
+        fx.preview_pin(tree)
+        return "waiting_preview"
     if not slot and not (live and same_tree(st.get("pin_tree", ""), tree)):
         if card.get("preview_seen"):  # انتهى التثبيت: لا يصحّ اعتمادٌ حتى يعود العرض
             ledger.append_event("update", cid, {"preview_seen": ""}, lpath)
@@ -1474,13 +1692,16 @@ def seed_and_announce(card: dict, fx: Effects, lpath, head: str, pr: int, base: 
     if card.get("preview_seen") != head and card.get("preview_seed_failed") != head:
         info = preview_info(card, pr)
         path, error = seed_preview(card, info, fx, lpath)
+        if not path and DOCKER_DOWN.search(error or ""):  # علّةُ بيئةٍ لا بطاقة: لا تُحرق ميزانيّةَ الإعادة، وتُعاد كلَّ دورةٍ حتى يعود دوكر
+            env_wait(card, head, lpath)
+            return "waiting_preview"
         if not path:  # لا «جاهز» بلا بيانات، ولا اعتماد؛ ويُعاد برأسٍ جديد أو --reseed فلا تتكرّر الكلفة كلَّ دورة
-            ledger.append_event("update", cid, {"preview_seed_failed": head}, lpath)
+            ledger.append_event("update", cid, {"preview_seed_failed": head, "preview_fail_at": int(time.time())}, lpath)
             refer(cid, f"تعذّرت المعاينة: لم يكتمل البذر للطلب #{pr}: {error} — للإعادة: python tools/runner.py --reseed {cid}")
             return "waiting_preview"
         fallback = fx.pdf_fallback_fonts(path, info["account"])
         if fallback:  # لا يصل إلى المالك ما يعرف المشغّلُ أنّه خاطئ، ولا يُعاد البذرُ فالعلّةُ في الشيفرة
-            ledger.append_event("update", cid, {"preview_seed_failed": head}, lpath)
+            ledger.append_event("update", cid, {"preview_seed_failed": head, "preview_fail_at": int(time.time())}, lpath)
             refer(cid, f"لم تُعرض المعاينة: PDF الطلب #{pr} بخطوط احتياطية: {'، '.join(fallback)[:200]}")
             return "waiting_preview"
         info["url"] = base + path
@@ -1563,8 +1784,9 @@ def preview_cycle(cfg: dict, fx: Effects, lpath=None, queue: Path | None = None)
             refer("RUNNER", f"{mark}: لا نبض لدورة 8500 منذ {int((time.time() - beat) / 60)} دقيقة، والمعاينات تنتظر", queue)
 
 
-def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None) -> tuple[bool, str]:
-    """قرارُ المالك مربوطٌ بالرأس المعروض: لا اعتمادَ لما لم يُعرض على 8500."""
+def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None, via: str = "") -> tuple[bool, str]:
+    """قرارُ المالك مربوطٌ بالرأس المعروض: لا اعتمادَ لما لم يُعرض على 8500. `via` مصدرُ القرار يُكتب في الحدث ليُعرف الفاعل (اعتمادُ 013 سُجّل بلا أثر، 2026-11-09)."""
+    via = via or f"cli pid={os.getpid()} ppid={os.getppid()}"
     card = ledger.reduce_state(ledger.load_events(lpath)).get(cid)
     head = ((card or {}).get("runner_resume") or {}).get("head", "")
     if not head or card.get("approval") != "معاينة":
@@ -1572,13 +1794,13 @@ def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None) -> tup
     if not approve:
         if not reason.strip():
             return False, "الرفض يحتاج سببًا: --reason"
-        ledger.append_event("note", cid, {"text": f"[مالك] رفض المعاينة: {reason}"[:400], "by": "owner"}, lpath)
+        ledger.append_event("note", cid, {"text": f"[مالك] رفض المعاينة: {reason}"[:400], "by": "owner", "via": via[:160]}, lpath)
         ledger.append_event("update", cid, {"preview_rejected": reason[:300]}, lpath)
-        return True, f"{cid}: سُجّل الرفض، ويغلقها المشغّل في دورته التالية"
+        return True, f"{cid}: سُجّل الرفض، ويعدّل المشغّل الطلب نفسه بسببك (جولتان) ثم يعيد المعاينة"
     if card.get("preview_seen") != head:
         return False, f"{cid}: لم يُعرض الرأس {head[:8]} على 8500 بعد، فلا يُعتمد"
     where = card.get("preview_slot_port") or 8500
-    ledger.append_event("note", cid, {"text": f"[مالك] اعتمد على {where} الرأس {head[:8]}", "by": "owner"}, lpath)
+    ledger.append_event("note", cid, {"text": f"[مالك] اعتمد على {where} الرأس {head[:8]}", "by": "owner", "via": via[:160]}, lpath)
     ledger.append_event("update", cid, {"preview_approved": True}, lpath)
     return True, f"{cid}: سُجّل الاعتماد على الرأس {head[:8]}، ويدمجها المشغّل في دورته التالية"
 
@@ -1589,6 +1811,52 @@ def hold_for_owner(card: dict, lpath, pr: int, head: str) -> str:
         ledger.append_event("update", card["id"], {"merge_hold_told": head}, lpath)
         refer(card["id"], f"الطلب {pr} أخضر وموقوف حتى تقرأ فرقه. للدمج: python tools/runner.py --release {card['id']}")
     return "waiting_owner"
+
+
+OWNER_MERGE_MARK = "مساراتٌ محظورةٌ على الدمج الآليّ"
+OWNER_MERGE_REMIND_S = 24 * 3600
+OWNER_MERGE_GIVE_UP_S = 14 * 24 * 3600
+
+
+def owner_merge_only(reasons: str) -> bool:
+    """كلُّ أسباب رفض البوّابة هي المساراتُ المحظورةُ وحدَها (هجرة، صلاحيات…): والباقي فشلٌ حقيقيٌّ يبقى فشلاً."""
+    lines = [x.strip() for x in reasons.split(" | ") if x.strip()]
+    return bool(lines) and all(x.startswith(OWNER_MERGE_MARK) for x in lines)
+
+
+def wait_owner_merge(card: dict, fx: Effects, lpath, tree: str, pr: int, head: str, reasons: str, now=None) -> str:
+    """دمجٌ يدويٌّ للمالك تتابعه الأتمتةُ حتى النشر: البطاقةُ لا تُغلق ولا تحجز المسار، وتظهر في ميزان «ينتظر دمجك».
+
+    كلُّ دورةٍ تقرأ حالةَ الطلب: MERGED فيُكمَل النشرُ والصحّةُ بلا يد، وCLOSED يُغلق بتقرير، وOPEN يبقى؛ وتذكيرٌ في اليوم
+    ثمّ إغلاقٌ بتقريرٍ بعد 14 يوماً. (W-20261108-027: أُغلقت وطلبُها أخضرُ ينتظر فلم يرَ المالكُ شيئاً.)"""
+    now = now or time.time
+    cid = card["id"]
+    state, oid = fx.pr_state(tree, pr)
+    resume_ = dict(card.get("runner_resume") or {})
+    if state == "MERGED":
+        resume_.update(stage="deploy_wait", oid=oid, good=fx.parent_of(tree, oid) or resume_.get("good", ""), deploy_wait_since=now())
+        card["runner_resume"] = resume_
+        ledger.append_event("note", cid, {"text": f"[مالك] دمج الطلب {pr} يدويّاً؛ تتابع الأتمتةُ النشرَ والصحّة", "by": "owner"}, lpath)
+        ledger.append_event("update", cid, {"runner_resume": resume_, "owner_action": None}, lpath)
+        ledger.append_event("state", cid, {"state": "merged", "by": BY, "merge_commit": oid}, lpath)
+        return merge_and_publish(card, fx, lpath, tree, pr)
+    if state == "CLOSED":
+        raise RunnerError(f"أُغلق الطلب {pr} دون دمج")
+    action = card.get("owner_action") or {}
+    if action.get("kind") != "merge" or action.get("head") != head:
+        action = {"kind": "merge", "pr": pr, "head": head, "since": int(now()), "told": int(now()),
+                  "reason": reasons[:240], "url": f"https://github.com/sh-school/shschool_mvp/pull/{pr}"}
+        card["owner_action"] = action
+        ledger.append_event("update", cid, {"owner_action": action}, lpath)
+        refer(cid, f"الطلب {pr} أخضر وينتظر دمجك بيدك ({reasons[:140]}). بعد دمجه تُكمل الأتمتةُ النشرَ والصحّةَ بلا يد.")
+    elif now() - float(action.get("since") or now()) > OWNER_MERGE_GIVE_UP_S:
+        raise RunnerError(f"الطلب {pr} ينتظر دمجَ المالك منذ أكثر من 14 يوماً فأُغلقت البطاقةُ بتقرير")
+    elif now() - float(action.get("told") or now()) > OWNER_MERGE_REMIND_S:
+        action = dict(action, told=int(now()))
+        card["owner_action"] = action
+        ledger.append_event("update", cid, {"owner_action": action}, lpath)
+        refer(cid, f"تذكير: الطلب {pr} ما زال ينتظر دمجك.")
+    return "waiting_owner_merge"
 
 
 def release_merge(cid: str, lpath=None) -> tuple[bool, str]:
@@ -1681,6 +1949,48 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
     return "waiting_ci"
 
 
+REVISION_MAX = 2  # جولتا تعديلٍ بسبب المالك على الطلب نفسه، ثم تُغلق بتقرير
+
+
+def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, pr: int) -> str:
+    """رفضُ المالك بسببٍ يعود إلى النموذج على الفرع والطلب نفسَيهما، فلا يُبنى طلبٌ جديدٌ ولا تُدفع كلفةُ بناءٍ كامل."""
+    cid, reason = card["id"], str(card["preview_rejected"])
+    r = dict(card.get("runner_resume") or {})
+    done, spent = int(r.get("revisions") or 0), float(r.get("spent") or 0)
+    model, _, budget = _tiers(cfg, card)[-1]
+    rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
+    ask = "رفض المالك المعاينة بهذا السبب، عدِّل ما يلزم ليُحقّقه: " + reason
+    if r.get("revise_fail"):
+        ask += "\n\nمحاولتك السابقة أسقطت الفحص المحلّي، فلا تكرّر سببه:\n" + str(r["revise_fail"])
+    res = fx.run_model(tree, brief(card, rules, ask, fx.branch_diff(tree)), model, budget)
+    record_run(cid, f"{model} تعديل بعد رفض {done + 1}", res, lpath)
+    r.update(revisions=done + 1, spent=spent + res.cost)
+    card["runner_resume"] = r
+    ledger.append_event("update", cid, {"runner_resume": r}, lpath)
+    if not res.ok:
+        return "waiting_ci"
+    fx.autoformat(tree)
+    files = fx.changed(tree)
+    if not files:
+        save_fail_diff(cid, fx.branch_diff(tree))
+        raise RunnerError(f"لم يُحدث النموذجُ أيَّ تغيير بعد رفض المالك على الطلب {pr}: {reason[:300]}")
+    ok, vlog = fx.verify(tree)
+    if not ok:
+        summary = failure_summary(mask(vlog))
+        r["revise_fail"] = fail_detail(mask(vlog))  # تُعاد للجولة التالية فلا تكرّر الخطأ نفسَه (005: سقطت جولتان على حارس الطبقات ذاته)
+        card["runner_resume"] = r
+        ledger.append_event("update", cid, {"runner_resume": r}, lpath)
+        ledger.append_event("note", cid, {"text": f"[مشغّل] تعديلٌ بعد الرفض فشل: {summary}", "by": BY}, lpath)
+        return "waiting_ci"
+    r.pop("revise_fail", None)
+    require_preview(card, files, lpath)
+    r["head"] = fx.commit_push(tree, branch, files, f"{cid}: تعديلٌ بعد رفض المعاينة")
+    card["runner_resume"] = r
+    ledger.append_event("update", cid, {"runner_resume": r, "preview_rejected": "", "preview_approved": False, "preview_seen": ""}, lpath)
+    ledger.append_event("note", cid, {"text": f"[مشغّل] عُدّل الطلب {pr} بعد رفضك وأُعيد إلى الفحوص والمعاينة", "by": BY}, lpath)
+    return "waiting_ci"
+
+
 def deploy_busy(card_id: str, lpath=None) -> bool:
     """هل بطاقةٌ أخرى دخلت الدمجَ ولم تُنشر بعد؟"""
     items = ledger.reduce_state(ledger.load_events(lpath))
@@ -1694,7 +2004,8 @@ def awaiting_owner(card: dict) -> bool:
         return False
     shown = card.get("approval") == "معاينة" and not card.get("preview_approved") and card.get("preview_seen") == head
     held = card.get("merge_hold_told") == head and card.get("merge_released") != head
-    return shown or held
+    owner_merge = (card.get("owner_action") or {}).get("kind") == "merge" and (card.get("owner_action") or {}).get("head") == head
+    return shown or held or owner_merge
 
 
 def clashes(card: dict, active: list[dict]) -> bool:
@@ -1783,7 +2094,8 @@ def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stag
                 raise RunnerError(f"تعارض دمج مع main على الطلب {pr}: أُغلق، وتُعاد البطاقة من main")
             if state == "OPEN":
                 fx.merge(tree, pr)  # لا يزال مفتوحاً بلا طابور: يُعاد طلب الدمج (idempotent)
-            ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
+            if resume_ != (card.get("runner_resume") or {}):  # لا حدثَ مكرَّراً كلَّ دورة: الدفترُ للتغيّر لا للنبض
+                ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
             return "waiting_merge"
         ledger.append_event("state", cid, {"state": "merged", "by": BY, "merge_commit": oid}, lpath)
         resume_.update(stage="deploy_wait", oid=oid, deploy_wait_since=now())
@@ -1802,7 +2114,8 @@ def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stag
         refer(cid, f"دُمجت (الطلب {pr}) ولم تُنشر خلال 120 دقيقة؛ الإنتاج على {prod[:8] or '؟'}")  # تقريرٌ فقط: لا تراجع ولا إغلاق
         ledger.append_event("update", cid, {"runner_resume": None}, lpath)
         return "merged"
-    ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
+    if resume_ != (card.get("runner_resume") or {}):
+        ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
     return "waiting_deploy"
 
 
@@ -1874,9 +2187,10 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     last_fp = fp
                     if ok and not fx.changed(tree):
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
+                        log = "لم يُحدث النموذجُ أيَّ تغيير؛ جوابُه: " + (res.out or "—")[-400:]  # لا سجلَّ الفحص الأخضر: هو ما أخفى السببَ في 8 محاولات (ضغط الأصول)
                         break
                     if ok:
-                        miss = criteria_failures(card, fx.changed(tree)) + fx.menu_gap(tree, card) + fx.legal_gap(tree, card)
+                        miss = criteria_failures(card, fx.changed(tree)) + fx.menu_gap(tree, card) + fx.legal_gap(tree, card) + fx.asset_gap(tree, card)
                         if miss:  # الفحوص خضراء لكن معياراً آليّاً من الطلب لم يتحقّق: يُعاد إلى النموذج كإصلاح
                             ok, log = False, "\n".join(miss)
                     if ok and norm_size(card.get("runner_size", "")) not in REVIEW_SIZES:
@@ -1936,11 +2250,20 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     return "referred"
 
 
+FAIL_KINDS = (("السلّم الكامل", "نموذج"), ("CI حمراء", "ci"), ("لم يُحدث النموذجُ", "بلا_تغيير"), ("الإيداع", "إيداع"), ("تعذّر الدفع", "إيداع"),
+              ("بوّابةُ الدمج", "بوّابة"), ("تعارض دمج", "تعارض"), ("بيئةٌ", "بيئة"), ("API Error", "بيئة"))
+
+
+def fail_kind(text: str) -> str:
+    """فئةٌ ثابتةٌ لسبب الإغلاق بتقرير: تُحصى في ميزان فيُعرف أكبرُ مصدرٍ للفشل بدل «أخرى»."""
+    return next((k for needle, k in FAIL_KINDS if needle in text), "أخرى")
+
+
 def fail(card: dict, exc: Exception, fx: Effects, lpath=None) -> str:
     """إغلاقٌ بتقرير: لا يُنتظر ردٌّ من المالك (D-521م)؛ سطرُ تقرير وملاحظةٌ في الدفتر وحالةُ closed."""
     cid = card["id"]
     ledger.append_event("note", cid, {"text": f"[مشغّل] أُغلقت بتقرير: {exc}"[:800], "by": BY}, lpath)
-    ledger.append_event("update", cid, {"runner_hold": True, "runner_resume": None}, lpath)
+    ledger.append_event("update", cid, {"runner_hold": True, "runner_resume": None, "fail_kind": fail_kind(str(exc))}, lpath)
     ledger.append_event("state", cid, {"state": "closed", "by": BY, "held_by": ""}, lpath)
     refer(cid, str(exc)[:700])  # يتّسع للرأس والمعايير الناقصة وآخر سبب، فلا يُقصّ السببُ من التقرير
     return "referred"
@@ -1950,16 +2273,68 @@ def resume(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     """بطاقةٌ فتحت طلبها وتنتظر الفحوص أو النافذة: تُكمَل من البوّابة بلا تشغيل نموذج."""
     r = card["runner_resume"]
     try:
+        action = card.get("owner_action") or {}
         if r.get("stage") in ("merged_wait", "deploy_wait"):  # بعد الدمج: لا إعادةَ فحوصٍ ولا بوّابة
             out = merge_and_publish(card, fx, lpath, r["tree"], r["pr"])
+        elif action.get("kind") == "merge" and action.get("head") == r.get("head"):  # بانتظار دمج المالك: تُقرأ حالةُ الطلب لا الفحوص
+            out = wait_owner_merge(card, fx, lpath, r["tree"], r["pr"], r["head"], action.get("reason", ""))
         else:
             out = finish(card, cfg, fx, lpath, r["tree"], r["branch"], r["head"], r["pr"])
     except RunnerError as exc:
         out = fail(card, exc, fx, lpath)
     if not out.startswith("waiting"):
-        ledger.append_event("update", card["id"], {"runner_resume": None}, lpath)
+        ledger.append_event("update", card["id"], {"runner_resume": None, "waiting": None}, lpath)
         fx.remove_tree(r["tree"])
+    else:  # معروضةٌ على رأسها الحاليّ: تنتظر قرارَ المالك لا «تجهّز»، فلا يكذب سببُ الانتظار
+        shown = out == "waiting_preview" and card.get("preview_seen") and card.get("preview_seen") == r.get("head")
+        note_waiting(card, "waiting_owner" if shown else out, lpath)
     return out
+
+
+WAIT_TEXT = {"waiting_ci": "ينتظر فحوص CI على الطلب", "waiting_window": "ينتظر نافذة النشر", "waiting_turn": "ينتظر دور النشر (نشرٌ آخر في الطريق)",
+             "waiting_preview": "يجهّز المعاينة (بذرٌ وتثبيتٌ على خادم المعاينة)", "waiting_owner": "ينتظر قرارك", "waiting_owner_merge": "ينتظر دمجك اليدويّ",
+             "waiting_merge": "ينتظر اكتمال الدمج", "waiting_deploy": "ينتظر ظهور النشر في الصحّة"}
+
+
+def note_waiting(card: dict, out: str, lpath=None, now=None) -> None:
+    """سببُ الانتظار ومنذ متى يُكتب في الدفتر عند تغيّره فقط، فيعرضه ميزان: «لماذا لا يتحرّك؟» لا تحتاج فحصًا يدويًّا (013، 2026-11-09)."""
+    cur = card.get("waiting") or {}
+    if cur.get("stage") == out:
+        return
+    ledger.append_event("update", card["id"], {"waiting": {"stage": out, "text": WAIT_TEXT.get(out, out), "since": int((now or time.time)())}}, lpath)
+
+
+def last_resume(cid: str, lpath=None) -> dict:
+    """آخرُ runner_resume غيرِ فارغٍ في أحداث البطاقة: الطلبُ والفرعُ والشجرة قبل أن يصفّرها الإغلاق."""
+    found: dict = {}
+    for e in ledger.load_events(lpath):
+        r = (e.get("data") or {}).get("runner_resume") if e.get("id") == cid and e.get("kind") == "update" else None
+        if r:
+            found = r
+    return found
+
+
+def reopen_card(cid: str, fx: Effects | None = None, lpath=None) -> tuple[bool, str]:
+    """استئنافُ بطاقةٍ أُغلقت وطلبُها ما زال مفتوحاً على فرعه: تعود إلى الفحوص والمعاينة بلا بناءٍ جديد (013، 2026-11-09)."""
+    card = ledger.reduce_state(ledger.load_events(lpath)).get(cid)
+    if not card or card.get("state") != "closed":
+        return False, f"{cid}: ليست مغلقة"
+    r = last_resume(cid, lpath)
+    if not r.get("pr") or not r.get("branch"):
+        return False, f"{cid}: لا طلبَ مفتوحاً مسجَّلاً لها فلا تُستأنف (استعمل الإعادة)"
+    fx = fx or Effects(load_config())
+    state, _ = fx.pr_state(fx.cfg["repo"], r["pr"])
+    if state == "CLOSED":  # أغلقه المشغّلُ نفسُه عند الرفض أو الفشل ولم يُدمج: يُعاد فتحُه ما دام الفرعُ باقياً (005، 2026-11-10)
+        fx.reopen_pr(r["pr"])
+        state, _ = fx.pr_state(fx.cfg["repo"], r["pr"])
+    if state != "OPEN":
+        return False, f"{cid}: الطلب {r['pr']} حالته {state} لا OPEN"
+    fx.restore_tree(r["branch"], r["tree"])
+    r = {k: v for k, v in r.items() if k not in ("ci_fixes", "ci_fp", "ci_fp_head", "revisions")}
+    ledger.append_event("note", cid, {"text": f"[مالك] استئناف على الطلب {r['pr']}", "by": "owner"}, lpath)
+    ledger.append_event("update", cid, {"runner_hold": False, "runner_resume": r, "waiting": None}, lpath)
+    ledger.append_event("state", cid, {"state": "in_progress", "by": BY}, lpath)
+    return True, f"{cid}: استؤنفت على الطلب {r['pr']}"
 
 
 def _split_list(fields: dict, key: str) -> list[str]:
@@ -2010,7 +2385,7 @@ def intake_requests(cfg: dict, lpath=None) -> int:
         approval = "معاينة" if fields.get("الاعتماد") == "معاينة" or (not fields.get("الاعتماد") and fields["الوسم"] == "تصميم") else "مباشر"
         extra = {"request_file": f.stem, "retry_of": fields.get("إعادة لـ", ""), "req_type": fields.get("النوع", ""), "criteria_ids": [int(x) for x in _split_list(fields, "معايير مرقّمة") if x.isdigit()],
                  "runner_checks": [c for c in _split_list(fields, "فحوص المشغّل") if c in CRITERIA_CHECKS],
-                 "legal": fields.get("يلمس لائحة", "") == "نعم", "scope_page": fields.get("الصفحة", ""), "scope_files": _split_list(fields, "الملفات"), "out_of_scope": fields.get("خارج النطاق", ""),
+                 "legal": fields.get("يلمس لائحة", "") == "نعم", "scope_page": fields.get("الصفحة", ""), "scope_files": _split_list(fields, "الملفات"), "out_of_scope": fields.get("خارج النطاق", ""), "depends_on": [d for d in re.split(r"[\s,،]+", fields.get("يعتمد على", "")) if re.fullmatch(r"W-\d{8}-\d{3}", d)],
                  "attachments_dir": fields.get("المرفقات", "") if Path(fields.get("المرفقات", "") or "/nonexistent").is_dir() else "",
                  "attachments": [{"name": n, "sha256": h} for n, _, h in (x.partition("|") for x in _split_list(fields, "ملفات المرفقات")) if n and len(h) == 64]}
         ledger.append_event("created", cid, {"problem": fields["العنوان"], "impact": fields["المطلوب"],
@@ -2020,9 +2395,8 @@ def intake_requests(cfg: dict, lpath=None) -> int:
                                               "runner_size": fields["الوسم"], "source": "owner",
                                               "touches": touches, **{k: v for k, v in extra.items() if v}}, lpath)
         ledger.append_event("state", cid, {"state": "routed", "by": BY}, lpath)
-        if touches:  # الأمن والصلاحيات والأدوار والهجرات تردّها البوّابة: لا نبني ثم نُرَدّ
-            ledger.append_event("update", cid, {"runner_hold": True}, lpath)
-            refer(cid, "يمسّ " + "، ".join(touches) + " فلن يُدمج آليًّا — يلزم قرارك")
+        if touches:  # البوّابة تردّ دمجَ هذه المسارات آليًّا، لكن دمجَ المالك اليدويّ صار حالةً حيّة (wait_owner_merge): تُبنى ثم تنتظر دمجه، ولا حجزَ مسبقاً
+            refer(cid, "يمسّ " + "، ".join(touches) + " — ستُبنى وتنتظر دمجَك اليدويّ ثم تُنشر")
         n += 1
     return n
 
@@ -2038,6 +2412,10 @@ def report_env(msg: str, queue: Path | None = None) -> str:
 
 def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lock: Path = LOCK) -> str:
     cfg = cfg or load_config()
+    try:
+        BEAT.write_text(str(int(time.time())), encoding="utf-8")
+    except OSError:
+        pass  # النبضُ لا يوقف الدورة
     if not acquire_lock(lock):
         return "locked"
     try:
@@ -2103,8 +2481,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--approve", metavar="CARD", help="اعتماد المعاينة المعروضة على 8500")
     ap.add_argument("--reject", metavar="CARD", help="رفض المعاينة، ومعه --reason")
     ap.add_argument("--reason", default="")
+    ap.add_argument("--via", default="", help="مصدر القرار للتدقيق (ميزان يمرّر عنوان العميل والمتصفح)")
     ap.add_argument("--dismiss", metavar="CARD", help="إقرار المالك بإغلاق بطاقة فشلت، فتخرج من مكتب المعاينة")
     ap.add_argument("--reseed", metavar="CARD", help="إعادة بذر المعاينة بعد فشلها")
+    ap.add_argument("--reopen", metavar="CARD", help="استئناف بطاقة أُغلقت وطلبها مفتوح")
     ap.add_argument("--release", metavar="CARD", help="فتح دمج بطاقة موقوفة بعد قراءة فرقها")
     a = ap.parse_args(argv)
     if a.reseed:
@@ -2116,12 +2496,16 @@ def main(argv: list[str] | None = None) -> int:
         ledger.append_event("update", a.dismiss, {"owner_dismissed": True})
         print(f"{a.dismiss}: خرجت من مكتب المعاينة")
         return 0
+    if a.reopen:
+        ok, text = reopen_card(a.reopen)
+        print(text)
+        return 0 if ok else 1
     if a.release:
         ok, text = release_merge(a.release)
         print(text)
         return 0 if ok else 1
     if a.approve or a.reject:
-        ok, text = decide_preview(a.approve or a.reject, bool(a.approve), a.reason)
+        ok, text = decide_preview(a.approve or a.reject, bool(a.approve), a.reason, via=a.via)
         print(text)
         return 0 if ok else 1
     cfg = load_config()

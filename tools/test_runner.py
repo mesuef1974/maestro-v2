@@ -1,6 +1,7 @@
 """اختباراتُ المشغّل (D-519م): الاختيار، القفل، الإصلاح مرّتين، الإحالة، التراجع الآليّ، وتسجيل الكلفة."""
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -78,7 +79,10 @@ class Fake(runner.Effects):
         return getattr(self, "slot_ok", True), "log"
 
     def menu_gap(self, tree, card): return getattr(self, "menu", [])
+    def asset_gap(self, tree, card): return []
+    def parent_of(self, tree, oid): return "good1234abcd"
     def slot_serves(self, port, head): return getattr(self, "slot_live", True)
+    def wake_docker(self, docker=None): return getattr(self, "docker_alive", True)
     def slot_down(self, port): self.downs = getattr(self, "downs", []) + [port]
     def slot_projects(self): return list(getattr(self, "projects", []))
     def containers(self): return list(getattr(self, "boxes", []))
@@ -137,6 +141,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "OWNER_QUEUE", tmp_path / "owner_queue.md")
     monkeypatch.setattr(runner, "REQUESTS", tmp_path / "requests")
     monkeypatch.setattr(runner, "FAIL_DIFFS", tmp_path / "fail_diffs")
+    monkeypatch.setattr(runner, "SEED_SCRIPTS", tmp_path / "seed_scripts")
     return tmp_path / "e.jsonl", tmp_path / "lock"
 
 
@@ -377,6 +382,13 @@ def test_no_change_after_green_checks_escalates_instead_of_publishing(env):
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 2
 
 
+def test_no_change_report_names_the_real_reason_not_the_green_check_log(env):
+    lp, lock = env
+    _card(lp)
+    runner.run_cycle(CFG, Fake(files=()), lp, lock)
+    assert "لم يُحدث النموذجُ أيَّ تغيير" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
 def test_haiku_over_turn_cap_with_green_checks_never_runs_sonnet(env):
     lp, lock = env
     _card(lp)
@@ -470,12 +482,12 @@ def test_intake_design_size_defaults_to_preview(env):
     assert list(ledger.reduce_state(ledger.load_events(lp)).values())[0]["approval"] == "معاينة"
 
 
-def test_intake_forbidden_touch_is_held_early_and_referred(env):
+def test_intake_forbidden_touch_is_built_then_waits_for_the_owner_merge_not_held(env):
     lp, _ = env
     _write_req(env, **{"يمسّ": "الهجرات"})
     runner.intake_requests(CFG, lp)
     c = list(ledger.reduce_state(ledger.load_events(lp)).values())[0]
-    assert c["runner_hold"] and runner.pick_card({c["id"]: c}, CFG) is None
+    assert not c.get("runner_hold") and runner.pick_card({c["id"]: c}, CFG) is not None
     assert "الهجرات" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
 
 
@@ -1254,6 +1266,111 @@ def test_quota_text_does_not_match_the_run_budget():
         runner.check_quota("Usage limit reached")
 
 
+@pytest.mark.parametrize("text", [
+    "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE: usually a TLS-inspecting corporate proxy",
+    "read ECONNRESET",
+])
+def test_network_and_tls_errors_are_environment_not_a_model_failure(text):
+    with pytest.raises(runner.EnvDown):
+        runner.check_quota(text)
+    runner.check_quota("ruff: 3 errors in the model's own output")  # نصٌّ عاديّ لا يُحسب عطلًا
+
+
+def test_a_failure_line_is_what_makes_a_verify_log_actionable():
+    assert runner.has_failure_marker("... ok" + chr(10) + "✘ ruff check: فشل") is True
+    assert runner.has_failure_marker("FAILED tests/test_x.py::test_a - assert 1 == 2") is True
+    assert runner.has_failure_marker("app/x.py:3: error: Incompatible types") is True
+    assert runner.has_failure_marker("393 passed, 6 skipped in 48s" + chr(10) + "[timing] extra_tests 51s") is False
+
+
+def test_unreadable_verify_failure_saves_the_whole_log_and_never_calls_the_model_again(tmp_path):
+    path = runner.save_verify_log("runner-w-1", 1, "x" * 5000 + " tail", folder=tmp_path)
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("exit=1") and text.endswith("tail") and len(text) > 5000
+
+
+def test_preview_failure_is_retried_twice_after_ten_minutes_then_left_to_the_owner(env):
+    lp, _ = env
+    card = {"id": "W-1", "preview_seed_failed": "h1", "preview_fail_at": 1000}
+    assert runner.auto_retry_preview(card, "h1", lp, now=1100) is False  # لم تمضِ عشرُ دقائق
+    assert runner.auto_retry_preview(card, "h1", lp, now=1700) is True and card["preview_seed_failed"] == ""
+    card.update(preview_slot_failed="h1", preview_fail_at=2000)
+    assert runner.auto_retry_preview(card, "h1", lp, now=2700) is True and card["preview_retries"] == 2
+    card.update(preview_seed_failed="h1", preview_fail_at=3000)
+    assert runner.auto_retry_preview(card, "h1", lp, now=9000) is False  # استُنفدت الإعادتان
+    assert runner.auto_retry_preview({"id": "W-2", "preview_seed_failed": "old"}, "new", lp) is False  # رأسٌ آخر
+
+
+def test_a_preview_failure_with_no_recorded_time_is_retried_at_once(env):
+    lp, _ = env
+    assert runner.auto_retry_preview({"id": "W-3", "preview_slot_failed": "h"}, "h", lp) is True
+
+
+MIG = "مساراتٌ محظورةٌ على الدمج الآليّ: behavior/migrations/0026_x.py (يطابق */migrations/*)"
+
+
+def test_only_forbidden_paths_make_an_owner_merge_not_a_failure():
+    assert runner.owner_merge_only(MIG) is True
+    assert runner.owner_merge_only(MIG + " | فحصٌ فاشل: pytest (FAILURE)") is False
+    assert runner.owner_merge_only("لا فحوصَ CI مسجَّلةٌ بعدُ على الطلب") is False
+    assert runner.owner_merge_only("") is False
+
+
+class _OwnerMerge(Fake):
+    def gate_reasons(self, tree, pr): return MIG
+
+
+def _owner_merge_card(lp, **extra):
+    _card(lp, approval="معاينة", source="owner", preview_approved=True, **extra)
+    ledger.append_event("state", "W-20261104-901", {"state": "in_progress", "by": "runner", "held_by": "runner"}, lp)
+    ledger.append_event("update", "W-20261104-901", {"pr": 7, "runner_resume": {"pr": 7, "branch": "b", "head": "h1", "tree": "t", "spent": 0}}, lp)
+    return ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+
+
+def test_a_gate_refusal_for_a_migration_waits_for_the_owner_instead_of_closing(env):
+    lp, _ = env
+    card = _owner_merge_card(lp)
+    fx = _OwnerMerge(gate=False)
+    fx.merge_state = "OPEN"
+    fx.pr_body_of = lambda tree, pr: runner.pr_body(card, "h1")
+    out = runner.finish(card, CFG, fx, lp, "t", "b", "h1", 7)
+    st = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert out == "waiting_owner_merge" and st["state"] == "in_progress"
+    assert st["owner_action"]["kind"] == "merge" and st["owner_action"]["pr"] == 7 and st["owner_action"]["head"] == "h1"
+    assert runner.awaiting_owner(st) is True  # لا تحجز المسار عن البطاقات الأخرى
+    assert "ينتظر دمجك" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_the_owner_merging_by_hand_continues_to_publish_without_a_hand(env):
+    lp, _ = env
+    card = _owner_merge_card(lp, owner_action={"kind": "merge", "pr": 7, "head": "h1", "since": 1, "told": 1, "reason": MIG})
+    card["owner_action"] = {"kind": "merge", "pr": 7, "head": "h1", "since": 1, "told": 1, "reason": MIG}
+    fx = _OwnerMerge(gate=False)  # الطلب MERGED افتراضيّاً في Fake
+    out = runner.resume(card, CFG, fx, lp)
+    st = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert out == "published" and st["state"] == "published" and not st.get("owner_action")
+
+
+def test_a_pr_closed_without_merge_ends_the_waiting_with_a_report(env):
+    lp, _ = env
+    card = _owner_merge_card(lp)
+    card["owner_action"] = {"kind": "merge", "pr": 7, "head": "h1", "since": 1, "told": 1, "reason": MIG}
+    fx = _OwnerMerge(gate=False)
+    fx.merge_state = "CLOSED"
+    assert runner.resume(card, CFG, fx, lp) == "referred"
+    assert ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]["state"] == "closed"
+
+
+def test_a_real_gate_failure_still_closes_the_card(env):
+    lp, _ = env
+    card = _owner_merge_card(lp)
+    fx = Fake(gate=False)
+    fx.pr_body_of = lambda tree, pr: runner.pr_body(card, "h1")
+    with pytest.raises(runner.RunnerError):
+        runner.finish(card, CFG, fx, lp, "t", "b", "h1", 7)
+
+
 def test_record_run_keeps_tokens_beside_the_unchanged_text(env):
     lp, _ = env
     runner.record_run("W-1", "haiku تشغيل 1", runner.Result(True, "", 0.5, 2, {"usage": {"input_tokens": 3, "output_tokens": 4, "x": {}}}), lp)
@@ -1435,12 +1552,31 @@ def test_approved_card_merges_and_its_pin_is_released(env):
     assert fx.merged
 
 
-def test_reject_needs_a_reason_then_closes_card_and_pr(env):
+def test_reject_needs_a_reason_then_revises_the_same_pr_without_closing(env):
+    """الرفض يعدّل الطلب نفسه بسببه ثم يعيد المعاينة، فلا يُغلق ولا يُبنى طلبٌ جديد (013، 2026-11-09)."""
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    prompts = []
+    orig = fx.run_model
+    fx.run_model = lambda tree, prompt, model, budget: (prompts.append(prompt), orig(tree, prompt, model, budget))[1]
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert not runner.decide_preview("W-20261104-901", False, " ", lp)[0]
+    assert runner.decide_preview("W-20261104-901", False, "العلامة مائلة", lp)[0]
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert not getattr(fx, "closed_pr", False) and not fx.merged
+    assert any("العلامة مائلة" in p for p in prompts)
+    card = _state(lp)
+    assert card["state"] == "in_progress" and not card.get("preview_rejected") and card["runner_resume"]["revisions"] == 1
+
+
+def test_reject_after_the_revision_cap_closes_card_and_pr(env):
     lp, lock = env
     _preview_card(lp)
     fx = Fake()
     runner.run_cycle(CFG, fx, lp, lock)
-    assert not runner.decide_preview("W-20261104-901", False, " ", lp)[0]
+    r = dict(_state(lp)["runner_resume"], revisions=runner.REVISION_MAX)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": r}, lp)
     assert runner.decide_preview("W-20261104-901", False, "العلامة مائلة", lp)[0]
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.closed_pr and not fx.merged
     assert "العلامة مائلة" in _queue()
@@ -2354,3 +2490,180 @@ def test_brief_asks_to_read_the_source_for_a_legal_card():
     card = {"id": "W-1", "problem": "سلّم المخالفات", "req_type": "", "accept": ["a"]}
     assert "مصدر الحقيقة" in runner.brief(card, [])
     assert "مصدر الحقيقة" not in runner.brief({"id": "W-2", "problem": "لون زر", "req_type": "", "accept": ["a"]}, [])
+
+
+def test_fail_kind_classifies_the_closing_reason_into_a_fixed_family():
+    assert runner.fail_kind("فشل النموذج بعد السلّم الكامل: x") == "نموذج"
+    assert runner.fail_kind("فحوصُ CI حمراء على الطلب 5") == "ci"
+    assert runner.fail_kind("تعذّر الدفع: behind") == "إيداع"
+    assert runner.fail_kind("شيءٌ آخر") == "أخرى"
+
+
+def test_pick_waits_for_published_dependencies(env):
+    """بطاقةٌ تعتمد على أخرى لا تُلتقط قبل أن تُنشر الأخرى (002 إلى 009، 2026-11-09)."""
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="in_progress")
+    _card(lp, "W-20261104-902")
+    ledger.append_event("update", "W-20261104-902", {"depends_on": ["W-20261104-901"]}, lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.unmet_deps(items["W-20261104-902"], items) == ["W-20261104-901"]
+    assert runner.pick_card(items, CFG) is None
+    ledger.append_event("state", "W-20261104-901", {"state": "published"}, lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.pick_card(items, CFG)["id"] == "W-20261104-902"
+
+
+def test_waiting_reason_is_written_once_per_stage(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="in_progress")
+    card = _state(lp)
+    runner.note_waiting(card, "waiting_ci", lp, now=lambda: 50)
+    card = _state(lp)
+    assert card["waiting"] == {"stage": "waiting_ci", "text": runner.WAIT_TEXT["waiting_ci"], "since": 50}
+    runner.note_waiting(card, "waiting_ci", lp, now=lambda: 90)  # لا يُصفَّر الزمنُ والمرحلةُ ثابتة
+    assert _state(lp)["waiting"]["since"] == 50
+
+
+def test_reopen_resumes_a_closed_card_on_its_open_pr(env):
+    """بطاقةٌ أُغلقت وطلبها مفتوح تعود إلى الفحوص على الطلب نفسه بلا بناءٍ جديد (013، 2026-11-09)."""
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="in_progress")
+    rr = {"pr": 9, "branch": "claude/x", "head": "abc", "tree": "/t", "ci_fixes": 2, "spent": 1.0}
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": rr}, lp)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
+    ledger.append_event("state", "W-20261104-901", {"state": "closed"}, lp)
+    fx, restored = Fake(), []
+    fx.merge_state = "OPEN"
+    fx.restore_tree = lambda branch, tree: restored.append((branch, tree))
+    ok, _ = runner.reopen_card("W-20261104-901", fx, lp)
+    card = _state(lp)
+    assert ok and restored == [("claude/x", "/t")] and card["state"] == "in_progress"
+    assert card["runner_resume"]["pr"] == 9 and "ci_fixes" not in card["runner_resume"] and card["runner_resume"]["spent"] == 1.0
+
+
+def test_reopen_refuses_a_merged_or_unrecorded_pr(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="closed")
+    assert not runner.reopen_card("W-20261104-901", Fake(), lp)[0]  # لا طلبَ مسجَّلاً
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": {"pr": 9, "branch": "b", "tree": "/t"}}, lp)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
+    assert not runner.reopen_card("W-20261104-901", Fake(), lp)[0]  # MERGED
+
+
+def test_decision_events_record_who_decided(env):
+    """كلُّ اعتمادٍ ورفضٍ يحمل مصدرَه، فلا يبقى فاعلٌ مجهول (013، 2026-11-09)."""
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert runner.decide_preview("W-20261104-901", True, lpath=lp, via="mizan ip=127.0.0.1 ua=Chrome")[0]
+    notes = [e for e in ledger.load_events(lp) if e.get("kind") == "note" and "اعتمد" in e["data"].get("text", "")]
+    assert notes[-1]["data"]["via"] == "mizan ip=127.0.0.1 ua=Chrome"
+    assert runner.decide_preview("W-20261104-901", False, "س", lp)[0]
+    assert ledger.load_events(lp)[-2]["data"]["via"].startswith("cli pid=")
+
+
+def test_pinned_on_the_same_tree_but_serving_an_older_head_repins_once(env):
+    """8500 مثبَّتٌ على شجرة البطاقة لكنّه يخدم رأساً أقدم بعد رفضٍ عُدّل: يُعاد التثبيتُ مرّةً لكلّ رأس ولا يبقى بلا معاينة (005)."""
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    pins = len(getattr(fx, "pins", []))
+    fx.slot_serves = lambda port, head: False  # 8500 ما زال على الرأس القديم
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert len(fx.pins) == pins + 1 and _state(lp)["repin_head"]
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert len(fx.pins) == pins + 1  # مرّةٌ واحدةٌ لهذا الرأس لا كلَّ دورة
+
+
+def test_reopen_reopens_a_pr_the_runner_closed(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="closed")
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": {"pr": 9, "branch": "b", "tree": "/t"}}, lp)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
+    fx, calls = Fake(), []
+    fx.merge_state = "CLOSED"
+    fx.reopen_pr = lambda pr: (calls.append(pr), setattr(fx, "merge_state", "OPEN"))
+    fx.restore_tree = lambda branch, tree: None
+    assert runner.reopen_card("W-20261104-901", fx, lp)[0] and calls == [9]
+
+
+def test_live_tracker_shows_gate_and_waiting_for_a_resumed_card(tmp_path):
+    """بطاقةٌ استؤنفت على طلبها تظهر في «البوّابة» بسبب انتظارها لا «النموذج يكتب» (005، 2026-11-10)."""
+    import json
+
+    import runner_live
+    path = tmp_path / "events.jsonl"
+    rows = [
+        {"id": "W-1", "kind": "created", "data": {"problem": "ع", "runner_size": "صغير"}},
+        {"id": "W-1", "kind": "state", "data": {"state": "in_progress", "by": "runner"}},
+        {"id": "W-1", "kind": "update", "data": {"runner_resume": {"pr": 7, "head": "abc"}}},
+        {"id": "W-1", "kind": "update", "data": {"waiting": {"stage": "waiting_ci", "text": "ينتظر فحوص CI على الطلب", "since": 1}}},
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+    cur = runner_live.Ledger(path).snapshot()["current"]
+    assert cur["stage"] == "gate" and cur["pr"] == 7 and cur["waiting"] == "ينتظر فحوص CI على الطلب"
+
+
+def test_docker_down_during_seed_waits_without_spending_retries(env, monkeypatch):
+    lp, _ = env
+    card = {"id": "W-1", "runner_resume": {"tree": "t"}}
+    monkeypatch.setattr(runner, "seed_preview", lambda *a, **k: ("", "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine"))
+    monkeypatch.setattr(runner, "preview_info", lambda c, pr: {"account": "x"})
+    seen = []
+    monkeypatch.setattr(runner.ledger, "append_event", lambda *a, **k: seen.append(a))
+    assert runner.seed_and_announce(card, None, lp, "h1", 1, "http://x") == "waiting_preview"
+    assert not card.get("preview_seed_failed") and card["preview_env_wait"] == "h1"
+    runner.seed_and_announce(card, None, lp, "h1", 1, "http://x")
+    assert sum(1 for e in seen if e[0] == "note") == 1  # الملاحظةُ مرّةً لكلّ رأس
+
+
+def test_fail_detail_keeps_the_assertion_lines_the_model_needs():
+    log = "tests/test_x.py F\nE   AssertionError: زادت\nE     student_affairs/views.py::student_list: 88 → 91\nFAILED tests/test_layering.py::test_a\n1 failed"
+    out = runner.fail_detail(log)
+    assert "88 → 91" in out and "FAILED tests/test_layering.py::test_a" in out and "1 failed" not in out
+    assert runner.fail_detail("لا شيء مفيد") == runner.failure_summary("لا شيء مفيد")
+
+
+def test_settle_layering_records_an_improvement_but_never_licenses_growth(tmp_path, monkeypatch):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "layering_ratchet.py").write_text("", encoding="utf-8")
+    fx = runner.Effects.__new__(runner.Effects)
+    calls = []
+
+    def fake_sh(cmd, cwd=None, timeout=None):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout=answer[0], stderr="")
+
+    monkeypatch.setattr(runner, "sh", fake_sh)
+    answer = ["[0, 1]"]
+    assert fx.settle_layering(str(tmp_path)) is True and calls[-1][-1] == "--update"
+    answer[0], n = "[1, 1]", len(calls)
+    assert fx.settle_layering(str(tmp_path)) is False and len(calls) == n + 1  # زيادةٌ قائمة: لا تثبيت
+    answer[0] = "[0, 0]"
+    assert fx.settle_layering(str(tmp_path)) is False
+
+
+def test_preview_step_wakes_docker_and_waits_without_touching_the_card_budget(env):
+    lp, _ = env
+    fx = Fake()
+    fx.docker_alive = False
+    card = {"id": "W-1", "preview_retries": 0}
+    assert runner.preview_step(card, fx, lp, "t", "h1", 1) == "waiting_preview"
+    assert card["preview_env_wait"] == "h1" and not card.get("preview_seed_failed") and card["preview_retries"] == 0
+
+
+def test_a_seed_script_that_worked_is_rerun_without_the_model(env):
+    lp, _ = env
+    fx = Fake()
+    card, info = {"id": "W-9", "runner_resume": {"tree": "t"}}, {"account": "99900001", "role": "المدير", "checks": ["يظهر"]}
+    assert runner.seed_preview(card, info, fx, lp)[0] == "/quality/observations/1/pdf/view/"
+    assert len(fx.seed_prompts) == 1 and (runner.SEED_SCRIPTS / "W-9.py").is_file()
+    assert runner.seed_preview(card, info, fx, lp)[0] == "/quality/observations/1/pdf/view/"
+    assert len(fx.seed_prompts) == 1  # الثانية من المحفوظ: لا نموذج
+    fx.seed_runs = [(False, "IntegrityError"), (True, "PREVIEW_PATH=/x/")]  # المحفوظ تعطّل (تغيّر النموذج): يعود إلى النموذج بخطئه
+    assert runner.seed_preview(card, info, fx, lp)[0] == "/x/"
+    assert len(fx.seed_prompts) == 2 and "IntegrityError" in fx.seed_prompts[-1]
