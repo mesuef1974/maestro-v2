@@ -1,6 +1,7 @@
 """اختباراتُ المشغّل (D-519م): الاختيار، القفل، الإصلاح مرّتين، الإحالة، التراجع الآليّ، وتسجيل الكلفة."""
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -2623,3 +2624,22 @@ def test_fail_detail_keeps_the_assertion_lines_the_model_needs():
     out = runner.fail_detail(log)
     assert "88 → 91" in out and "FAILED tests/test_layering.py::test_a" in out and "1 failed" not in out
     assert runner.fail_detail("لا شيء مفيد") == runner.failure_summary("لا شيء مفيد")
+
+
+def test_settle_layering_records_an_improvement_but_never_licenses_growth(tmp_path, monkeypatch):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "layering_ratchet.py").write_text("", encoding="utf-8")
+    fx = runner.Effects.__new__(runner.Effects)
+    calls = []
+
+    def fake_sh(cmd, cwd=None, timeout=None):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout=answer[0], stderr="")
+
+    monkeypatch.setattr(runner, "sh", fake_sh)
+    answer = ["[0, 1]"]
+    assert fx.settle_layering(str(tmp_path)) is True and calls[-1][-1] == "--update"
+    answer[0], n = "[1, 1]", len(calls)
+    assert fx.settle_layering(str(tmp_path)) is False and len(calls) == n + 1  # زيادةٌ قائمة: لا تثبيت
+    answer[0] = "[0, 0]"
+    assert fx.settle_layering(str(tmp_path)) is False

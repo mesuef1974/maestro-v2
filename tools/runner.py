@@ -842,11 +842,28 @@ class Effects:
         p = sh([sys.executable, "-m", "ruff", "check", "--isolated", "--select", "E9,F821,F822,F823", "--", *files], tree, 120)
         return p.returncode != 1, (p.stdout + p.stderr)[-4000:]
 
+    def settle_layering(self, tree: str) -> bool:
+        """تحسّنٌ في سقّاطة الطبقات لم يُثبَّت يُسقط الفحص (005: قلّص النموذجُ الدالّةَ فسقطت الجولة): تثبيتُه خطوةٌ آليّةٌ كالتنسيق.
+        لا يُثبَّت إلا إذا لم تزد مخالفةٌ واحدة، فالتثبيتُ يكتب اللقطةَ كلَّها ولا يجوز أن يرخّص زيادة."""
+        if not (Path(tree) / "tests" / "layering_ratchet.py").is_file():
+            return False
+        probe = ("import json;from tests import layering_ratchet as r;"
+                 "w,s=r.compare(json.loads(r.BASELINE.read_text(encoding='utf-8')),r.snapshot());print(json.dumps([len(w),len(s)]))")
+        p = sh([sys.executable, "-c", probe], tree, 120)
+        try:
+            worse, stale = json.loads((p.stdout or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return False
+        if worse or not stale:
+            return False
+        return sh([sys.executable, "-m", "tests.layering_ratchet", "--update"], tree, 120).returncode == 0
+
     def prepare_for_checks(self, tree: str) -> None:
         """يرى الفحصُ ما يراه CI: حرّاسُ `git ls-files` لا ترى الملفّ الجديد قبل إيداعه (W-013)، والتنسيقُ آليٌّ بنسخة CI لا جولةَ نموذج."""
         import flow_pump as fp  # noqa: PLC0415
 
         sh(["git", "add", "-N", "--", "."], tree)
+        self.settle_layering(tree)
         files = [f for f in self.changed(tree) if f.endswith(".py") and (Path(tree) / f).is_file()]
         if not files or not fp._image_present(fp._docker):
             return
