@@ -144,6 +144,7 @@ REVIEW_SIZES = ("متوسط", "كبير", "تصميم")  # البطاقةُ ال
 COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول|بذر المعاينة): كلفة=([\d.]+)\$")
 # نصوصُ claude 2.1.312 المستخرجة من البرنامج نفسه؛ لا يدخل فيها «Budget limit» فهو سقفُ التشغيل --max-budget-usd
 USAGE_LIMIT = re.compile(r"usage limit reached|you(?:'|’)ve hit your|out of extra usage", re.I)
+DOCKER_DOWN = re.compile(r"docker API|dockerDesktopLinuxEngine|Cannot connect to the Docker daemon|error during connect", re.I)
 NET_DOWN = re.compile(r"ENOTFOUND|EAI_AGAIN|ECONNRESET|ETIMEDOUT|Can.t reach the API server|UNABLE_TO_VERIFY|TLS-inspecting", re.I)
 ESCALATE = {"haiku": "sonnet"}  # الأعلى لا يُستعمل آليّاً أبداً
 
@@ -1622,6 +1623,12 @@ def seed_and_announce(card: dict, fx: Effects, lpath, head: str, pr: int, base: 
     if card.get("preview_seen") != head and card.get("preview_seed_failed") != head:
         info = preview_info(card, pr)
         path, error = seed_preview(card, info, fx, lpath)
+        if not path and DOCKER_DOWN.search(error or ""):  # علّةُ بيئةٍ لا بطاقة: لا تُحرق ميزانيّةَ الإعادة، وتُعاد كلَّ دورةٍ حتى يعود دوكر
+            if card.get("preview_env_wait") != head:
+                ledger.append_event("update", cid, {"preview_env_wait": head}, lpath)
+                ledger.append_event("note", cid, {"text": "[مشغّل] دوكر غير متاح: البذر ينتظر عودته ويُعاد كلَّ دورةٍ دون استهلاك الإعادات", "by": BY}, lpath)
+                card["preview_env_wait"] = head
+            return "waiting_preview"
         if not path:  # لا «جاهز» بلا بيانات، ولا اعتماد؛ ويُعاد برأسٍ جديد أو --reseed فلا تتكرّر الكلفة كلَّ دورة
             ledger.append_event("update", cid, {"preview_seed_failed": head, "preview_fail_at": int(time.time())}, lpath)
             refer(cid, f"تعذّرت المعاينة: لم يكتمل البذر للطلب #{pr}: {error} — للإعادة: python tools/runner.py --reseed {cid}")

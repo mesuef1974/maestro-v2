@@ -2603,3 +2603,16 @@ def test_live_tracker_shows_gate_and_waiting_for_a_resumed_card(tmp_path):
     path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
     cur = runner_live.Ledger(path).snapshot()["current"]
     assert cur["stage"] == "gate" and cur["pr"] == 7 and cur["waiting"] == "ينتظر فحوص CI على الطلب"
+
+
+def test_docker_down_during_seed_waits_without_spending_retries(env, monkeypatch):
+    lp = env.ledger_path if hasattr(env, "ledger_path") else None
+    card = {"id": "W-1", "runner_resume": {"tree": "t"}}
+    monkeypatch.setattr(runner, "seed_preview", lambda *a, **k: ("", "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine"))
+    monkeypatch.setattr(runner, "preview_info", lambda c, pr: {"account": "x"})
+    seen = []
+    monkeypatch.setattr(runner.ledger, "append_event", lambda *a, **k: seen.append(a))
+    assert runner.seed_and_announce(card, None, lp, "h1", 1, "http://x") == "waiting_preview"
+    assert not card.get("preview_seed_failed") and card["preview_env_wait"] == "h1"
+    runner.seed_and_announce(card, None, lp, "h1", 1, "http://x")
+    assert sum(1 for e in seen if e[0] == "note") == 1  # الملاحظةُ مرّةً لكلّ رأس
