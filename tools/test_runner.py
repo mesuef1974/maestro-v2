@@ -2586,3 +2586,20 @@ def test_reopen_reopens_a_pr_the_runner_closed(env):
     fx.reopen_pr = lambda pr: (calls.append(pr), setattr(fx, "merge_state", "OPEN"))
     fx.restore_tree = lambda branch, tree: None
     assert runner.reopen_card("W-20261104-901", fx, lp)[0] and calls == [9]
+
+
+def test_live_tracker_shows_gate_and_waiting_for_a_resumed_card(tmp_path):
+    """بطاقةٌ استؤنفت على طلبها تظهر في «البوّابة» بسبب انتظارها لا «النموذج يكتب» (005، 2026-11-10)."""
+    import json
+
+    import runner_live
+    path = tmp_path / "events.jsonl"
+    rows = [
+        {"id": "W-1", "kind": "created", "data": {"problem": "ع", "runner_size": "صغير"}},
+        {"id": "W-1", "kind": "state", "data": {"state": "in_progress", "by": "runner"}},
+        {"id": "W-1", "kind": "update", "data": {"runner_resume": {"pr": 7, "head": "abc"}}},
+        {"id": "W-1", "kind": "update", "data": {"waiting": {"stage": "waiting_ci", "text": "ينتظر فحوص CI على الطلب", "since": 1}}},
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+    cur = runner_live.Ledger(path).snapshot()["current"]
+    assert cur["stage"] == "gate" and cur["pr"] == 7 and cur["waiting"] == "ينتظر فحوص CI على الطلب"

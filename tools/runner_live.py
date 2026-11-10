@@ -212,6 +212,14 @@ class Ledger:
             if data.get("pr"):
                 c.go("gate", ts)
                 self._log(c, ts, "gate", f"فُتح طلب الدمج #{c.pr}؛ البوّابة ونافذة النشر")
+            rr = data.get("runner_resume")
+            if isinstance(rr, dict) and rr.get("pr") and c.stage in ("ready", "model", "verify"):  # استئنافٌ بعد إغلاق: الطلبُ مفتوحٌ فالمرحلةُ البوّابة لا «النموذج يكتب» (005، 2026-11-10)
+                c.pr = rr["pr"]
+                c.go("gate", ts)
+                self._log(c, ts, "gate", f"الطلب #{c.pr} مفتوح؛ الفحوص والمعاينة")
+            if "waiting" in data:  # سببُ الانتظار الذي يكتبه المشغّل عند تغيّر المرحلة
+                w = data["waiting"]
+                c.waiting = str(w.get("text", ""))[:160] if isinstance(w, dict) else ""
             if "runner_hold" in data:
                 c.hold = bool(data["runner_hold"])
                 if not c.hold and c.stage == "referred":
