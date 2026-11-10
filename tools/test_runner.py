@@ -2616,3 +2616,10 @@ def test_docker_down_during_seed_waits_without_spending_retries(env, monkeypatch
     assert not card.get("preview_seed_failed") and card["preview_env_wait"] == "h1"
     runner.seed_and_announce(card, None, lp, "h1", 1, "http://x")
     assert sum(1 for e in seen if e[0] == "note") == 1  # الملاحظةُ مرّةً لكلّ رأس
+
+
+def test_fail_detail_keeps_the_assertion_lines_the_model_needs():
+    log = "tests/test_x.py F\nE   AssertionError: زادت\nE     student_affairs/views.py::student_list: 88 → 91\nFAILED tests/test_layering.py::test_a\n1 failed"
+    out = runner.fail_detail(log)
+    assert "88 → 91" in out and "FAILED tests/test_layering.py::test_a" in out and "1 failed" not in out
+    assert runner.fail_detail("لا شيء مفيد") == runner.failure_summary("لا شيء مفيد")
