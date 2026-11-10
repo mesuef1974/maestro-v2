@@ -2060,7 +2060,8 @@ def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stag
                 raise RunnerError(f"تعارض دمج مع main على الطلب {pr}: أُغلق، وتُعاد البطاقة من main")
             if state == "OPEN":
                 fx.merge(tree, pr)  # لا يزال مفتوحاً بلا طابور: يُعاد طلب الدمج (idempotent)
-            ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
+            if resume_ != (card.get("runner_resume") or {}):  # لا حدثَ مكرَّراً كلَّ دورة: الدفترُ للتغيّر لا للنبض
+                ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
             return "waiting_merge"
         ledger.append_event("state", cid, {"state": "merged", "by": BY, "merge_commit": oid}, lpath)
         resume_.update(stage="deploy_wait", oid=oid, deploy_wait_since=now())
@@ -2079,7 +2080,8 @@ def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stag
         refer(cid, f"دُمجت (الطلب {pr}) ولم تُنشر خلال 120 دقيقة؛ الإنتاج على {prod[:8] or '؟'}")  # تقريرٌ فقط: لا تراجع ولا إغلاق
         ledger.append_event("update", cid, {"runner_resume": None}, lpath)
         return "merged"
-    ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
+    if resume_ != (card.get("runner_resume") or {}):
+        ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
     return "waiting_deploy"
 
 
