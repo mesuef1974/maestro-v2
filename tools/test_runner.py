@@ -2559,3 +2559,18 @@ def test_decision_events_record_who_decided(env):
     assert notes[-1]["data"]["via"] == "mizan ip=127.0.0.1 ua=Chrome"
     assert runner.decide_preview("W-20261104-901", False, "س", lp)[0]
     assert ledger.load_events(lp)[-2]["data"]["via"].startswith("cli pid=")
+
+
+def test_pinned_on_the_same_tree_but_serving_an_older_head_repins_once(env):
+    """8500 مثبَّتٌ على شجرة البطاقة لكنّه يخدم رأساً أقدم بعد رفضٍ عُدّل: يُعاد التثبيتُ مرّةً لكلّ رأس ولا يبقى بلا معاينة (005)."""
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    runner.run_cycle(CFG, fx, lp, lock)
+    pins = len(getattr(fx, "pins", []))
+    fx.slot_serves = lambda port, head: False  # 8500 ما زال على الرأس القديم
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert len(fx.pins) == pins + 1 and _state(lp)["repin_head"]
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert len(fx.pins) == pins + 1  # مرّةٌ واحدةٌ لهذا الرأس لا كلَّ دورة

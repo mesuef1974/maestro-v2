@@ -1591,6 +1591,12 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
     if slot and not fx.slot_serves(slot, head):  # سقطت أو تخلّفت: تُطلب من جديد ويُعاد البذر
         ledger.append_event("update", cid, {"preview_slot_port": 0}, lpath)
         slot = 0
+    if not slot and live and same_tree(st.get("pin_tree", ""), tree) and not st.get("pin_request") and card.get("repin_head") != head and not fx.slot_serves(8500, head):
+        # مثبَّتٌ على شجرتها لكنّه يخدم رأساً أقدم (رفضٌ عُدّل أو إصلاحُ CI): يُعاد التثبيتُ مرّةً لكلّ رأس، وإلا بقيت «جاهزة» كاذبةً أو غائبةً للأبد (005، 2026-11-10)
+        ledger.append_event("update", cid, {"repin_head": head, "preview_seen": ""}, lpath)
+        card["repin_head"], card["preview_seen"] = head, ""
+        fx.preview_pin(tree)
+        return "waiting_preview"
     if not slot and not (live and same_tree(st.get("pin_tree", ""), tree)):
         if card.get("preview_seen"):  # انتهى التثبيت: لا يصحّ اعتمادٌ حتى يعود العرض
             ledger.append_event("update", cid, {"preview_seen": ""}, lpath)
