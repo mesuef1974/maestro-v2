@@ -2608,7 +2608,7 @@ def test_live_tracker_shows_gate_and_waiting_for_a_resumed_card(tmp_path):
 
 
 def test_docker_down_during_seed_waits_without_spending_retries(env, monkeypatch):
-    lp = env.ledger_path if hasattr(env, "ledger_path") else None
+    lp, _ = env
     card = {"id": "W-1", "runner_resume": {"tree": "t"}}
     monkeypatch.setattr(runner, "seed_preview", lambda *a, **k: ("", "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine"))
     monkeypatch.setattr(runner, "preview_info", lambda c, pr: {"account": "x"})
@@ -2647,8 +2647,9 @@ def test_settle_layering_records_an_improvement_but_never_licenses_growth(tmp_pa
 
 
 def test_preview_step_wakes_docker_and_waits_without_touching_the_card_budget(env):
+    lp, _ = env
     fx = Fake()
     fx.docker_alive = False
     card = {"id": "W-1", "preview_retries": 0}
-    assert runner.preview_step(card, fx, None, "t", "h1", 1) == "waiting_preview"
+    assert runner.preview_step(card, fx, lp, "t", "h1", 1) == "waiting_preview"
     assert card["preview_env_wait"] == "h1" and not card.get("preview_seed_failed") and card["preview_retries"] == 0
