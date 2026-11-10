@@ -511,6 +511,13 @@ def failure_summary(log: str) -> str:
     return " ".join(" ".join(keep or [log[-FAIL_REPORT_CHARS:]]).split())[:FAIL_REPORT_CHARS]
 
 
+def fail_detail(log: str, limit: int = 1500) -> str:
+    """ما يحتاجه النموذجُ ليصلح لا ما يكفي المالكَ ليعرف: سطورُ `E` من pytest (نصُّ التأكيد: أيُّ ملفٍّ وكم زاد) مع سطور FAILED.
+    الملخّصُ وحدَه اسمُ اختبارٍ بلا سبب، فأسقطت 005 حارسَ الطبقات ثلاثَ جولاتٍ وهي لا ترى «student_list: 88 → 91»."""
+    keep = [ln.strip() for ln in log.splitlines() if ln.lstrip().startswith(("E  ", "FAILED", "✘"))]
+    return "\n".join(dict.fromkeys(keep))[:limit] or failure_summary(log)
+
+
 def migrations_key(tree: str, db_image: str) -> str:
     """بصمةُ كلِّ ملفّات الهجرات وصورةِ القاعدة: أيُّ هجرةٍ جديدةٍ أو معدَّلةٍ تعني قاعدةً جديدة."""
     h = hashlib.sha256(db_image.encode("utf-8"))
@@ -1919,7 +1926,7 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
     ok, vlog = fx.verify(tree)
     if not ok:
         summary = failure_summary(mask(vlog))
-        r["revise_fail"] = summary[:1500]  # تُعاد للجولة التالية فلا تكرّر الخطأ نفسَه (005: سقطت جولتان على حارس الطبقات ذاته)
+        r["revise_fail"] = fail_detail(mask(vlog))  # تُعاد للجولة التالية فلا تكرّر الخطأ نفسَه (005: سقطت جولتان على حارس الطبقات ذاته)
         card["runner_resume"] = r
         ledger.append_event("update", cid, {"runner_resume": r}, lpath)
         ledger.append_event("note", cid, {"text": f"[مشغّل] تعديلٌ بعد الرفض فشل: {summary}", "by": BY}, lpath)
