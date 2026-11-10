@@ -1324,6 +1324,9 @@ class Effects:
         cmd = self.cfg.get("rollback_cmd") or ["gh", "workflow", "run", "rollback.yml", "-f", "commit_sha={sha}", "-f", "reason={reason}"]
         return sh([c.format(sha=good_sha, reason=reason) for c in cmd], self.cfg["repo"]).returncode == 0
 
+    def reopen_pr(self, pr: int) -> None:
+        sh(["gh", "pr", "reopen", str(pr)], self.cfg["repo"])
+
     def restore_tree(self, branch: str, tree: str) -> None:
         """شجرةٌ جديدة من فرع الطلب البعيد بعد أن حُذفت عند الإغلاق (استئناف 013)."""
         sh(["git", "fetch", "-q", "origin", branch], self.cfg["repo"])
@@ -2237,6 +2240,9 @@ def reopen_card(cid: str, fx: Effects | None = None, lpath=None) -> tuple[bool, 
         return False, f"{cid}: لا طلبَ مفتوحاً مسجَّلاً لها فلا تُستأنف (استعمل الإعادة)"
     fx = fx or Effects(load_config())
     state, _ = fx.pr_state(fx.cfg["repo"], r["pr"])
+    if state == "CLOSED":  # أغلقه المشغّلُ نفسُه عند الرفض أو الفشل ولم يُدمج: يُعاد فتحُه ما دام الفرعُ باقياً (005، 2026-11-10)
+        fx.reopen_pr(r["pr"])
+        state, _ = fx.pr_state(fx.cfg["repo"], r["pr"])
     if state != "OPEN":
         return False, f"{cid}: الطلب {r['pr']} حالته {state} لا OPEN"
     fx.restore_tree(r["branch"], r["tree"])

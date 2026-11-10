@@ -2574,3 +2574,15 @@ def test_pinned_on_the_same_tree_but_serving_an_older_head_repins_once(env):
     assert len(fx.pins) == pins + 1 and _state(lp)["repin_head"]
     runner.run_cycle(CFG, fx, lp, lock)
     assert len(fx.pins) == pins + 1  # مرّةٌ واحدةٌ لهذا الرأس لا كلَّ دورة
+
+
+def test_reopen_reopens_a_pr_the_runner_closed(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="closed")
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": {"pr": 9, "branch": "b", "tree": "/t"}}, lp)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
+    fx, calls = Fake(), []
+    fx.merge_state = "CLOSED"
+    fx.reopen_pr = lambda pr: (calls.append(pr), setattr(fx, "merge_state", "OPEN"))
+    fx.restore_tree = lambda branch, tree: None
+    assert runner.reopen_card("W-20261104-901", fx, lp)[0] and calls == [9]
