@@ -47,6 +47,7 @@ TIMING_LOG = ROOT / "ledger" / "prepush_timing.log"
 DB_CACHE = ROOT / "ledger"  # ledger/prepush_testdb_<بصمة>.dump، خارج git
 TEST_DB = "test_db"
 FAIL_DIFFS = ROOT / "archive_local" / "fail_diffs"  # مستثنى من git
+SEED_SCRIPTS = ROOT / "archive_local" / "seed_scripts"  # سكربتُ بذرٍ نجح يُعاد بلا نموذج (005: سبعُ مرّات بذرٍ بـ2.6$ لبطاقةٍ واحدة)
 DB_CACHE_KEEP = 5
 OWNER_QUEUE = ROOT / "owner_queue.md"
 REQUESTS = ROOT / "requests"
@@ -1556,6 +1557,16 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
     mapped, log = fx.map_rls(info["account"])
     if not mapped:
         return "", failure_summary(mask(log))[:200]
+    saved = SEED_SCRIPTS / f"{cid}.py"
+    if saved.is_file():  # إعادةُ تثبيتٍ أو رأسٌ جديد أو إقلاعٌ بعد توقّف: السكربتُ الذي نجح يُجرَّب أوّلاً بصفر توكنز
+        ok, log = fx.run_seed(saved.read_text(encoding="utf-8"))
+        path = re.findall(r"PREVIEW_PATH=(/\S*)", log)
+        if ok and path and fx.check_seed(path[-1], info["account"])[0]:
+            ledger.append_event("note", cid, {"text": "[مشغّل] بذر المعاينة من السكربت المحفوظ بلا نموذج", "by": BY}, lpath)
+            return path[-1], ""
+        error = log or "السكربت المحفوظ لم يطبع PREVIEW_PATH"
+        if DOCKER_DOWN.search(error):
+            return "", failure_summary(mask(error))[:200]
     for _ in range(SEED_ATTEMPTS):
         res = fx.seed_script(tree, seed_prompt(card, info, error))
         record_run(cid, "بذر المعاينة", res, lpath)
@@ -1571,6 +1582,8 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
             continue
         opened, check_log = fx.check_seed(path[-1], info["account"])
         if opened:
+            SEED_SCRIPTS.mkdir(parents=True, exist_ok=True)
+            saved.write_text(body, encoding="utf-8")
             return path[-1], ""
         error = f"الرابط {path[-1]} لم يُفتح بالحساب {info['account']}:\n{check_log}"
     return "", failure_summary(mask(error))[:200]
@@ -2272,8 +2285,9 @@ def resume(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     if not out.startswith("waiting"):
         ledger.append_event("update", card["id"], {"runner_resume": None, "waiting": None}, lpath)
         fx.remove_tree(r["tree"])
-    else:
-        note_waiting(card, out, lpath)
+    else:  # معروضةٌ على رأسها الحاليّ: تنتظر قرارَ المالك لا «تجهّز»، فلا يكذب سببُ الانتظار
+        shown = out == "waiting_preview" and card.get("preview_seen") and card.get("preview_seen") == r.get("head")
+        note_waiting(card, "waiting_owner" if shown else out, lpath)
     return out
 
 

@@ -141,6 +141,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "OWNER_QUEUE", tmp_path / "owner_queue.md")
     monkeypatch.setattr(runner, "REQUESTS", tmp_path / "requests")
     monkeypatch.setattr(runner, "FAIL_DIFFS", tmp_path / "fail_diffs")
+    monkeypatch.setattr(runner, "SEED_SCRIPTS", tmp_path / "seed_scripts")
     return tmp_path / "e.jsonl", tmp_path / "lock"
 
 
@@ -2653,3 +2654,16 @@ def test_preview_step_wakes_docker_and_waits_without_touching_the_card_budget(en
     card = {"id": "W-1", "preview_retries": 0}
     assert runner.preview_step(card, fx, lp, "t", "h1", 1) == "waiting_preview"
     assert card["preview_env_wait"] == "h1" and not card.get("preview_seed_failed") and card["preview_retries"] == 0
+
+
+def test_a_seed_script_that_worked_is_rerun_without_the_model(env):
+    lp, _ = env
+    fx = Fake()
+    card, info = {"id": "W-9", "runner_resume": {"tree": "t"}}, {"account": "99900001", "role": "المدير", "checks": ["يظهر"]}
+    assert runner.seed_preview(card, info, fx, lp)[0] == "/quality/observations/1/pdf/view/"
+    assert len(fx.seed_prompts) == 1 and (runner.SEED_SCRIPTS / "W-9.py").is_file()
+    assert runner.seed_preview(card, info, fx, lp)[0] == "/quality/observations/1/pdf/view/"
+    assert len(fx.seed_prompts) == 1  # الثانية من المحفوظ: لا نموذج
+    fx.seed_runs = [(False, "IntegrityError"), (True, "PREVIEW_PATH=/x/")]  # المحفوظ تعطّل (تغيّر النموذج): يعود إلى النموذج بخطئه
+    assert runner.seed_preview(card, info, fx, lp)[0] == "/x/"
+    assert len(fx.seed_prompts) == 2 and "IntegrityError" in fx.seed_prompts[-1]
