@@ -2667,3 +2667,18 @@ def test_a_seed_script_that_worked_is_rerun_without_the_model(env):
     fx.seed_runs = [(False, "IntegrityError"), (True, "PREVIEW_PATH=/x/")]  # المحفوظ تعطّل (تغيّر النموذج): يعود إلى النموذج بخطئه
     assert runner.seed_preview(card, info, fx, lp)[0] == "/x/"
     assert len(fx.seed_prompts) == 2 and "IntegrityError" in fx.seed_prompts[-1]
+
+
+def test_a_revision_that_fails_local_checks_is_not_a_round_and_stops_after_three_tries(env):
+    """سقوطُ الفحص المحلّي لا يُحسب جولةً على المالك؛ وثلاثُ محاولاتٍ فاشلةٍ لرفضٍ واحد تُغلق بتقرير (005، 2026-11-10)."""
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert runner.decide_preview("W-20261104-901", False, "العلامة مائلة", lp)[0]
+    fx.verify_q = [False]
+    for n in range(1, runner.REVISE_TRIES_MAX + 1):
+        runner.run_cycle(CFG, fx, lp, lock)
+        r = _state(lp)["runner_resume"]
+        assert r["revise_tries"] == n and not r.get("revisions") and _state(lp)["state"] == "in_progress"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and "أسقط الفحصَ المحلّي" in _queue()
