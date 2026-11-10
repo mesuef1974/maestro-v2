@@ -23,6 +23,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1331,7 +1332,14 @@ class Effects:
     def restore_tree(self, branch: str, tree: str) -> None:
         """شجرةٌ جديدة من فرع الطلب البعيد بعد أن حُذفت عند الإغلاق (استئناف 013)."""
         sh(["git", "fetch", "-q", "origin", branch], self.cfg["repo"])
-        p = sh(["git", "worktree", "add", "-q", "-B", branch, tree, "origin/" + branch], self.cfg["repo"])
+        add = ["git", "worktree", "add", "-q", "-B", branch, tree, "origin/" + branch]
+        p = sh(add, self.cfg["repo"])
+        if p.returncode and Path(tree).exists():  # بقايا مجلّدٍ غير مسجَّل من إغلاقٍ ناقص: يُنظَّف ثمّ تُعاد المحاولة
+            sh(["git", "worktree", "prune"], self.cfg["repo"])
+            self.remove_tree(tree)
+            if Path(tree).exists() and Path(tree).resolve().is_relative_to(Path(self.cfg["worktrees"]).resolve()):
+                shutil.rmtree(tree, ignore_errors=True)  # غيرُ مسجَّلٍ في غيت فلا يزيله worktree remove
+            p = sh(add, self.cfg["repo"])
         if p.returncode:
             raise RunnerError("بيئةٌ: تعذّر إنشاء شجرة الاستئناف — " + (p.stdout + p.stderr).strip()[-200:])
 
@@ -1893,7 +1901,10 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
     done, spent = int(r.get("revisions") or 0), float(r.get("spent") or 0)
     model, _, budget = _tiers(cfg, card)[-1]
     rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
-    res = fx.run_model(tree, brief(card, rules, "رفض المالك المعاينة بهذا السبب، عدِّل ما يلزم ليُحقّقه: " + reason, fx.branch_diff(tree)), model, budget)
+    ask = "رفض المالك المعاينة بهذا السبب، عدِّل ما يلزم ليُحقّقه: " + reason
+    if r.get("revise_fail"):
+        ask += "\n\nمحاولتك السابقة أسقطت الفحص المحلّي، فلا تكرّر سببه:\n" + str(r["revise_fail"])
+    res = fx.run_model(tree, brief(card, rules, ask, fx.branch_diff(tree)), model, budget)
     record_run(cid, f"{model} تعديل بعد رفض {done + 1}", res, lpath)
     r.update(revisions=done + 1, spent=spent + res.cost)
     card["runner_resume"] = r
@@ -1907,8 +1918,13 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
         raise RunnerError(f"لم يُحدث النموذجُ أيَّ تغيير بعد رفض المالك على الطلب {pr}: {reason[:300]}")
     ok, vlog = fx.verify(tree)
     if not ok:
-        ledger.append_event("note", cid, {"text": f"[مشغّل] تعديلٌ بعد الرفض فشل: {failure_summary(mask(vlog))}", "by": BY}, lpath)
+        summary = failure_summary(mask(vlog))
+        r["revise_fail"] = summary[:1500]  # تُعاد للجولة التالية فلا تكرّر الخطأ نفسَه (005: سقطت جولتان على حارس الطبقات ذاته)
+        card["runner_resume"] = r
+        ledger.append_event("update", cid, {"runner_resume": r}, lpath)
+        ledger.append_event("note", cid, {"text": f"[مشغّل] تعديلٌ بعد الرفض فشل: {summary}", "by": BY}, lpath)
         return "waiting_ci"
+    r.pop("revise_fail", None)
     require_preview(card, files, lpath)
     r["head"] = fx.commit_push(tree, branch, files, f"{cid}: تعديلٌ بعد رفض المعاينة")
     card["runner_resume"] = r
