@@ -2700,3 +2700,24 @@ def test_model_runs_with_a_test_environment_and_is_told_how_to_verify(monkeypatc
     rules = "\n".join(runner.guard_rules())
     assert "python -m tests.layering_ratchet" in rules and "بلا `cd`" in rules
     assert "python -m tests.layering_ratchet:*" in " ".join(runner.DEFAULT_CONFIG["allowed_tools"])
+
+
+def test_owner_cancel_closes_the_pr_and_the_card_and_marks_it_not_retryable(tmp_path):
+    """W-20261111-002: بطاقةٌ ألغاها المالك ظهرت فاشلةً فأُعيدت بزرّ؛ الإلغاءُ الآن يغلق طلبها ويسمها."""
+    lp = tmp_path / "events.jsonl"
+    ledger.append_event("created", "W-1", {"problem": "ميزة"}, lp)
+    ledger.append_event("state", "W-1", {"state": "in_progress", "by": "runner"}, lp)
+    ledger.append_event("update", "W-1", {"pr": 77, "runner_resume": {"pr": 77}}, lp)
+    seen = []
+
+    def run(cmd, cwd):
+        seen.append(cmd)
+        return runner.subprocess.CompletedProcess(cmd, 0, "", "")
+
+    assert runner.cancel_card("W-1", "", lp, run, "repo")[0] is False
+    ok, text = runner.cancel_card("W-1", "لا حاجة للميزة", lp, run, "repo")
+    assert ok and "77" in text and seen[0][:4] == ["gh", "pr", "close", "77"]
+    card = ledger.reduce_state(ledger.load_events(lp))["W-1"]
+    assert card["state"] == "closed" and card["owner_cancelled"] == "لا حاجة للميزة"
+    assert card["owner_dismissed"] and card["runner_hold"]
+    assert runner.cancel_card("W-404", "x", lp, run, "repo")[0] is False

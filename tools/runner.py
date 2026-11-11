@@ -1795,6 +1795,31 @@ def preview_cycle(cfg: dict, fx: Effects, lpath=None, queue: Path | None = None)
             refer("RUNNER", f"{mark}: لا نبض لدورة 8500 منذ {int((time.time() - beat) / 60)} دقيقة، والمعاينات تنتظر", queue)
 
 
+def cancel_card(cid: str, reason: str, lpath=None, run=None, repo: str = "") -> tuple[bool, str]:
+    """إلغاءُ المالك لبطاقةٍ بقراره: يغلق طلبها المفتوح بلا دمج، ويغلقها ويحجزها، ويسجّل `owner_cancelled`
+    فلا يعرض ميزان «أعد المحاولة» عليها؛ ولولاه بدت الملغاةُ فاشلةً فأُعيدت بزرّ (W-20261111-001 ← 002)."""
+    run = run or sh
+    if not reason.strip():
+        return False, "الإلغاء يحتاج سببًا: --reason"
+    card = ledger.reduce_state(ledger.load_events(lpath)).get(cid)
+    if not card:
+        return False, f"{cid}: لا توجد بطاقة بهذا المعرّف"
+    if card.get("state") in ("merged", "published"):
+        return False, f"{cid}: اندمج طلبها؛ الإلغاء بعد الدمج يكون بطلبٍ عكسيّ"
+    pr = card.get("pr") or (card.get("runner_resume") or {}).get("pr")
+    if pr:
+        p = run(["gh", "pr", "close", str(pr), "--comment", f"أُلغي بقرار المالك: {reason}"[:300]],
+                repo or load_config()["repo"])
+        if p.returncode and "already closed" not in (p.stderr + p.stdout):
+            return False, f"{cid}: تعذّر إغلاق الطلب {pr}: {(p.stderr or p.stdout)[-200:]}"
+    ledger.append_event("note", cid, {"text": f"[مالك] ألغى البطاقة: {reason}"[:400], "by": "owner"}, lpath)
+    ledger.append_event("update", cid, {"owner_cancelled": reason[:300], "owner_dismissed": True, "runner_hold": True,
+                                        "runner_resume": None, "waiting": None}, lpath)
+    if card.get("state") != "closed":
+        ledger.append_event("state", cid, {"state": "closed", "by": BY, "held_by": ""}, lpath)
+    return True, f"{cid}: أُلغيت" + (f" وأُغلق الطلب {pr} بلا دمج" if pr else "")
+
+
 def decide_preview(cid: str, approve: bool, reason: str = "", lpath=None, via: str = "") -> tuple[bool, str]:
     """قرارُ المالك مربوطٌ بالرأس المعروض: لا اعتمادَ لما لم يُعرض على 8500. `via` مصدرُ القرار يُكتب في الحدث ليُعرف الفاعل (اعتمادُ 013 سُجّل بلا أثر، 2026-11-09)."""
     via = via or f"cli pid={os.getpid()} ppid={os.getppid()}"
@@ -2502,7 +2527,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reseed", metavar="CARD", help="إعادة بذر المعاينة بعد فشلها")
     ap.add_argument("--reopen", metavar="CARD", help="استئناف بطاقة أُغلقت وطلبها مفتوح")
     ap.add_argument("--release", metavar="CARD", help="فتح دمج بطاقة موقوفة بعد قراءة فرقها")
+    ap.add_argument("--cancel", metavar="CARD", help="إلغاء المالك لبطاقة ومعه --reason: يغلق طلبها بلا دمج ولا تُعاد")
     a = ap.parse_args(argv)
+    if a.cancel:
+        ok, text = cancel_card(a.cancel, a.reason)
+        print(text)
+        return 0 if ok else 1
     if a.reseed:
         ledger.append_event("update", a.reseed, {"preview_seed_failed": "", "preview_idle_closed": ""})
         print(f"{a.reseed}: يُعاد البذر في الدورة التالية")
