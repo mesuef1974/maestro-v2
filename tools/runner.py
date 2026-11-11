@@ -1234,18 +1234,38 @@ class Effects:
         return found
 
     def infra_jobs(self, tree: str, run: str) -> list[str]:
-        """الحكمُ لـ`infra_failures` من main، فلا تتكرّر قائمةُ خطوات البنية هنا؛ وتعذُّرُها يترك الفشلَ فشلَ شيفرة."""
+        """الحكمُ لـ`infra_failures` من main، فلا تتكرّر قائمةُ خطوات البنية هنا؛ وتعذُّرُها يترك الفشلَ فشلَ شيفرة.
+        ويُضاف ما سقط بعطل شبكةٍ في خادم CI أيًّا كانت خطوتُه (`network_jobs`)."""
         path = self.main_file("scripts/ci_needs_gate.py")
         jobs = sh(["gh", "api", f"repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?per_page=100"], tree).stdout
-        if not path:
-            return []
+        names: list[str] = []
+        if path:
+            try:
+                spec = importlib.util.spec_from_file_location("ci_needs_gate_main", path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                names = list(module.infra_failures(jobs))
+            except (OSError, SyntaxError, AttributeError, ImportError):
+                names = []
+        return names + self.network_jobs(tree, run, jobs, names)
+
+    def network_jobs(self, tree: str, run: str, jobs_json: str, known: list[str]) -> list[str]:
+        """وظائفُ سقطت لأنّ خادم CI لم يبلغ الشبكة (تعذُّر حلّ اسم مستودع الحزم فانتهت مهلةُ التثبيت): سجلُّ خطوتها الساقطة
+        يحمل علامةَ شبكةٍ ولا يحمل فشلَ اختبار. أسماءُ خطوات التثبيت كثيرةٌ وتتبدّل فلا تُعدّ بالاسم؛ العلامةُ في السجلّ
+        (W-20261111-006: سقط 19 فحصاً بعطل DNS فأُرسلت للنموذج مرّتين وأُغلقت)."""
         try:
-            spec = importlib.util.spec_from_file_location("ci_needs_gate_main", path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return list(module.infra_failures(jobs))
-        except (OSError, SyntaxError, AttributeError, ImportError):
+            jobs = (json.loads(jobs_json or "{}") or {}).get("jobs", [])
+        except (ValueError, AttributeError):
             return []
+        out = []
+        for job in [j for j in jobs if isinstance(j, dict) and j.get("conclusion") == "failure"][:NETWORK_JOBS_MAX]:
+            name = str(job.get("name"))
+            if name in known or name in DERIVED_CHECKS or not job.get("id"):
+                continue
+            log = sh(["gh", "run", "view", str(run), "--job", str(job["id"]), "--log-failed"], tree).stdout
+            if NETWORK_SIGN.search(log) and not CODE_FAIL_SIGN.search(log):
+                out.append(name)
+        return out
 
     def mark_visual(self, tree: str, pr: int) -> None:
         """الوسمُ ثمّ إغلاقٌ وفتحٌ ليعمل فحصُ اللقطات بحمولةٍ تحمل الوسم."""
@@ -2097,6 +2117,9 @@ SECRETS_BASELINE = ".secrets.baseline"
 BASELINE_TRIES = 8
 BASELINE_UPDATED = "The baseline file was updated"
 CI_RERUN_MAX = 1  # إعادةُ عطل البنية؛ بعدها علّةُ CI لا يصلحها النموذج
+NETWORK_SIGN = re.compile(r"Temporary failure resolving|Could not resolve host|Name or service not known|TLS handshake timeout|toomanyrequests")
+CODE_FAIL_SIGN = re.compile(r"FAILED tests/|=+ FAILURES =+|AssertionError")  # اختبارٌ سقط: ليس عطلَ شبكةٍ ولو ظهرت علامتُها في السجلّ
+NETWORK_JOBS_MAX = 30  # سقفُ ما يُجلب سجلُّه في تشغيلٍ واحد
 VISUAL_CHECK = "لقطات الهويّة"  # اسمُ فحص CI (visual-snapshots.yml)
 VISUAL_LABEL = "تغيير-بصريّ"
 VISUAL_PAGE = re.compile(r"(\S+\.png): ([\d.]+)%")

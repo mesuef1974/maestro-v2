@@ -2721,3 +2721,26 @@ def test_owner_cancel_closes_the_pr_and_the_card_and_marks_it_not_retryable(tmp_
     assert card["state"] == "closed" and card["owner_cancelled"] == "لا حاجة للميزة"
     assert card["owner_dismissed"] and card["runner_hold"]
     assert runner.cancel_card("W-404", "x", lp, run, "repo")[0] is False
+
+
+def test_network_outage_in_any_setup_step_is_infra_not_code(monkeypatch, tmp_path):
+    """W-20261111-006: خادم CI لم يحلّ اسم مستودع الحزم، فسقطت خطواتُ تثبيتٍ ليست في INFRA_STEPS وأُرسلت للنموذج."""
+    jobs = {"jobs": [
+        {"id": 1, "name": "mypy", "conclusion": "failure"},
+        {"id": 2, "name": "pytest shard 1/8", "conclusion": "failure"},
+        {"id": 3, "name": "ruff", "conclusion": "success"},
+        {"id": 4, "name": runner.GATE_SUMMARY, "conclusion": "failure"},
+        {"id": 5, "name": "known", "conclusion": "failure"},
+    ]}
+    logs = {"1": "W: Failed to fetch  Temporary failure resolving 'azure.archive.ubuntu.com'\n##[error]timed out",
+            "2": "Temporary failure resolving 'x'\nFAILED tests/test_a.py::test_b - AssertionError", "4": "", "5": ""}
+
+    def fake_sh(cmd, *a, **k):
+        out = runner.json.dumps(jobs) if cmd[1] == "api" else logs.get(cmd[5], "")
+        return runner.subprocess.CompletedProcess(cmd, 0, out, "")
+
+    monkeypatch.setattr(runner, "sh", fake_sh)
+    fx = runner.Effects(dict(runner.DEFAULT_CONFIG))
+    assert fx.network_jobs("t", "9", runner.json.dumps(jobs), ["known"]) == ["mypy"]
+    monkeypatch.setattr(fx, "main_file", lambda rel: "")
+    assert fx.infra_jobs("t", "9") == ["mypy"]
