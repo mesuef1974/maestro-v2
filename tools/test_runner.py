@@ -2682,3 +2682,21 @@ def test_a_revision_that_fails_local_checks_is_not_a_round_and_stops_after_three
         r = _state(lp)["runner_resume"]
         assert r["revise_tries"] == n and not r.get("revisions") and _state(lp)["state"] == "in_progress"
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and "أسقط الفحصَ المحلّي" in _queue()
+
+
+def test_model_runs_with_a_test_environment_and_is_told_how_to_verify(monkeypatch, tmp_path):
+    """W-20261111-001: كلُّ pytest سقط بلا SECRET_KEY، والأوامرُ المركّبة رُفضت، فعدّل النموذجُ خمسَ جولاتٍ على العمى."""
+    seen = {}
+
+    def fake_sh(cmd, cwd=None, timeout=0, inp=None, env_extra=None):
+        seen["env"] = env_extra
+        return runner.subprocess.CompletedProcess(cmd, 0, '{"result": "ok", "total_cost_usd": 0.1, "num_turns": 2}', "")
+
+    monkeypatch.setattr(runner, "sh", fake_sh)
+    res = runner.Effects(dict(runner.DEFAULT_CONFIG)).run_model(str(tmp_path), "x", "sonnet", 1.0)
+    assert res.ok and seen["env"]["DJANGO_SETTINGS_MODULE"] == "shschool.settings.testing"
+    assert seen["env"]["SECRET_KEY"].startswith("runner-local-testing-only-")
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a, **k: runner.subprocess.CompletedProcess(cmd, 0, "MAX_ORM = 5\n", ""))
+    rules = "\n".join(runner.guard_rules())
+    assert "python -m tests.layering_ratchet" in rules and "بلا `cd`" in rules
+    assert "python -m tests.layering_ratchet:*" in " ".join(runner.DEFAULT_CONFIG["allowed_tools"])

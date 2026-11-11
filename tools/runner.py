@@ -633,6 +633,11 @@ def guard_rules(repo: str = DEFAULT_CONFIG["repo"]) -> list[str]:
         "حارس الساعة (tests/test_clock_pin_ratchet.py): ملفُّ اختبارٍ جديد يقرأ اليوم (timezone.now/localdate أو date.today) "
         "يضع `pytestmark = pytest.mark.pin_clock` أو يستعمل frozen_clock، ولا يستعمل date.today/datetime.now المباشرتين.",
         "حارس mypy (tests/mypy_ratchet): لا خطأ أنواعٍ جديد في أيّ ملفّ تعدّله؛ اكتب أنواع الدوالّ الجديدة كاملةً.",
+        "التحقّق قبل أن تنتهي: مجلّدُ العمل هو الشجرة والبيئةُ مضبوطة (SECRET_KEY وDJANGO_SETTINGS_MODULE)، فاكتب كلَّ أمرٍ وحده "
+        "بلا `cd` ولا `&&` ولا متغيّراتِ بيئةٍ قبله، وإلا رُفض. حارسُ الطبقات بلا قاعدة بيانات: `python -m tests.layering_ratchet` "
+        "يطبع ما زاد فوق السجلّ (والخروج 0 = سليم)، ثمّ `python -m pytest tests/test_layering.py -q`. "
+        "عرضٌ تجاوز سقفَ ORM: انقل القراءةَ إلى دالّةٍ في selectors.py تُرجع ما يحتاجه العرض دفعةً واحدة، ولا تقسم العرضَ إلى دوالّ عرضٍ مساعدة "
+        "(تُعدّ في ملفّه)؛ وأعد القياس حتى ينجح.",
         "حارس الحجم (tests/test_file_size.py): ملفٌّ صغُر يجب تثبيتُ نقصه: بعد التعديل شغّل `python -m tests.file_size_ratchet --update` وأودع السجلّ المتغيّر (فشل 011 مرّتين لنسيانه).",
     ]
 
@@ -677,8 +682,14 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
 
 
 # ───────────────────────── التأثيرات (قابلة للحقن) ─────────────────────────
-def sh(cmd: list[str], cwd: str | None = None, timeout: int = 1800, inp: str | None = None) -> subprocess.CompletedProcess:
-    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}  # عمليةُ البوّابة تقرأ وصف الطلب بـcp1256 على ويندوز فلا يطابق سطرُ الاعتماد
+# بيئةُ النموذج المنفِّذ: بلا SECRET_KEY يسقط كلُّ pytest بـImproperlyConfigured قبل أن يبدأ، وأمرٌ يسبقه
+# `VAR=x` أو `cd … &&` يُرفض لأنّه غيرُ مأذون؛ فعدّل W-20261111-001 خمسَ جولاتٍ على العمى (2026-11-11)
+AGENT_ENV = {"DJANGO_SETTINGS_MODULE": "shschool.settings.testing", "SECRET_KEY": "runner-local-testing-only-" + "0" * 40}
+
+
+def sh(cmd: list[str], cwd: str | None = None, timeout: int = 1800, inp: str | None = None,
+       env_extra: dict | None = None) -> subprocess.CompletedProcess:
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", **(env_extra or {})}  # عمليةُ البوّابة تقرأ وصف الطلب بـcp1256 على ويندوز فلا يطابق سطرُ الاعتماد
     return subprocess.run(cmd, cwd=cwd, input=inp, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout, check=False, env=env)  # noqa: S603
 
 
@@ -735,7 +746,7 @@ class Effects:
         cmd = ["claude", "-p", "--model", model, "--output-format", "json", "--max-budget-usd", str(budget),
                "--allowedTools", *self.cfg["allowed_tools"], "--permission-mode", "acceptEdits",
                *self.isolation_args(tree), *extra]
-        p = sh(cmd, tree, 3600, prompt)
+        p = sh(cmd, tree, 3600, prompt, AGENT_ENV)
         try:
             data = json.loads(p.stdout)
         except ValueError:
