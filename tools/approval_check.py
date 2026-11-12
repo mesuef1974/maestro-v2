@@ -620,7 +620,12 @@ def delegation_evidence(card: str | None, head: str | None) -> list[tuple[str, s
             continue
         h = str(a.get("head") or "")[:8]
         files = [str(f) for f in (a.get("files") or [])]
-        bad = ledger.delegation_blockers(files)
+        bad = ledger.delegation_blockers(files, a.get("owner_quote"))
+        import approval_seal  # noqa: PLC0415 — ختمُ هويّة 0101 (W-20261103-011)
+
+        seal_bad = approval_seal.problem({**a, "head": a.get("head")}, card)
+        if seal_bad:
+            bad = [*bad, f"ختمُ الهويّة: {seal_bad}"]
         code, diff = run(["git", "diff", "--no-renames", "--name-only", f"origin/main...{h}"], cwd=REPO_DIR)
         actual = [f for f in diff.splitlines() if f.strip()] if code == 0 else []
         extra = sorted(set(actual) - set(files)) if len(files) < ledger.DELEGATION_FILES_MAX else []
