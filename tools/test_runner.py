@@ -2700,6 +2700,8 @@ def test_model_runs_with_a_test_environment_and_is_told_how_to_verify(monkeypatc
     rules = "\n".join(runner.guard_rules())
     assert "python -m tests.layering_ratchet" in rules and "بلا `cd`" in rules
     assert "python -m tests.layering_ratchet:*" in " ".join(runner.DEFAULT_CONFIG["allowed_tools"])
+    # W-20261112-001 و003: الجولةُ الأولى سقطت على حارس الهويّة البصريّة؛ يُقال للنموذج قبل أن يكتب القالب
+    assert "tests/test_design_ratchet.py" in rules and "python -m pytest:*" in " ".join(runner.DEFAULT_CONFIG["allowed_tools"])
 
 
 def test_owner_cancel_closes_the_pr_and_the_card_and_marks_it_not_retryable(tmp_path):
