@@ -402,7 +402,7 @@ def save_fail_diff(card_id: str, diff: str, folder: Path | None = None) -> None:
     """الشجرةُ تُحذف عند الفشل، فيبقى الفرقُ محلّيّاً خارج git للتحقيق."""
     folder = folder or FAIL_DIFFS
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{card_id}.diff").write_text(diff, encoding="utf-8")
+    (folder / f"{card_id}.diff").write_text(diff, encoding="utf-8", newline="\n")  # LF: الفرقُ يُطبَّق لاحقاً بـgit apply
 
 
 MYPY_SCRIPT = ("import os,sys;sys.path[:0]=['scripts','.'];import prepush_check as pc;os.environ.update(pc.MYPY_ENV);"
@@ -760,6 +760,18 @@ class Effects:
             check_quota(str(data.get("result", "")))
         return Result(not data.get("is_error"), str(data.get("result", ""))[-500:], float(data.get("total_cost_usd") or 0),
                       int(data.get("num_turns") or 0), data)
+
+    def apply_diff(self, tree: str, diff: str) -> bool:
+        """يطبّق فرقاً محفوظاً على شجرةٍ نظيفة كلَّه أو لا شيء (فحصٌ ثمّ تطبيق)؛ الملفُّ المؤقّت بأسطر LF خارج الشجرة."""
+        fd, name = tempfile.mkstemp(suffix=".diff")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(diff)
+            if sh(["git", "apply", "--check", "--whitespace=nowarn", name], tree).returncode:
+                return False
+            return sh(["git", "apply", "--whitespace=nowarn", name], tree).returncode == 0
+        finally:
+            Path(name).unlink(missing_ok=True)
 
     def review_diff(self, tree: str) -> str:
         """الفرقُ كما سيُودَع، ومعه الملفّاتُ الجديدة: `git add -N` يُظهرها لـ`git diff` ولا يودعها."""
@@ -2228,7 +2240,8 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             att = fx.stage_attachments(card)
             card["attachments_path"] = att  # للموجز فقط؛ لا يُكتب في الدفتر
             rules = [Path(p).read_text(encoding="utf-8")[:3000] for p in card.get("rules") or [] if Path(p).is_file()]
-            prompt, ok, gaps, log, last_fp = brief(card, rules), False, [], "", ()
+            seed = seed_from_earlier(card, tree, fx, lpath)
+            prompt, ok, gaps, log, last_fp = brief(card, rules, seed, fx.diff(tree) if seed else ""), False, [], "", ()
             tiers, rounds = _tiers(cfg, card), 0
             for tier_no, (model, max_turns, budget) in enumerate(tiers):
                 for attempt in range(MAX_ROUNDS if tier_no == len(tiers) - 1 else MAX_FIX_RUNS + 1):
@@ -2419,6 +2432,22 @@ def earlier_attempts(card: dict, lpath=None) -> list[str]:
         found.append(prev["id"])
         prev = by_request.get(prev.get("retry_of"))
     return found
+
+
+def seed_from_earlier(card: dict, tree: str, fx: Effects, lpath=None) -> str:
+    """إعادةُ بطاقةٍ فشلت تبدأ من فرق محاولتها السابقة لا من الصفر: W-20261112-003 أُغلقت على حارسٍ واحد بعد 2.71$
+    وثمانية عشر ملفًّا، وزرُّ الإعادة كان يعيد كتابتها كلّها. يعيد سجلَّ الفحص على الفرق المطبَّق، أو فراغاً إن لم يُطبَّق."""
+    for prev in earlier_attempts(card, lpath):
+        path = FAIL_DIFFS / f"{prev}.diff"
+        if not path.is_file():
+            continue
+        if not fx.apply_diff(tree, path.read_text(encoding="utf-8")):
+            return ""  # main تحرّك عن الفرق: تبدأ من الصفر كما كانت
+        ok, log = fx.verify(tree)
+        ledger.append_event("note", card["id"], {"text": f"[مشغّل] بدأت من فرق المحاولة السابقة {prev}", "by": BY}, lpath)
+        head = f"الشجرةُ تحمل عملَ محاولةٍ سابقة ({prev}) لم تكتمل: أكمل منه ولا تُعد كتابته."
+        return head + chr(10) + ("الفحوصُ خضراء عليه؛ راجع معايير القبول وأكمل الناقص وحده." if ok else log)
+    return ""
 
 
 def intake_requests(cfg: dict, lpath=None) -> int:

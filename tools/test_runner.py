@@ -2746,3 +2746,43 @@ def test_network_outage_in_any_setup_step_is_infra_not_code(monkeypatch, tmp_pat
     assert fx.network_jobs("t", "9", runner.json.dumps(jobs), ["known"]) == ["mypy"]
     monkeypatch.setattr(fx, "main_file", lambda rel: "")
     assert fx.infra_jobs("t", "9") == ["mypy"]
+
+
+def test_a_retry_starts_from_the_failed_attempts_diff_not_from_scratch(tmp_path, monkeypatch):
+    """W-20261112-003: خمسُ جولاتٍ و2.71$ ثمّ أُغلقت على حارسٍ واحد، وزرُّ الإعادة كان يعيد كتابة ثمانية عشر ملفًّا من الصفر."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = lambda *a: runner.subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)  # noqa: E731
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (repo / "a.py").write_text("x = 1\n", encoding="utf-8", newline="\n")
+    git("add", "a.py")
+    git("commit", "-q", "-m", "base")
+    (repo / "a.py").write_text("x = 2\n", encoding="utf-8", newline="\n")
+    (repo / "new.py").write_text("y = 1\n", encoding="utf-8", newline="\n")
+    fx = runner.Effects(dict(runner.DEFAULT_CONFIG))
+    diff = fx.review_diff(str(repo))
+    git("reset", "-q")
+    git("checkout", "-q", "--", "a.py")
+    (repo / "new.py").unlink()
+    monkeypatch.setattr(runner, "FAIL_DIFFS", tmp_path / "diffs")
+    runner.save_fail_diff("W-1", diff)
+    assert b"\r\n" not in (tmp_path / "diffs" / "W-1.diff").read_bytes()
+
+    lp = tmp_path / "events.jsonl"
+    ledger.append_event("created", "W-1", {"problem": "ميزة", "request_file": "web-1"}, lp)
+    ledger.append_event("created", "W-2", {"problem": "ميزة", "request_file": "web-2", "retry_of": "web-1"}, lp)
+    monkeypatch.setattr(fx, "verify", lambda tree: (False, "FAILED tests/test_layering.py::x"))
+    card = ledger.reduce_state(ledger.load_events(lp))["W-2"]
+    seed = runner.seed_from_earlier(card, str(repo), fx, lp)
+    assert (repo / "a.py").read_text(encoding="utf-8") == "x = 2\n" and (repo / "new.py").is_file()
+    assert "W-1" in seed and "FAILED tests/test_layering.py::x" in seed and "لا تُعد كتابته" in seed
+    assert any("بدأت من فرق المحاولة السابقة W-1" in n["text"] for n in ledger.reduce_state(ledger.load_events(lp))["W-2"]["notes"])
+
+    # الفرقُ لم يعد ينطبق (main تحرّك): لا تطبيقَ جزئيّاً، وتبدأ من الصفر
+    (repo / "a.py").write_text("x = 9\n", encoding="utf-8", newline="\n")
+    (repo / "new.py").unlink()
+    assert runner.seed_from_earlier(card, str(repo), fx, lp) == "" and not (repo / "new.py").exists()
+    # بطاقةٌ ليست إعادة: لا بذر
+    assert runner.seed_from_earlier({"id": "W-9"}, str(repo), fx, lp) == ""
