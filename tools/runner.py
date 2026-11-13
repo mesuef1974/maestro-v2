@@ -146,6 +146,7 @@ REVIEW_SIZES = ("متوسط", "كبير", "تصميم")  # البطاقةُ ال
 COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول|بذر المعاينة): كلفة=([\d.]+)\$")
 # نصوصُ claude 2.1.312 المستخرجة من البرنامج نفسه؛ لا يدخل فيها «Budget limit» فهو سقفُ التشغيل --max-budget-usd
 USAGE_LIMIT = re.compile(r"usage limit reached|you(?:'|’)ve hit your|out of extra usage", re.I)
+ENGINE_DIED = re.compile(r"error waiting for container|unexpected EOF|docker API|dockerDesktopLinuxEngine|Cannot connect to the Docker daemon|error during connect", re.I)
 DOCKER_DOWN = re.compile(r"docker API|dockerDesktopLinuxEngine|Cannot connect to the Docker daemon|error during connect|database system is starting up", re.I)
 NET_DOWN = re.compile(r"ENOTFOUND|EAI_AGAIN|ECONNRESET|ETIMEDOUT|Can.t reach the API server|UNABLE_TO_VERIFY|TLS-inspecting", re.I)
 ESCALATE = {"haiku": "sonnet"}  # الأعلى لا يُستعمل آليّاً أبداً
@@ -950,6 +951,9 @@ class Effects:
         if "غير مقيس" in log or "تعذّر إنشاء" in log or "تعذّر" in log[:200]:
             raise RunnerError("بيئةٌ: الفحص غير مقيس في الحاوية — " + log.strip()[-160:])
         ok, tail = code == 0 and fp.PREPUSH_OK_LINE in log, log[-4000:]
+        if not ok and not has_failure_marker(log) and (code == 125 or ENGINE_DIED.search(log[-2000:]) or not self.docker_up(fp._docker)):
+            save_verify_log(name, code, log)  # المحرّكُ مات وسط الفحص (W-20261113-002 أُغلقت به بعد 1.13$): علّةُ بيئةٍ تعيد البطاقةَ إلى الطابور
+            raise EnvDown(f"المحرّكُ انقطع وسط الفحص (رمز {code})")
         if not ok and not has_failure_marker(log):  # لا سببَ يُقرأ: إعادةُ النموذج لإصلاح ما لا يراه تهدر كلفةَ كلّ جولة (ضغط الأصول: 7 محاولات)
             saved = save_verify_log(name, code, log)
             raise RunnerError(f"بيئةٌ: الفحص في الحاوية انتهى برمز {code} بلا سطر فشلٍ مقروء ولا سطر نجاح؛ السجلّ الكامل: {saved}")
@@ -2321,6 +2325,13 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             return fail(card, exc, fx, lpath)
         except EnvDown:  # حصّةٌ نفدت أو بيئةٌ تعطّلت وسط البطاقة: لا تُحسب عليها
             keep = bool(card.get("runner_resume"))  # طلبٌ مفتوح: يكمله الاستئناف على شجرته
+            if tree and not keep:  # العملُ المنجَز لا يضيع مع الشجرة: تبدأ منه الجولةُ القادمة
+                try:
+                    work = fx.review_diff(tree)
+                    if work.strip():
+                        save_fail_diff(cid, work)
+                except (OSError, subprocess.SubprocessError):
+                    pass
             if not keep:
                 ledger.append_event("state", cid, {"state": "routed", "by": BY, "held_by": ""}, lpath)
             raise
@@ -2437,7 +2448,7 @@ def earlier_attempts(card: dict, lpath=None) -> list[str]:
 def seed_from_earlier(card: dict, tree: str, fx: Effects, lpath=None) -> str:
     """إعادةُ بطاقةٍ فشلت تبدأ من فرق محاولتها السابقة لا من الصفر: W-20261112-003 أُغلقت على حارسٍ واحد بعد 2.71$
     وثمانية عشر ملفًّا، وزرُّ الإعادة كان يعيد كتابتها كلّها. يعيد سجلَّ الفحص على الفرق المطبَّق، أو فراغاً إن لم يُطبَّق."""
-    for prev in earlier_attempts(card, lpath):
+    for prev in (card["id"], *earlier_attempts(card, lpath)):
         path = FAIL_DIFFS / f"{prev}.diff"
         if not path.is_file():
             continue

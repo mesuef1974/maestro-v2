@@ -2786,3 +2786,12 @@ def test_a_retry_starts_from_the_failed_attempts_diff_not_from_scratch(tmp_path,
     assert runner.seed_from_earlier(card, str(repo), fx, lp) == "" and not (repo / "new.py").exists()
     # بطاقةٌ ليست إعادة: لا بذر
     assert runner.seed_from_earlier({"id": "W-9"}, str(repo), fx, lp) == ""
+
+
+def test_engine_death_mid_check_is_environment_not_a_card_failure():
+    """W-20261113-002: مات المحرّك وسط الفحص (رمز 125، unexpected EOF) فأُغلقت البطاقة بتقرير بعد 1.13$؛ هي علّةُ بيئةٍ تعيدها إلى الطابور."""
+    assert runner.ENGINE_DIED.search('level=error msg="error waiting for container: unexpected EOF"')
+    assert not runner.ENGINE_DIED.search("FAILED tests/test_x.py::test_y - AssertionError")
+    src = Path(runner.__file__).read_text(encoding="utf-8")
+    assert "raise EnvDown(f\"المحرّكُ انقطع وسط الفحص" in src
+    assert '(card["id"], *earlier_attempts(card, lpath))' in src
