@@ -146,6 +146,7 @@ REVIEW_SIZES = ("متوسط", "كبير", "تصميم")  # البطاقةُ ال
 COST_NOTE = re.compile(r"^\[مشغّل\] (?:.+ (?:تشغيل|إصلاح CI) \d+|مراجعة القبول|بذر المعاينة): كلفة=([\d.]+)\$")
 # نصوصُ claude 2.1.312 المستخرجة من البرنامج نفسه؛ لا يدخل فيها «Budget limit» فهو سقفُ التشغيل --max-budget-usd
 USAGE_LIMIT = re.compile(r"usage limit reached|you(?:'|’)ve hit your|out of extra usage", re.I)
+PREVIEW_DEPS = ("shschool-dev-db", "shschool-dev-redis")  # ما يعتمد عليه خادمُ المعاينة 8500 خارج compose
 ENGINE_DIED = re.compile(r"error waiting for container|unexpected EOF|docker API|dockerDesktopLinuxEngine|Cannot connect to the Docker daemon|error during connect", re.I)
 DOCKER_DOWN = re.compile(r"docker API|dockerDesktopLinuxEngine|Cannot connect to the Docker daemon|error during connect|database system is starting up", re.I)
 NET_DOWN = re.compile(r"ENOTFOUND|EAI_AGAIN|ECONNRESET|ETIMEDOUT|Can.t reach the API server|UNABLE_TO_VERIFY|TLS-inspecting", re.I)
@@ -811,11 +812,22 @@ class Effects:
         import flow_pump as fp  # noqa: PLC0415
 
         if self.docker_up(docker or fp._docker):
+            self.wake_preview_deps(docker or fp._docker)
             return True
         subprocess.Popen(["docker", "desktop", "start"], close_fds=True, stdin=subprocess.DEVNULL,  # noqa: S603, S607
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return False
+
+    @staticmethod
+    def wake_preview_deps(docker) -> list[str]:
+        """قاعدةُ المعاينة وredis حاويتان أُوقفتا باليد لا تعودان بعد إعادة التشغيل (unless-stopped): بقيت W-20261113-004
+        «تجهّز المعاينة» أربعَ ساعاتٍ وخادمُ 8500 ينتظر القاعدة على 5433. تُشغَّلان هنا إن وُجدتا متوقّفتين؛ يعيد ما شغّله."""
+        rc, out = docker(["ps", "-a", "--filter", "status=exited", "--filter", "status=created", "--format", "{{.Names}}"], 30)
+        down = [n for n in out.split() if n in PREVIEW_DEPS] if rc == 0 else []
+        if down:
+            docker(["start", *down], 60)
+        return down
 
     def build_image(self, docker=None) -> None:
         """الصورةُ غائبةٌ والمحرّكُ يعمل: تُبنى من Dockerfile المرفق (IMAGE_DIR) بلا انتظار يدٍ تبنيها.

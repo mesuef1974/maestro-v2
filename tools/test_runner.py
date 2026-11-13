@@ -2795,3 +2795,17 @@ def test_engine_death_mid_check_is_environment_not_a_card_failure():
     src = Path(runner.__file__).read_text(encoding="utf-8")
     assert "raise EnvDown(f\"المحرّكُ انقطع وسط الفحص" in src
     assert '(card["id"], *earlier_attempts(card, lpath))' in src
+
+
+def test_preview_dependencies_are_started_when_found_stopped():
+    """W-20261113-004: قاعدةُ المعاينة متوقّفةٌ بعد إعادة تشغيل الجهاز فبقيت البطاقةُ «تجهّز المعاينة» ساعات."""
+    calls = []
+
+    def docker(args, timeout):
+        calls.append(args)
+        return (0, "shschool-dev-db\nother-thing\n") if args[0] == "ps" else (0, "")
+
+    assert runner.Effects.wake_preview_deps(docker) == ["shschool-dev-db"]
+    assert calls[-1] == ["start", "shschool-dev-db"]
+    calls.clear()
+    assert runner.Effects.wake_preview_deps(lambda a, t: (0, "other-thing\n")) == []
