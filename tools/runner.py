@@ -1216,6 +1216,13 @@ class Effects:
     def map_rls(self, account: str) -> tuple[bool, str]:
         return self.run_seed(SEED_RLS.format(account=account))
 
+    def page_status(self, path: str, account: str) -> int:
+        """رمزُ HTTP لصفحة البطاقة بحساب المعاينة قبل أيّ بذر: 403 صلاحيّةٌ لا بياناتٌ ناقصة، فلا يصلحها سكربت."""
+        try:
+            return open_as(account, path, slot_url(self.target) if self.target else PREVIEW_URL)
+        except (OSError, AttributeError):
+            return 0
+
     def check_seed(self, path: str, account: str) -> tuple[bool, str]:
         """دخولٌ حقيقيّ عبر 8500: `manage.py shell` يتصل بدورٍ يتجاوز RLS فيرى ما لا يراه الخادم (نجاحٌ كاذب يوم #1347)."""
         base = slot_url(self.target) if self.target else PREVIEW_URL
@@ -1518,6 +1525,11 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         out = mark_visual_change(card, fx, lpath, tree, pr, head)
         if out:
             return out
+    if not preview and card.get("preview_waived") and real and all(APPROVAL_CHECK in f or f in DERIVED_CHECKS for f in real):
+        body = pr_body(card, head)  # السطرُ كُتب عند الإعفاء وفحصُه لم يُعَد بعد، أو لم يُكتب فيُكتب
+        if fx.pr_body_of(tree, pr).strip() != body.strip():
+            fx.set_pr_body(tree, pr, body)
+        return "waiting_ci"
     if real:
         return repair_ci(card, cfg, fx, lpath, tree, branch, pr, real)
     if preview:
@@ -1553,7 +1565,7 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
 def require_preview(card: dict, files: list[str], lpath=None) -> None:
     """الأثرُ يحسم الاعتماد لا نوعُ الطلب: «خلل» في PDF مرّ بوضع «مباشر» لأنّ افتراضَ النوع طُبّق (#1349)."""
     seen = [f for f in files if f.replace("\\", "/").startswith(VISIBLE_PATHS)]
-    if seen and card.get("approval") != "معاينة":
+    if seen and card.get("approval") != "معاينة" and not card.get("preview_waived"):
         card["approval"] = "معاينة"
         ledger.append_event("update", card["id"], {"approval": "معاينة"}, lpath)
         ledger.append_event("note", card["id"], {"text": f"[مشغّل] صار الاعتماد معاينة: يغيّر {'، '.join(seen[:3])}"[:300], "by": BY}, lpath)
@@ -1620,6 +1632,9 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
     mapped, log = fx.map_rls(info["account"])
     if not mapped:
         return "", failure_summary(mask(log))[:200]
+    page = str(card.get("scope_page") or "")
+    if page.startswith("/") and fx.page_status(page, info["account"]) == 403:
+        return "", PREVIEW_FORBIDDEN  # محصورةٌ عن حساب المعاينة: ستُّ محاولات بذرٍ أُحرقت على 403 لا يصلحه بذر (W-20261114-003)
     saved = SEED_SCRIPTS / f"{cid}.py"
     if saved.is_file():  # إعادةُ تثبيتٍ أو رأسٌ جديد أو إقلاعٌ بعد توقّف: السكربتُ الذي نجح يُجرَّب أوّلاً بصفر توكنز
         ok, log = fx.run_seed(saved.read_text(encoding="utf-8"))
@@ -1750,11 +1765,26 @@ def preview_step(card: dict, fx: Effects, lpath, tree: str, head: str, pr: int) 
         fx.target = 0
 
 
+def waive_preview(card: dict, fx: Effects, lpath, head: str, pr: int, info: dict) -> str:
+    """صفحةٌ لا يفتحها حسابُ المعاينة (403 قبل البذر) لا تُعايَن على 8500 أصلاً: تمضي البطاقةُ مباشرةً ويراها صاحبُ الصلاحيّة بعد النشر."""
+    cid = card["id"]
+    reason = f"الصفحة {card.get('scope_page')} ترفض حساب المعاينة {info['account']} (403)"
+    ledger.append_event("update", cid, {"approval": "مباشر", "preview_waived": reason, "preview_seed_failed": "", "preview_fail_at": 0, "waiting": {}}, lpath)
+    ledger.append_event("note", cid, {"text": f"[مشغّل] أُعفيت من معاينة 8500: {reason}؛ تمضي مباشرةً وتُفحص بعد النشر", "by": BY}, lpath)
+    card["approval"], card["preview_waived"] = "مباشر", reason
+    tree = card["runner_resume"]["tree"]
+    fx.set_pr_body(tree, pr, pr_body(card, head))  # سطرُ الاعتماد المباشر، ففحصُه يُعاد عند edited
+    refer(cid, f"أُعفي الطلب #{pr} من معاينة 8500: {reason} — يمضي مباشرةً إلى الدمج والنشر")
+    return "waiting_ci"
+
+
 def seed_and_announce(card: dict, fx: Effects, lpath, head: str, pr: int, base: str) -> str:
     cid = card["id"]
     if card.get("preview_seen") != head and card.get("preview_seed_failed") != head:
         info = preview_info(card, pr)
         path, error = seed_preview(card, info, fx, lpath)
+        if not path and error == PREVIEW_FORBIDDEN:
+            return waive_preview(card, fx, lpath, head, pr, info)
         if not path and DOCKER_DOWN.search(error or ""):  # علّةُ بيئةٍ لا بطاقة: لا تُحرق ميزانيّةَ الإعادة، وتُعاد كلَّ دورةٍ حتى يعود دوكر
             env_wait(card, head, lpath)
             return "waiting_preview"
@@ -2136,6 +2166,7 @@ SEED_GUARD = (  # يسبق كلَّ سكربت: قاعدةُ التثبيت ال
     "import re as _re\n"
     "assert _re.fullmatch(r'.+_preview', _c.settings_dict['NAME']), 'ليست قاعدة تثبيت'\n"
 )
+PREVIEW_FORBIDDEN = "حسابُ المعاينة مرفوضٌ على صفحة البطاقة (403)"
 PREVIEW_ACCOUNT = ("99900001", "المدير")  # تُغيّره البطاقة بحقل preview_account
 PREVIEW_PASSWORD_AT = "tools/.preview_accounts.env"
 GIT_BASH = r"C:\Program Files\Git\bin\bash.exe"  # لا `bash` مجرّدة: قد تكون System32 (WSL)

@@ -70,6 +70,9 @@ class Fake(runner.Effects):
     def pdf_fallback_fonts(self, path, account):
         return list(getattr(self, "fallback", []))
 
+    def page_status(self, path, account):
+        return getattr(self, "page_code", 200)
+
     def check_seed(self, path, account):
         q = getattr(self, "seed_checks", [(True, "PREVIEW_STATUS=200")])
         return q.pop(0) if len(q) > 1 else q[0]
@@ -2809,3 +2812,21 @@ def test_preview_dependencies_are_started_when_found_stopped():
     assert calls[-1] == ["start", "shschool-dev-db"]
     calls.clear()
     assert runner.Effects.wake_preview_deps(lambda a, t: (0, "other-thing\n")) == []
+
+
+def test_a_page_closed_to_the_preview_account_skips_seeding_and_goes_direct(env):
+    """403 قبل البذر صلاحيّةٌ لا بيانات: لا نموذجَ يُستدعى، والبطاقةُ تمضي مباشرةً ولا تعود «معاينة» (W-20261114-003)."""
+    lp, lock = env
+    fx = Fake()
+    fx.page_code = 403
+    _preview_card(lp)
+    for _ in range(4):
+        runner.run_cycle(CFG, fx, lp, lock)
+    card = _state(lp)
+    assert not getattr(fx, "seed_prompts", [])
+    assert card["approval"] == "مباشر" and "403" in card["preview_waived"]
+    assert "أُعفي الطلب" in _queue() and "تعذّرت المعاينة" not in _queue()
+    assert any("مباشرةً بلا معاينة 8500" in b for b in fx.pr_bodies)
+    runner.require_preview(card, ["templates/x.html"], lp)
+    assert _state(lp)["approval"] == "مباشر"
+    assert card["state"] in ("published", "closed")
