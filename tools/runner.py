@@ -298,12 +298,13 @@ CRITERIA_CHECKS = {"tests_in_diff": _check_tests_in_diff, "scope_only": _check_s
 
 
 def menu_gap(page: str, urls_diff: str, menu: str) -> list[str]:
-    """صفحة البطاقة الجديدة بلا رابط في القائمة: بناها W-010 فلم يصل إليها المالك إلا برابطها (قراره 2026-11-07)."""
+    """صفحة البطاقة الجديدة بلا رابط في القائمة: بناها W-010 فلم يصل إليها المالك إلا برابطها (قراره 2026-11-07).
+    اسمُ المسار يُقبل بنطاقه (`app:name`) وبدونه (`'name'`): أسقط الشرطُ القديم W-20261114-005 و007 وفي فرقهما الرابطُ بشرط can_open لأن تطبيقها بلا نطاق."""
     page = page.split("?")[0].strip("/")
     added = "\n".join(ln[1:] for ln in urls_diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
     return [f"الصفحة الجديدة /{page}/ لا تُفتح من القائمة: أضف رابطها في {MENU_FILE} بجانب روابط قسمها، بشرط can_open على المسار"
             for route, name in NEW_ROUTE.findall(added)
-            if route.strip("/") and "<" not in route and page.endswith(route.strip("/")) and not re.search(f":{name}['\"]", menu)]
+            if route.strip("/") and "<" not in route and page.endswith(route.strip("/")) and not re.search(f"[:'\"]{name}['\"]", menu)]
 
 
 def menu_sibling_gap(page: str, urls_src: str, menu: str) -> list[str]:
