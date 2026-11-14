@@ -2283,7 +2283,7 @@ def test_menu_link_to_an_unnamespaced_route_counts_as_present():
     """W-20261114-007: صفحةُ asc_import في تطبيقٍ بلا نطاق، ورابطُها بـcan_open:"asc_import" فرفضه الفحصُ خمسَ جولاتٍ مرّتين."""
     diff = '+    path("smart-schedule/asc-import/", asc_import_page, name="asc_import"),'
     page = "teacher/smart-schedule/asc-import/"
-    assert runner.menu_gap(page, diff, '{% if request.user|can_open:"asc_import" %}<a href="{% url 'asc_import' %}">') == []
+    assert runner.menu_gap(page, diff, '{% if request.user|can_open:"asc_import" %}<a href="{% url "asc_import" %}">') == []
     assert runner.menu_gap(page, diff, "{% url 'operations:asc_import' %}") == []
     assert runner.menu_gap(page, diff, "{% url 'other_page' %}")
 
