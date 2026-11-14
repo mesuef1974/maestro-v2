@@ -813,7 +813,7 @@ class Effects:
 
         if self.docker_up(docker or fp._docker):
             self.wake_preview_deps(docker or fp._docker)
-            return True
+            return self.preview_deps_ready(docker or fp._docker)
         subprocess.Popen(["docker", "desktop", "start"], close_fds=True, stdin=subprocess.DEVNULL,  # noqa: S603, S607
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -828,6 +828,15 @@ class Effects:
         if down:
             docker(["start", *down], 60)
         return down
+
+    @staticmethod
+    def preview_deps_ready(docker) -> bool:
+        """القاعدةُ وredis «سليمتان» لا «تعملان» فقط: W-20261114-004 ثُبّتت والقاعدةُ ما زالت تقلع، ففشل نسخُ قاعدتها
+        («the database system is starting up») وأقلعت الخانةُ على قاعدةٍ غير موجودة وبقيت تنتظرها. بلا فحصِ صحّةٍ تكفي «running»."""
+        fmt = "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}"
+        rc, out = docker(["inspect", "--format", fmt, *PREVIEW_DEPS], 30)
+        states = out.split()
+        return rc == 0 and len(states) == len(PREVIEW_DEPS) and all(s in ("healthy", "running") for s in states)
 
     def build_image(self, docker=None) -> None:
         """الصورةُ غائبةٌ والمحرّكُ يعمل: تُبنى من Dockerfile المرفق (IMAGE_DIR) بلا انتظار يدٍ تبنيها.

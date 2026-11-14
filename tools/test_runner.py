@@ -2814,6 +2814,19 @@ def test_preview_dependencies_are_started_when_found_stopped():
     assert runner.Effects.wake_preview_deps(lambda a, t: (0, "other-thing\n")) == []
 
 
+def test_preview_waits_until_its_dependencies_are_healthy():
+    """W-20261114-004: ثُبّتت المعاينةُ والقاعدةُ ما زالت تقلع، ففشل نسخُ قاعدتها وأقلعت الخانةُ على قاعدةٍ غير موجودة."""
+    assert runner.Effects.preview_deps_ready(lambda a, t: (0, "healthy\nhealthy\n"))
+    assert runner.Effects.preview_deps_ready(lambda a, t: (0, "healthy\nrunning\n"))  # حاويةٌ بلا فحص صحّة
+    assert not runner.Effects.preview_deps_ready(lambda a, t: (0, "starting\nhealthy\n"))
+    assert not runner.Effects.preview_deps_ready(lambda a, t: (0, "unhealthy\nhealthy\n"))
+    assert not runner.Effects.preview_deps_ready(lambda a, t: (1, ""))  # حاويةٌ غائبة
+    fx = runner.Effects.__new__(runner.Effects)
+    fx.docker_up = lambda docker: True
+    assert fx.wake_docker(lambda a, t: (0, "starting\nhealthy\n") if a[0] == "inspect" else (0, "")) is False
+    assert fx.wake_docker(lambda a, t: (0, "healthy\nhealthy\n") if a[0] == "inspect" else (0, "")) is True
+
+
 def test_a_page_closed_to_the_preview_account_skips_seeding_and_goes_direct(env):
     """403 قبل البذر صلاحيّةٌ لا بيانات: لا نموذجَ يُستدعى، والبطاقةُ تمضي مباشرةً ولا تعود «معاينة» (W-20261114-003)."""
     lp, lock = env
