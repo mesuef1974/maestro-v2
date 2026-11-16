@@ -44,6 +44,9 @@ class Fake(runner.Effects):
     def autoformat(self, tree):
         self.calls = getattr(self, "calls", []) + ["autoformat"]
         return []
+    def regenerate(self, tree):
+        self.regens = getattr(self, "regens", 0) + 1
+        return list(getattr(self, "regen_made", []))
     def changed(self, tree): return self.files
     def diff(self, tree): return "diff"
     def commit_push(self, tree, branch, files, msg): return "h1"
@@ -69,6 +72,9 @@ class Fake(runner.Effects):
 
     def pdf_fallback_fonts(self, path, account):
         return list(getattr(self, "fallback", []))
+
+    def page_status(self, path, account):
+        return getattr(self, "page_code", 200)
 
     def check_seed(self, path, account):
         q = getattr(self, "seed_checks", [(True, "PREVIEW_STATUS=200")])
@@ -113,7 +119,7 @@ class Fake(runner.Effects):
     def merge(self, tree, pr):
         self.merged = True
         return True
-    def in_deploy_window(self, tree): return self.window
+    def in_deploy_window(self, tree, pr=0): return self.window
     def healthy(self): return self.is_healthy
     def pr_state(self, tree, pr): return self.merge_state, "oid1"
     def pr_conflicted(self, tree, pr): return getattr(self, "conflicted", False)
@@ -2276,6 +2282,15 @@ def test_only_the_cards_own_new_page_needs_a_link():
     assert runner.menu_gap("", URLS_DIFF, "") == []
 
 
+def test_menu_link_to_an_unnamespaced_route_counts_as_present():
+    """W-20261114-007: صفحةُ asc_import في تطبيقٍ بلا نطاق، ورابطُها بـcan_open:"asc_import" فرفضه الفحصُ خمسَ جولاتٍ مرّتين."""
+    diff = '+    path("smart-schedule/asc-import/", asc_import_page, name="asc_import"),'
+    page = "teacher/smart-schedule/asc-import/"
+    assert runner.menu_gap(page, diff, '{% if request.user|can_open:"asc_import" %}<a href="{% url "asc_import" %}">') == []
+    assert runner.menu_gap(page, diff, "{% url 'operations:asc_import' %}") == []
+    assert runner.menu_gap(page, diff, "{% url 'other_page' %}")
+
+
 def test_the_menu_file_is_inside_any_declared_scope():
     card = {"runner_checks": ["scope_only"], "scope_files": ["app/views.py"]}
     assert runner.criteria_failures(card, ["app/views.py", runner.MENU_FILE]) == []
@@ -2541,6 +2556,21 @@ def test_reopen_resumes_a_closed_card_on_its_open_pr(env):
     assert card["runner_resume"]["pr"] == 9 and "ci_fixes" not in card["runner_resume"] and card["runner_resume"]["spent"] == 1.0
 
 
+def test_reopen_drops_the_stale_merge_wait_clock(env):
+    """أُغلقت وهي تنتظر الطابور: الاستئنافُ يعود إلى الفحوص لا إلى مهلةٍ انقضت أمس (002، 2026-11-16)."""
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="in_progress")
+    rr = {"pr": 9, "branch": "claude/x", "head": "abc", "tree": "/t", "good": "g", "stage": "merged_wait", "merged_wait_since": 1.0}
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": rr}, lp)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
+    ledger.append_event("state", "W-20261104-901", {"state": "closed"}, lp)
+    fx = Fake()
+    fx.merge_state = "OPEN"
+    fx.restore_tree = lambda branch, tree: None
+    assert runner.reopen_card("W-20261104-901", fx, lp)[0]
+    assert _state(lp)["runner_resume"] == {"pr": 9, "branch": "claude/x", "head": "abc", "tree": "/t", "good": "g"}
+
+
 def test_reopen_refuses_a_merged_or_unrecorded_pr(env):
     lp, _ = env
     _card(lp, "W-20261104-901", state="closed")
@@ -2682,3 +2712,344 @@ def test_a_revision_that_fails_local_checks_is_not_a_round_and_stops_after_three
         r = _state(lp)["runner_resume"]
         assert r["revise_tries"] == n and not r.get("revisions") and _state(lp)["state"] == "in_progress"
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and "أسقط الفحصَ المحلّي" in _queue()
+
+
+def test_model_runs_with_a_test_environment_and_is_told_how_to_verify(monkeypatch, tmp_path):
+    """W-20261111-001: كلُّ pytest سقط بلا SECRET_KEY، والأوامرُ المركّبة رُفضت، فعدّل النموذجُ خمسَ جولاتٍ على العمى."""
+    seen = {}
+
+    def fake_sh(cmd, cwd=None, timeout=0, inp=None, env_extra=None):
+        seen["env"] = env_extra
+        return runner.subprocess.CompletedProcess(cmd, 0, '{"result": "ok", "total_cost_usd": 0.1, "num_turns": 2}', "")
+
+    monkeypatch.setattr(runner, "sh", fake_sh)
+    res = runner.Effects(dict(runner.DEFAULT_CONFIG)).run_model(str(tmp_path), "x", "sonnet", 1.0)
+    assert res.ok and seen["env"]["DJANGO_SETTINGS_MODULE"] == "shschool.settings.testing"
+    assert seen["env"]["SECRET_KEY"].startswith("runner-local-testing-only-")
+    monkeypatch.setattr(runner, "sh", lambda cmd, *a, **k: runner.subprocess.CompletedProcess(cmd, 0, "MAX_ORM = 5\n", ""))
+    rules = "\n".join(runner.guard_rules())
+    assert "python -m tests.layering_ratchet" in rules and "بلا `cd`" in rules
+    assert "python -m tests.layering_ratchet:*" in " ".join(runner.DEFAULT_CONFIG["allowed_tools"])
+    # W-20261112-001 و003: الجولةُ الأولى سقطت على حارس الهويّة البصريّة؛ يُقال للنموذج قبل أن يكتب القالب
+    assert "tests/test_design_ratchet.py" in rules and "python -m pytest:*" in " ".join(runner.DEFAULT_CONFIG["allowed_tools"])
+
+
+def test_owner_cancel_closes_the_pr_and_the_card_and_marks_it_not_retryable(tmp_path):
+    """W-20261111-002: بطاقةٌ ألغاها المالك ظهرت فاشلةً فأُعيدت بزرّ؛ الإلغاءُ الآن يغلق طلبها ويسمها."""
+    lp = tmp_path / "events.jsonl"
+    ledger.append_event("created", "W-1", {"problem": "ميزة"}, lp)
+    ledger.append_event("state", "W-1", {"state": "in_progress", "by": "runner"}, lp)
+    ledger.append_event("update", "W-1", {"pr": 77, "runner_resume": {"pr": 77}}, lp)
+    seen = []
+
+    def run(cmd, cwd):
+        seen.append(cmd)
+        return runner.subprocess.CompletedProcess(cmd, 0, "", "")
+
+    assert runner.cancel_card("W-1", "", lp, run, "repo")[0] is False
+    ok, text = runner.cancel_card("W-1", "لا حاجة للميزة", lp, run, "repo")
+    assert ok and "77" in text and seen[0][:4] == ["gh", "pr", "close", "77"]
+    card = ledger.reduce_state(ledger.load_events(lp))["W-1"]
+    assert card["state"] == "closed" and card["owner_cancelled"] == "لا حاجة للميزة"
+    assert card["owner_dismissed"] and card["runner_hold"]
+    assert runner.cancel_card("W-404", "x", lp, run, "repo")[0] is False
+
+
+def test_network_outage_in_any_setup_step_is_infra_not_code(monkeypatch, tmp_path):
+    """W-20261111-006: خادم CI لم يحلّ اسم مستودع الحزم، فسقطت خطواتُ تثبيتٍ ليست في INFRA_STEPS وأُرسلت للنموذج."""
+    jobs = {"jobs": [
+        {"id": 1, "name": "mypy", "conclusion": "failure"},
+        {"id": 2, "name": "pytest shard 1/8", "conclusion": "failure"},
+        {"id": 3, "name": "ruff", "conclusion": "success"},
+        {"id": 4, "name": runner.GATE_SUMMARY, "conclusion": "failure"},
+        {"id": 5, "name": "known", "conclusion": "failure"},
+    ]}
+    logs = {"1": "W: Failed to fetch  Temporary failure resolving 'azure.archive.ubuntu.com'\n##[error]timed out",
+            "2": "Temporary failure resolving 'x'\nFAILED tests/test_a.py::test_b - AssertionError", "4": "", "5": ""}
+
+    def fake_sh(cmd, *a, **k):
+        out = runner.json.dumps(jobs) if cmd[1] == "api" else logs.get(cmd[5], "")
+        return runner.subprocess.CompletedProcess(cmd, 0, out, "")
+
+    monkeypatch.setattr(runner, "sh", fake_sh)
+    fx = runner.Effects(dict(runner.DEFAULT_CONFIG))
+    assert fx.network_jobs("t", "9", runner.json.dumps(jobs), ["known"]) == ["mypy"]
+    monkeypatch.setattr(fx, "main_file", lambda rel: "")
+    assert fx.infra_jobs("t", "9") == ["mypy"]
+
+
+def test_a_retry_starts_from_the_failed_attempts_diff_not_from_scratch(tmp_path, monkeypatch):
+    """W-20261112-003: خمسُ جولاتٍ و2.71$ ثمّ أُغلقت على حارسٍ واحد، وزرُّ الإعادة كان يعيد كتابة ثمانية عشر ملفًّا من الصفر."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = lambda *a: runner.subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)  # noqa: E731
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (repo / "a.py").write_text("x = 1\n", encoding="utf-8", newline="\n")
+    git("add", "a.py")
+    git("commit", "-q", "-m", "base")
+    (repo / "a.py").write_text("x = 2\n", encoding="utf-8", newline="\n")
+    (repo / "new.py").write_text("y = 1\n", encoding="utf-8", newline="\n")
+    fx = runner.Effects(dict(runner.DEFAULT_CONFIG))
+    diff = fx.review_diff(str(repo))
+    git("reset", "-q")
+    git("checkout", "-q", "--", "a.py")
+    (repo / "new.py").unlink()
+    monkeypatch.setattr(runner, "FAIL_DIFFS", tmp_path / "diffs")
+    runner.save_fail_diff("W-1", diff)
+    assert b"\r\n" not in (tmp_path / "diffs" / "W-1.diff").read_bytes()
+
+    lp = tmp_path / "events.jsonl"
+    ledger.append_event("created", "W-1", {"problem": "ميزة", "request_file": "web-1"}, lp)
+    ledger.append_event("created", "W-2", {"problem": "ميزة", "request_file": "web-2", "retry_of": "web-1"}, lp)
+    monkeypatch.setattr(fx, "verify", lambda tree: (False, "FAILED tests/test_layering.py::x"))
+    card = ledger.reduce_state(ledger.load_events(lp))["W-2"]
+    seed = runner.seed_from_earlier(card, str(repo), fx, lp)
+    assert (repo / "a.py").read_text(encoding="utf-8") == "x = 2\n" and (repo / "new.py").is_file()
+    assert "W-1" in seed and "FAILED tests/test_layering.py::x" in seed and "لا تُعد كتابته" in seed
+    assert any("بدأت من فرق المحاولة السابقة W-1" in n["text"] for n in ledger.reduce_state(ledger.load_events(lp))["W-2"]["notes"])
+
+    # الفرقُ لم يعد ينطبق (main تحرّك): لا تطبيقَ جزئيّاً، وتبدأ من الصفر
+    (repo / "a.py").write_text("x = 9\n", encoding="utf-8", newline="\n")
+    (repo / "new.py").unlink()
+    assert runner.seed_from_earlier(card, str(repo), fx, lp) == "" and not (repo / "new.py").exists()
+    # بطاقةٌ ليست إعادة: لا بذر
+    assert runner.seed_from_earlier({"id": "W-9"}, str(repo), fx, lp) == ""
+
+
+def test_engine_death_mid_check_is_environment_not_a_card_failure():
+    """W-20261113-002: مات المحرّك وسط الفحص (رمز 125، unexpected EOF) فأُغلقت البطاقة بتقرير بعد 1.13$؛ هي علّةُ بيئةٍ تعيدها إلى الطابور."""
+    assert runner.ENGINE_DIED.search('level=error msg="error waiting for container: unexpected EOF"')
+    assert not runner.ENGINE_DIED.search("FAILED tests/test_x.py::test_y - AssertionError")
+    src = Path(runner.__file__).read_text(encoding="utf-8")
+    assert "raise EnvDown(f\"المحرّكُ انقطع وسط الفحص" in src
+    assert '(card["id"], *earlier_attempts(card, lpath))' in src
+
+
+def test_preview_dependencies_are_started_when_found_stopped():
+    """W-20261113-004: قاعدةُ المعاينة متوقّفةٌ بعد إعادة تشغيل الجهاز فبقيت البطاقةُ «تجهّز المعاينة» ساعات."""
+    calls = []
+
+    def docker(args, timeout):
+        calls.append(args)
+        return (0, "shschool-dev-db\nother-thing\n") if args[0] == "ps" else (0, "")
+
+    assert runner.Effects.wake_preview_deps(docker) == ["shschool-dev-db"]
+    assert calls[-1] == ["start", "shschool-dev-db"]
+    calls.clear()
+    assert runner.Effects.wake_preview_deps(lambda a, t: (0, "other-thing\n")) == []
+
+
+def test_preview_waits_until_its_dependencies_are_healthy():
+    """W-20261114-004: ثُبّتت المعاينةُ والقاعدةُ ما زالت تقلع، ففشل نسخُ قاعدتها وأقلعت الخانةُ على قاعدةٍ غير موجودة."""
+    assert runner.Effects.preview_deps_ready(lambda a, t: (0, "healthy\nhealthy\n"))
+    assert runner.Effects.preview_deps_ready(lambda a, t: (0, "healthy\nrunning\n"))  # حاويةٌ بلا فحص صحّة
+    assert not runner.Effects.preview_deps_ready(lambda a, t: (0, "starting\nhealthy\n"))
+    assert not runner.Effects.preview_deps_ready(lambda a, t: (0, "unhealthy\nhealthy\n"))
+    assert not runner.Effects.preview_deps_ready(lambda a, t: (1, ""))  # حاويةٌ غائبة
+    fx = runner.Effects.__new__(runner.Effects)
+    fx.docker_up = lambda docker: True
+    assert fx.wake_docker(lambda a, t: (0, "starting\nhealthy\n") if a[0] == "inspect" else (0, "")) is False
+    assert fx.wake_docker(lambda a, t: (0, "healthy\nhealthy\n") if a[0] == "inspect" else (0, "")) is True
+
+
+def test_a_page_closed_to_the_preview_account_skips_seeding_and_goes_direct(env):
+    """403 قبل البذر صلاحيّةٌ لا بيانات: لا نموذجَ يُستدعى، والبطاقةُ تمضي مباشرةً ولا تعود «معاينة» (W-20261114-003)."""
+    lp, lock = env
+    fx = Fake()
+    fx.page_code = 403
+    _preview_card(lp)
+    for _ in range(4):
+        runner.run_cycle(CFG, fx, lp, lock)
+    card = _state(lp)
+    assert not getattr(fx, "seed_prompts", [])
+    assert card["approval"] == "مباشر" and "403" in card["preview_waived"]
+    assert "أُعفي الطلب" in _queue() and "تعذّرت المعاينة" not in _queue()
+    assert any("مباشرةً بلا معاينة 8500" in b for b in fx.pr_bodies)
+    runner.require_preview(card, ["templates/x.html"], lp)
+    assert _state(lp)["approval"] == "مباشر"
+    assert card["state"] in ("published", "closed")
+
+
+# ───────── التوليد الآليّ قبل الفحص (مرجع الهويّة وسجلّا الطبقات والحجم) ─────────
+def test_regenerate_runs_before_every_verify_and_is_noted(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake(verify=(False, True))
+    fx.regen_made = ["tests/file_size_baseline.json"]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published"
+    assert fx.regens == 2
+    notes = [e["data"]["text"] for e in ledger.load_events(lp) if e["kind"] == "note"]
+    assert sum("وُلّد آليًّا بلا نموذج: tests/file_size_baseline.json" in n for n in notes) == 2
+
+
+def test_size_baseline_keeps_shrinkage_only():
+    import json
+    old = json.dumps({"a.py": 1500, "b.py": 1200, "c.py": 1100}, indent=2, sort_keys=True) + chr(10)
+    # a صغُر، b كبُر داخل الهامش، c نزل تحت الحدّ فحُذف، d جديدٌ فوق الحدّ
+    new = json.dumps({"a.py": 1300, "b.py": 1210, "d.py": 1050})
+    assert json.loads(runner.clamp_size_baseline(old, new)) == {"a.py": 1300, "b.py": 1200}
+
+
+def test_size_baseline_untouched_returns_the_original_text():
+    old = '{"a.py":1500}'  # تنسيقٌ غيرُ تنسيق المولِّد: يعود كما هو فلا فرقَ في الإيداع
+    assert runner.clamp_size_baseline(old, '{\n  "a.py": 1510\n}') is old
+    assert runner.clamp_size_baseline(old, "ليس JSON") is old
+
+
+def _regen_fx(tmp_path, monkeypatch, files, on_docker=None, eol_only=False):
+    seen, gits = [], []
+    fx = runner.Effects(CFG)
+    state = {"files": list(files)}
+    monkeypatch.setattr(fx, "changed", lambda tree: list(state["files"]))
+    monkeypatch.setattr(runner.Effects, "preflight", lambda self, *a, **k: None)
+
+    def spy(cmd, *a, **k):
+        if cmd[0] == "git":  # diff --quiet: 1 = محتوى تغيّر فعلاً، 0 = فرقُ نهايات أسطرٍ فقط
+            gits.append(cmd)
+            return runner.subprocess.CompletedProcess(cmd, 0 if eol_only else 1, "", "")
+        seen.append(cmd)
+        if on_docker:
+            on_docker(state)
+        return runner.subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(runner, "sh", spy)
+    fx.gits = gits
+    return fx, seen
+
+
+def test_regenerate_writes_the_identity_reference_only_when_its_sources_changed(tmp_path, monkeypatch):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "gen_identity_reference.py").write_text("", encoding="utf-8")
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["app/views.py"])
+    assert fx.regenerate(str(tmp_path)) == [] and seen == []  # لا مصدرَ هويّة ولا سجلَّ حجم: لا حاوية
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["static/css/custom/40-themes.css"],
+                         lambda st: st["files"].append(".claude/rules/identity-colours-core.md"))
+    assert fx.regenerate(str(tmp_path)) == [".claude/rules/identity-colours-core.md"]
+    assert seen[0][-1] == runner.REGEN_IDENTITY and "--network" in seen[0]
+
+
+def test_regenerate_ratchets_down_and_never_blesses_growth(tmp_path, monkeypatch):
+    import json
+    (tmp_path / "tests").mkdir()
+    size = tmp_path / runner.SIZE_BASELINE
+    size.write_text(json.dumps({"a.py": 1500, "b.py": 1200}), encoding="utf-8")
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["a.py"],
+                         lambda st: size.write_text(json.dumps({"a.py": 1300, "b.py": 1220, "new.py": 1001}), encoding="utf-8"))
+    fx.regenerate(str(tmp_path))
+    assert seen[0][-1] == runner.REGEN_RATCHETS  # بلا مولِّد الهويّة: لم يتغيّر مصدرٌ له
+    assert json.loads(size.read_text(encoding="utf-8")) == {"a.py": 1300, "b.py": 1200}
+
+
+def test_regenerate_does_nothing_on_a_clean_tree(tmp_path, monkeypatch):
+    fx, seen = _regen_fx(tmp_path, monkeypatch, [])
+    assert fx.regenerate(str(tmp_path)) == [] and seen == []
+
+
+def test_generated_identity_rules_do_not_break_scope_only():
+    card = {"runner_checks": ["scope_only"], "scope_files": ["static/css/custom/40-themes.css"]}
+    assert runner.criteria_failures(card, ["static/css/custom/40-themes.css", ".claude/rules/identity-colours-core.md"]) == []
+    assert runner.criteria_failures(card, ["static/css/custom/40-themes.css", ".claude/rules/other.md"])
+
+
+def test_regenerate_drops_files_that_differ_in_line_endings_only(tmp_path, monkeypatch):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / runner.SIZE_BASELINE).write_text("{}", encoding="utf-8")
+    fx, _seen = _regen_fx(tmp_path, monkeypatch, ["a.py"], lambda st: st["files"].append("tests/layering_baseline.json"), eol_only=True)
+    assert fx.regenerate(str(tmp_path)) == []  # وإلا عُدّ «تغييراً» لنموذجٍ لم يغيّر شيئاً
+    assert ["git", "checkout", "--", "tests/layering_baseline.json"] in fx.gits
+
+
+# ───────── الاعتماد يتبع إعادة البطاقة، والاعتماد الميّت يُحال إلى المالك ─────────
+def _dep_chain(lp):
+    """901 أُغلقت، 903 إعادتُها أُغلقت، 904 إعادةُ الإعادة؛ و902 تعتمد على 901."""
+    _card(lp, "W-20261104-901", state="closed", request_file="web-a")
+    _card(lp, "W-20261104-902", depends_on=["W-20261104-901"])
+    _card(lp, "W-20261104-903", state="closed", request_file="web-b", retry_of="web-a")
+    _card(lp, "W-20261104-904", state="in_progress", request_file="web-c", retry_of="web-b")
+
+
+def test_dependency_follows_the_retry_chain_until_published(env):
+    lp, _ = env
+    _dep_chain(lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.resolve_dep("W-20261104-901", items)["id"] == "W-20261104-904"
+    assert runner.unmet_deps(items["W-20261104-902"], items) == ["W-20261104-901"]  # الإعادةُ جارية: تنتظر
+    assert runner.dead_deps(items["W-20261104-902"], items) == [] and runner.pick_card(items, CFG) is None
+    ledger.append_event("state", "W-20261104-904", {"state": "published"}, lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.pick_card(items, CFG)["id"] == "W-20261104-902"
+
+
+def test_dead_dependency_is_referred_to_the_owner_once(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="closed", request_file="web-a")
+    _card(lp, "W-20261104-902", depends_on=["W-20261104-901", "W-20261104-999"])
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.dead_deps(items["W-20261104-902"], items) == ["W-20261104-901", "W-20261104-999"]  # مغلقةٌ بلا إعادة، ومعرّفٌ بلا بطاقة
+    assert runner.flag_dead_deps(items, lp) == ["W-20261104-902"]
+    assert "W-20261104-902: تنتظر W-20261104-901، W-20261104-999 وقد أُغلقت بلا إعادة" in _queue()
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.flag_dead_deps(items, lp) == [] and _queue().count("W-20261104-902") == 1
+    assert runner.pick_card(items, CFG) is None  # الإحالةُ لا تفكّ الانتظار
+
+
+def test_a_retry_after_the_referral_revives_the_waiting_card(env):
+    lp, lock = env
+    _card(lp, "W-20261104-901", state="closed", request_file="web-a")
+    _card(lp, "W-20261104-902", depends_on=["W-20261104-901"])
+    assert runner.run_cycle(CFG, Fake(), lp, lock) == "idle" and "W-20261104-902" in _queue()
+    _card(lp, "W-20261104-903", state="published", request_file="web-b", retry_of="web-a")
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.dead_deps(items["W-20261104-902"], items) == [] and runner.pick_card(items, CFG)["id"] == "W-20261104-902"
+
+
+def test_retry_cycle_does_not_hang_dependency_resolution(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="closed", request_file="web-a", retry_of="web-b")
+    _card(lp, "W-20261104-903", state="closed", request_file="web-b", retry_of="web-a")
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.resolve_dep("W-20261104-901", items)["state"] == "closed"
+
+
+# ───────── نافذة النشر: لا دمج وقت الدوام من أيّ طريق، ولا تُحسب مهلة الطابور عليه ─────────
+def test_window_check_asks_as_the_merge_queue_does(tmp_path, monkeypatch):
+    seen = {}
+
+    def spy(cmd, cwd=None, timeout=1800, inp=None, env_extra=None):
+        seen.update(cmd=cmd, env=env_extra)
+        return runner.subprocess.CompletedProcess(cmd, 1, "", "")
+
+    monkeypatch.setattr(runner, "sh", spy)
+    assert runner.Effects(CFG).in_deploy_window(str(tmp_path), 1444) is False
+    # بلا EVENT=merge_group يسمح السكربتُ دائماً؛ ورقمُ الطلب بصيغة مرجع الطابور ليُقرأ وسمُ «نشر-عاجل»
+    assert seen["env"]["EVENT"] == "merge_group" and "/pr-1444-" in seen["env"]["HEAD_REF"] and seen["env"]["REPO"] == runner.GH_REPO
+
+
+def test_merge_stage_waits_for_the_window_on_every_path(env):
+    lp, _ = env
+    _card(lp, state="in_progress")
+    fx = Fake(window=False)
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7) == "waiting_window" and not fx.merged
+    fx.window = True
+    fx.merge_state = "OPEN"
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7) == "waiting_merge" and fx.merged
+
+
+def test_school_hours_starting_mid_queue_do_not_burn_the_merge_timeout(env):
+    lp, _ = env
+    _card(lp, state="in_progress")
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": {"stage": "merged_wait", "merged_wait_since": 0, "pr": 7}}, lp)
+    fx = Fake(window=False)
+    fx.merge_state = "OPEN"
+    late = lambda: runner.MERGE_WAIT_S * 5  # noqa: E731 — مضت خمسُ ساعات: بلا الإصلاح تُغلق البطاقة
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7, now=late) == "waiting_window" and not fx.merged
+    r = _state(lp)["runner_resume"]
+    assert r["stage"] == "merge" and "merged_wait_since" not in r
+    events = len(ledger.load_events(lp))
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7, now=late) == "waiting_window"
+    assert len(ledger.load_events(lp)) == events  # لا حدثَ كلَّ دورة
+    fx.window = True  # فُتحت النافذة: دمجٌ جديد ومهلةٌ جديدة
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7, now=late) == "waiting_merge" and fx.merged
+    assert _state(lp)["runner_resume"]["merged_wait_since"] == late()
