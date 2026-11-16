@@ -2556,6 +2556,21 @@ def test_reopen_resumes_a_closed_card_on_its_open_pr(env):
     assert card["runner_resume"]["pr"] == 9 and "ci_fixes" not in card["runner_resume"] and card["runner_resume"]["spent"] == 1.0
 
 
+def test_reopen_drops_the_stale_merge_wait_clock(env):
+    """أُغلقت وهي تنتظر الطابور: الاستئنافُ يعود إلى الفحوص لا إلى مهلةٍ انقضت أمس (002، 2026-11-16)."""
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="in_progress")
+    rr = {"pr": 9, "branch": "claude/x", "head": "abc", "tree": "/t", "good": "g", "stage": "merged_wait", "merged_wait_since": 1.0}
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": rr}, lp)
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": None}, lp)
+    ledger.append_event("state", "W-20261104-901", {"state": "closed"}, lp)
+    fx = Fake()
+    fx.merge_state = "OPEN"
+    fx.restore_tree = lambda branch, tree: None
+    assert runner.reopen_card("W-20261104-901", fx, lp)[0]
+    assert _state(lp)["runner_resume"] == {"pr": 9, "branch": "claude/x", "head": "abc", "tree": "/t", "good": "g"}
+
+
 def test_reopen_refuses_a_merged_or_unrecorded_pr(env):
     lp, _ = env
     _card(lp, "W-20261104-901", state="closed")

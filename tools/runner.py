@@ -2583,7 +2583,9 @@ def reopen_card(cid: str, fx: Effects | None = None, lpath=None) -> tuple[bool, 
     if state != "OPEN":
         return False, f"{cid}: الطلب {r['pr']} حالته {state} لا OPEN"
     fx.restore_tree(r["branch"], r["tree"])
-    r = {k: v for k, v in r.items() if k not in ("ci_fixes", "ci_fp", "ci_fp_head", "revisions")}
+    # الطلبُ OPEN فلم يُدمج: مرحلةُ ما بعد الدمج وساعتُها القديمة تُسقطان، وإلا انقضت مهلةُ الساعة في أوّل دورة (002، 2026-11-16)
+    stale = ("ci_fixes", "ci_fp", "ci_fp_head", "revisions", "stage", "merged_wait_since", "deploy_wait_since", "oid")
+    r = {k: v for k, v in r.items() if k not in stale}
     ledger.append_event("note", cid, {"text": f"[مالك] استئناف على الطلب {r['pr']}", "by": "owner"}, lpath)
     ledger.append_event("update", cid, {"runner_hold": False, "runner_resume": r, "waiting": None}, lpath)
     ledger.append_event("state", cid, {"state": "in_progress", "by": BY}, lpath)
