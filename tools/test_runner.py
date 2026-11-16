@@ -44,6 +44,9 @@ class Fake(runner.Effects):
     def autoformat(self, tree):
         self.calls = getattr(self, "calls", []) + ["autoformat"]
         return []
+    def regenerate(self, tree):
+        self.regens = getattr(self, "regens", 0) + 1
+        return list(getattr(self, "regen_made", []))
     def changed(self, tree): return self.files
     def diff(self, tree): return "diff"
     def commit_push(self, tree, branch, files, msg): return "h1"
@@ -2852,3 +2855,92 @@ def test_a_page_closed_to_the_preview_account_skips_seeding_and_goes_direct(env)
     runner.require_preview(card, ["templates/x.html"], lp)
     assert _state(lp)["approval"] == "مباشر"
     assert card["state"] in ("published", "closed")
+
+
+# ───────── التوليد الآليّ قبل الفحص (مرجع الهويّة وسجلّا الطبقات والحجم) ─────────
+def test_regenerate_runs_before_every_verify_and_is_noted(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake(verify=(False, True))
+    fx.regen_made = ["tests/file_size_baseline.json"]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published"
+    assert fx.regens == 2
+    notes = [e["data"]["text"] for e in ledger.load_events(lp) if e["kind"] == "note"]
+    assert sum("وُلّد آليًّا بلا نموذج: tests/file_size_baseline.json" in n for n in notes) == 2
+
+
+def test_size_baseline_keeps_shrinkage_only():
+    import json
+    old = json.dumps({"a.py": 1500, "b.py": 1200, "c.py": 1100}, indent=2, sort_keys=True) + chr(10)
+    # a صغُر، b كبُر داخل الهامش، c نزل تحت الحدّ فحُذف، d جديدٌ فوق الحدّ
+    new = json.dumps({"a.py": 1300, "b.py": 1210, "d.py": 1050})
+    assert json.loads(runner.clamp_size_baseline(old, new)) == {"a.py": 1300, "b.py": 1200}
+
+
+def test_size_baseline_untouched_returns_the_original_text():
+    old = '{"a.py":1500}'  # تنسيقٌ غيرُ تنسيق المولِّد: يعود كما هو فلا فرقَ في الإيداع
+    assert runner.clamp_size_baseline(old, '{\n  "a.py": 1510\n}') is old
+    assert runner.clamp_size_baseline(old, "ليس JSON") is old
+
+
+def _regen_fx(tmp_path, monkeypatch, files, on_docker=None, eol_only=False):
+    seen, gits = [], []
+    fx = runner.Effects(CFG)
+    state = {"files": list(files)}
+    monkeypatch.setattr(fx, "changed", lambda tree: list(state["files"]))
+    monkeypatch.setattr(runner.Effects, "preflight", lambda self, *a, **k: None)
+
+    def spy(cmd, *a, **k):
+        if cmd[0] == "git":  # diff --quiet: 1 = محتوى تغيّر فعلاً، 0 = فرقُ نهايات أسطرٍ فقط
+            gits.append(cmd)
+            return runner.subprocess.CompletedProcess(cmd, 0 if eol_only else 1, "", "")
+        seen.append(cmd)
+        if on_docker:
+            on_docker(state)
+        return runner.subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(runner, "sh", spy)
+    fx.gits = gits
+    return fx, seen
+
+
+def test_regenerate_writes_the_identity_reference_only_when_its_sources_changed(tmp_path, monkeypatch):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "gen_identity_reference.py").write_text("", encoding="utf-8")
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["app/views.py"])
+    assert fx.regenerate(str(tmp_path)) == [] and seen == []  # لا مصدرَ هويّة ولا سجلَّ حجم: لا حاوية
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["static/css/custom/40-themes.css"],
+                         lambda st: st["files"].append(".claude/rules/identity-colours-core.md"))
+    assert fx.regenerate(str(tmp_path)) == [".claude/rules/identity-colours-core.md"]
+    assert seen[0][-1] == runner.REGEN_IDENTITY and "--network" in seen[0]
+
+
+def test_regenerate_ratchets_down_and_never_blesses_growth(tmp_path, monkeypatch):
+    import json
+    (tmp_path / "tests").mkdir()
+    size = tmp_path / runner.SIZE_BASELINE
+    size.write_text(json.dumps({"a.py": 1500, "b.py": 1200}), encoding="utf-8")
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["a.py"],
+                         lambda st: size.write_text(json.dumps({"a.py": 1300, "b.py": 1220, "new.py": 1001}), encoding="utf-8"))
+    fx.regenerate(str(tmp_path))
+    assert seen[0][-1] == runner.REGEN_RATCHETS  # بلا مولِّد الهويّة: لم يتغيّر مصدرٌ له
+    assert json.loads(size.read_text(encoding="utf-8")) == {"a.py": 1300, "b.py": 1200}
+
+
+def test_regenerate_does_nothing_on_a_clean_tree(tmp_path, monkeypatch):
+    fx, seen = _regen_fx(tmp_path, monkeypatch, [])
+    assert fx.regenerate(str(tmp_path)) == [] and seen == []
+
+
+def test_generated_identity_rules_do_not_break_scope_only():
+    card = {"runner_checks": ["scope_only"], "scope_files": ["static/css/custom/40-themes.css"]}
+    assert runner.criteria_failures(card, ["static/css/custom/40-themes.css", ".claude/rules/identity-colours-core.md"]) == []
+    assert runner.criteria_failures(card, ["static/css/custom/40-themes.css", ".claude/rules/other.md"])
+
+
+def test_regenerate_drops_files_that_differ_in_line_endings_only(tmp_path, monkeypatch):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / runner.SIZE_BASELINE).write_text("{}", encoding="utf-8")
+    fx, _seen = _regen_fx(tmp_path, monkeypatch, ["a.py"], lambda st: st["files"].append("tests/layering_baseline.json"), eol_only=True)
+    assert fx.regenerate(str(tmp_path)) == []  # وإلا عُدّ «تغييراً» لنموذجٍ لم يغيّر شيئاً
+    assert ["git", "checkout", "--", "tests/layering_baseline.json"] in fx.gits

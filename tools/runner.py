@@ -251,7 +251,8 @@ def _check_scope_only(card: dict, files: list[str]) -> str:
     if not declared:
         return ""  # لا نطاقَ معلناً: لا شيء يُقارَن
     areas = {scope_area(f) for f in declared} - {""}
-    out = [f for f in files if f not in declared and not (f.startswith("tests/") or "/tests/" in f) and scope_area(f) not in areas]
+    out = [f for f in files if f not in declared and not (f.startswith("tests/") or "/tests/" in f) and scope_area(f) not in areas
+           and not f.startswith(IDENTITY_RULES)]  # مرجعُ الهويّة يولّده المشغّل نفسُه (regenerate) فلا يُحسب خروجاً عن النطاق
     return ("المعيار «لا ملفّ خارج النطاق»: عُدّل خارج الملفّات المعلنة: " + ", ".join(out[:8])) if out else ""
 
 
@@ -290,6 +291,25 @@ def legal_gap(added: str, tree: str) -> list[str]:
 
 
 MENU_FILE = "templates/base/base.html"
+IDENTITY_RULES = ".claude/rules/identity-"  # ما يكتبه scripts/gen_identity_reference.py
+IDENTITY_SOURCES = ("static/", "templates/", "core/icons.py")  # ما يتقادم المرجعُ بتغيّره
+SIZE_BASELINE = "tests/file_size_baseline.json"
+# حتميٌّ وبصفر توكنز: المولِّدُ يكتب مرجعَه، وسجلُّ الطبقات يثبّت النقصَ وحدَه (ratchet_down)؛ وسجلُّ الحجم يُقصّ بعده في clamp_size_baseline
+REGEN_IDENTITY = "python scripts/gen_identity_reference.py"
+REGEN_RATCHETS = "python -m tests.layering_ratchet --update; python -m tests.file_size_ratchet --update"
+
+
+def clamp_size_baseline(old_text: str, new_text: str) -> str:
+    """`file_size_ratchet --update` يكتب الحجمَ الحاليّ كلَّه، فيبارك زيادةً داخل الهامش وملفّاً جديداً فوق الحدّ.
+    هنا يبقى النقصُ وحدَه: لا بندَ جديداً ولا قيمةَ تعلو المسجَّل؛ وما لم يتغيّر يعود بنصّه الأصليّ بلا فرقٍ في الإيداع."""
+    try:
+        old, new = json.loads(old_text), json.loads(new_text)
+    except ValueError:
+        return old_text
+    kept = {p: min(n, old[p]) for p, n in new.items() if p in old}
+    if kept == old:
+        return old_text
+    return json.dumps(kept, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 #: قوائمُ شخصيّةٌ لا أقسام: لا يُطلب فيها رابطُ صفحةٍ إداريّة
 PERSONAL_MENUS = frozenset({"m-user"})
 SHARED_DIRS = {"core", "scripts", "shschool", ".github", "docs", "static"}
@@ -895,6 +915,40 @@ class Effects:
         if p.returncode:
             raise RunnerError(f"بيئةٌ: تعذّر ruff format — {(p.stdout + p.stderr).strip()[-200:]}")
         return files
+
+    def regenerate(self, tree: str) -> list[str]:
+        """ما يطلبه حارسٌ بأمرٍ معروف يُنفَّذ هنا قبل الفحص لا في جولة نموذج: مرجعُ الهويّة المولَّد وتثبيتُ نقص سجلَّي الطبقات والحجم.
+
+        من 9 إلى 15 نوفمبر أُغلقت W-20261109-011 (سجلّ الحجم، 3.50$) وW-20261115-004 (مرجع الهويّة) بالفشل نفسه مرّتين،
+        ورسالةُ الفشل في الاثنتين تذكر الأمر الذي يصلحها. فشلُ المولِّد لا يُسقط البطاقة: الفحصُ بعده هو الحكم.
+        يُرجع ما تغيّر به من ملفّات.
+        """
+        before = self.changed(tree)
+        if not before:
+            return []
+        cmds = [REGEN_RATCHETS] if (Path(tree) / SIZE_BASELINE).is_file() else []
+        if any(f.startswith(IDENTITY_SOURCES) for f in before) and (Path(tree) / "scripts/gen_identity_reference.py").is_file():
+            cmds.insert(0, REGEN_IDENTITY)
+        if not cmds:
+            return []
+        import flow_pump as fp  # noqa: PLC0415
+
+        size = Path(tree) / SIZE_BASELINE
+        old = size.read_text(encoding="utf-8") if size.is_file() else ""
+        self.preflight()
+        sh(["docker", "run", "--rm", "--network", "none", "-v", f"{tree}:/w", "-w", "/w", fp.PREPUSH_IMAGE,
+            "sh", "-c", "; ".join(cmds)], tree, 600)
+        if old and size.is_file():
+            size.write_text(clamp_size_baseline(old, size.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
+        made = []
+        for f in self.changed(tree):
+            if f in before:
+                continue
+            # الحاويةُ تكتب LF والشجرةُ على ويندوز CRLF: الملفُّ يظهر معدَّلاً ومحتواه واحد، فيُحسب «تغييراً» لنموذجٍ لم يغيّر شيئاً
+            if sh(["git", "diff", "--quiet", "--", f], tree).returncode == 0 and sh(["git", "checkout", "--", f], tree).returncode == 0:
+                continue
+            made.append(f)
+        return made
 
     def quick_check(self, tree: str) -> tuple[bool, str]:
         """فحصٌ بالثواني قبل الحاوية: أخطاءُ الصياغة والأسماءُ غير المعرَّفة فقط، لأنّ ruff الجهاز أحدثُ من نسخة CI
@@ -2056,6 +2110,7 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
     if not res.ok:
         return "waiting_ci"
     fx.autoformat(tree)
+    fx.regenerate(tree)
     files = fx.changed(tree)
     if not files:  # الجولةُ التالية بالسجلّ نفسه لن تأتي بجديد (#1348)
         save_fail_diff(cid, fx.branch_diff(tree))
@@ -2101,6 +2156,7 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
     if not res.ok:
         return "waiting_ci"
     fx.autoformat(tree)
+    fx.regenerate(tree)
     files = fx.changed(tree)
     if not files:
         save_fail_diff(cid, fx.branch_diff(tree))
@@ -2314,6 +2370,9 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         break  # فشل النموذج: التصعيد إلى الأعلى مسموحُ السلّم
                     advance_others(cid, cfg, fx, lpath)
                     fx.autoformat(tree)  # ما تصلحه الأداةُ لا يُعاد إلى النموذج
+                    made = fx.regenerate(tree)
+                    if made:
+                        ledger.append_event("note", cid, {"text": f"[مشغّل] وُلّد آليًّا بلا نموذج: {', '.join(made)[:200]}", "by": BY}, lpath)
                     ok, log = fx.verify(tree)
                     fp = () if ok else failure_fingerprint(log)
                     if fp == ("ruff format --check",):  # تصلحه الأداة: بلا جولة نموذج
