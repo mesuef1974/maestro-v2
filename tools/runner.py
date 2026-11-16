@@ -401,7 +401,42 @@ def attachment_leak(tree: str, files: list[str], card: dict) -> list[str]:
 # ───────────────────────── الاختيار ─────────────────────────
 def unmet_deps(card: dict, items: dict[str, dict]) -> list[str]:
     """بطاقاتٌ يعتمد عليها هذا الطلبُ ولم تُنشر بعد: لا يبدأ بناؤه قبل اندماج ما يقوم عليه ونشرِه (002 إلى 009، 2026-11-09)."""
-    return [d for d in card.get("depends_on") or [] if (items.get(d) or {}).get("state") != "published"]
+    return [d for d in card.get("depends_on") or [] if (resolve_dep(d, items) or {}).get("state") != "published"]
+
+
+def resolve_dep(dep_id: str, items: dict[str, dict]) -> dict | None:
+    """البطاقةُ التي يُنتظر نشرُها فعلاً: إن أُغلقت المعتمَدُ عليها وأُعيد طلبُها ببطاقةٍ جديدة (retry_of = ملفّ طلبها) فالانتظارُ يتبع الإعادة.
+
+    W-20261114-006 اعتمدت على 005 فأُغلقت 005 وأُعيدت مرّتين حتى نُشرت 011، والتابعةُ بقيت تنتظر بطاقةً لن تُنشر أبداً."""
+    cur, seen = items.get(dep_id), set()
+    while cur and cur.get("state") == "closed" and cur["id"] not in seen:
+        seen.add(cur["id"])
+        key = cur.get("request_file")
+        retries = [i for i in items.values() if key and i.get("retry_of") == key and i["id"] not in seen]
+        if not retries:
+            break
+        cur = max(retries, key=lambda i: i.get("created", ""))
+    return cur
+
+
+def dead_deps(card: dict, items: dict[str, dict]) -> list[str]:
+    """اعتمادٌ لن يتحقّق وحدَه: معرّفٌ لا بطاقةَ له، أو بطاقةٌ أُغلقت بلا إعادةٍ بعدها."""
+    return [d for d in card.get("depends_on") or [] if (resolve_dep(d, items) or {"state": "closed"}).get("state") == "closed"]
+
+
+def flag_dead_deps(items: dict[str, dict], lpath=None, queue: Path | None = None) -> list[str]:
+    """بطاقةٌ موجَّهةٌ تنتظر ما لن يُنشر تُحال إلى المالك مرّةً واحدة لكلّ حال، بدل أن تبقى في الطابور صامتة. تُرجع ما أُحيل."""
+    flagged = []
+    for card in items.values():
+        dead = dead_deps(card, items) if card.get("state") == "routed" else []
+        if not dead or card.get("dep_dead_noted") == dead:
+            continue
+        text = f"تنتظر {'، '.join(dead)} وقد أُغلقت بلا إعادة: أعِد طلبها فتتبعها هذه، أو ألغِ هذه"
+        ledger.append_event("note", card["id"], {"text": f"[مشغّل] {text}", "by": BY}, lpath)
+        ledger.append_event("update", card["id"], {"dep_dead_noted": dead}, lpath)
+        refer(card["id"], text, queue)
+        flagged.append(card["id"])
+    return flagged
 
 
 def pick_card(items: dict[str, dict], cfg: dict) -> dict | None:
@@ -2653,6 +2688,7 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
             items = ledger.reduce_state(ledger.load_events(lpath))
             if sum(not awaiting_owner(i) for i in inflight(items)) >= MAX_INFLIGHT:
                 return out
+            flag_dead_deps(items, lpath)
             card = pick_card(items, cfg)
             if not card:
                 return out

@@ -2944,3 +2944,55 @@ def test_regenerate_drops_files_that_differ_in_line_endings_only(tmp_path, monke
     fx, _seen = _regen_fx(tmp_path, monkeypatch, ["a.py"], lambda st: st["files"].append("tests/layering_baseline.json"), eol_only=True)
     assert fx.regenerate(str(tmp_path)) == []  # وإلا عُدّ «تغييراً» لنموذجٍ لم يغيّر شيئاً
     assert ["git", "checkout", "--", "tests/layering_baseline.json"] in fx.gits
+
+
+# ───────── الاعتماد يتبع إعادة البطاقة، والاعتماد الميّت يُحال إلى المالك ─────────
+def _dep_chain(lp):
+    """901 أُغلقت، 903 إعادتُها أُغلقت، 904 إعادةُ الإعادة؛ و902 تعتمد على 901."""
+    _card(lp, "W-20261104-901", state="closed", request_file="web-a")
+    _card(lp, "W-20261104-902", depends_on=["W-20261104-901"])
+    _card(lp, "W-20261104-903", state="closed", request_file="web-b", retry_of="web-a")
+    _card(lp, "W-20261104-904", state="in_progress", request_file="web-c", retry_of="web-b")
+
+
+def test_dependency_follows_the_retry_chain_until_published(env):
+    lp, _ = env
+    _dep_chain(lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.resolve_dep("W-20261104-901", items)["id"] == "W-20261104-904"
+    assert runner.unmet_deps(items["W-20261104-902"], items) == ["W-20261104-901"]  # الإعادةُ جارية: تنتظر
+    assert runner.dead_deps(items["W-20261104-902"], items) == [] and runner.pick_card(items, CFG) is None
+    ledger.append_event("state", "W-20261104-904", {"state": "published"}, lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.pick_card(items, CFG)["id"] == "W-20261104-902"
+
+
+def test_dead_dependency_is_referred_to_the_owner_once(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="closed", request_file="web-a")
+    _card(lp, "W-20261104-902", depends_on=["W-20261104-901", "W-20261104-999"])
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.dead_deps(items["W-20261104-902"], items) == ["W-20261104-901", "W-20261104-999"]  # مغلقةٌ بلا إعادة، ومعرّفٌ بلا بطاقة
+    assert runner.flag_dead_deps(items, lp) == ["W-20261104-902"]
+    assert "W-20261104-902: تنتظر W-20261104-901، W-20261104-999 وقد أُغلقت بلا إعادة" in _queue()
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.flag_dead_deps(items, lp) == [] and _queue().count("W-20261104-902") == 1
+    assert runner.pick_card(items, CFG) is None  # الإحالةُ لا تفكّ الانتظار
+
+
+def test_a_retry_after_the_referral_revives_the_waiting_card(env):
+    lp, lock = env
+    _card(lp, "W-20261104-901", state="closed", request_file="web-a")
+    _card(lp, "W-20261104-902", depends_on=["W-20261104-901"])
+    assert runner.run_cycle(CFG, Fake(), lp, lock) == "idle" and "W-20261104-902" in _queue()
+    _card(lp, "W-20261104-903", state="published", request_file="web-b", retry_of="web-a")
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.dead_deps(items["W-20261104-902"], items) == [] and runner.pick_card(items, CFG)["id"] == "W-20261104-902"
+
+
+def test_retry_cycle_does_not_hang_dependency_resolution(env):
+    lp, _ = env
+    _card(lp, "W-20261104-901", state="closed", request_file="web-a", retry_of="web-b")
+    _card(lp, "W-20261104-903", state="closed", request_file="web-b", retry_of="web-a")
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.resolve_dep("W-20261104-901", items)["state"] == "closed"
