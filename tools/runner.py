@@ -291,6 +291,7 @@ def legal_gap(added: str, tree: str) -> list[str]:
 
 
 MENU_FILE = "templates/base/base.html"
+GH_REPO = "sh-school/shschool_mvp"
 IDENTITY_RULES = ".claude/rules/identity-"  # ما يكتبه scripts/gen_identity_reference.py
 IDENTITY_SOURCES = ("static/", "templates/", "core/icons.py")  # ما يتقادم المرجعُ بتغيّره
 SIZE_BASELINE = "tests/file_size_baseline.json"
@@ -1476,8 +1477,13 @@ class Effects:
         sh(["git", "fetch", "-q", "origin", "main"], tree)
         return sh(["git", "rev-parse", f"{oid}^1"], tree).stdout.strip()
 
-    def in_deploy_window(self, tree: str) -> bool:
-        return sh([sys.executable, "scripts/deploy_window.py"], tree).returncode == 0
+    def in_deploy_window(self, tree: str, pr: int = 0) -> bool:
+        """السؤالُ بحدث الطابور نفسِه: السكربتُ يسمح دائماً لأيّ حدثٍ غير `merge_group`، فبلا EVENT كان هذا الفحصُ «مسموحاً» وقتَ الدوام.
+
+        W-20261115-002 (الطلب 1444) دُمجت الأحد 11:09 فأخرجها الطابورُ 13 مرّةً في ساعةٍ ثمّ أُغلقت بعد اعتماد المالك.
+        ورقمُ الطلب بصيغة مرجع الطابور، فيقرأ السكربتُ وسمَ «نشر-عاجل» كما يقرؤه هناك؛ وتعذّرُ القراءة يُعدّ منعاً."""
+        env = {"EVENT": "merge_group", "REPO": GH_REPO, "HEAD_REF": f"refs/heads/gh-readonly-queue/main/pr-{pr}-runner" if pr else ""}
+        return sh([sys.executable, "scripts/deploy_window.py"], tree, env_extra=env).returncode == 0
 
     def pr_state(self, tree: str, pr: int) -> tuple[str, str]:
         p = sh(["gh", "pr", "view", str(pr), "--json", "state,mergeCommit"], tree)
@@ -1654,7 +1660,7 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {reasons}")
     if fx.remote_head(branch) != head:
         raise Transient("الرأسُ تغيّر بعد الفحص")
-    if not fx.in_deploy_window(tree):  # الدمجُ نشرٌ فوريّ: خارجَ النافذة لا دمج، ويبقى الطلبُ مفتوحاً
+    if not fx.in_deploy_window(tree, pr):  # الدمجُ نشرٌ فوريّ: خارجَ النافذة لا دمج، ويبقى الطلبُ مفتوحاً
         return "waiting_window"
     if deploy_busy(card["id"], lpath):  # نشرٌ واحدٌ في الطريق فقط، فيبقى هدفُ التراجع عند فشل الصحّة واضحاً
         return "waiting_turn"
@@ -2306,6 +2312,8 @@ def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stag
     resume_ = dict(card.get("runner_resume") or {})
     stage = resume_.get("stage", r_stage)
     if stage == "merge":
+        if not fx.in_deploy_window(tree, pr):  # كلُّ طريقٍ إلى الدمج يمرّ من هنا (اعتمادُ المعاينة والاستئنافُ لا يمرّان بالبوّابة)
+            return "waiting_window"
         resume_["good"] = fx.main_sha()  # آخرُ نشرٍ سليم قبل هذا الدمج
         if not fx.merge(tree, pr):
             raise Transient(f"تعذّر دمجُ الطلب {pr}")
@@ -2315,6 +2323,12 @@ def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stag
     if stage == "merged_wait":
         state, oid = fx.pr_state(tree, pr)
         if state != "MERGED":
+            if state == "OPEN" and not fx.in_deploy_window(tree, pr):
+                # بدأ الدوامُ والطلبُ في الطابور: الطابورُ سيُخرجه، فلا يُعاد إدخالُه ولا تُحسب عليه مهلةُ الساعة؛ يعود إلى «دمج» حين تُفتح النافذة
+                resume_.pop("merged_wait_since", None)
+                resume_["stage"] = "merge"
+                ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
+                return "waiting_window"
             if state == "CLOSED" or now() - _since(card, "merged_wait", now) > MERGE_WAIT_S:
                 raise RunnerError(f"الطلب {pr} لم يُدمج ({state}) — أُخرج من الطابور أو انقضت مهلة 60 دقيقة")
             if state == "OPEN" and fx.pr_conflicted(tree, pr):  # لا يدخل الطابورَ أبداً، ويحجز خانةً ساعةً كاملة (#1355)

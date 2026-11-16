@@ -119,7 +119,7 @@ class Fake(runner.Effects):
     def merge(self, tree, pr):
         self.merged = True
         return True
-    def in_deploy_window(self, tree): return self.window
+    def in_deploy_window(self, tree, pr=0): return self.window
     def healthy(self): return self.is_healthy
     def pr_state(self, tree, pr): return self.merge_state, "oid1"
     def pr_conflicted(self, tree, pr): return getattr(self, "conflicted", False)
@@ -2996,3 +2996,45 @@ def test_retry_cycle_does_not_hang_dependency_resolution(env):
     _card(lp, "W-20261104-903", state="closed", request_file="web-b", retry_of="web-a")
     items = ledger.reduce_state(ledger.load_events(lp))
     assert runner.resolve_dep("W-20261104-901", items)["state"] == "closed"
+
+
+# ───────── نافذة النشر: لا دمج وقت الدوام من أيّ طريق، ولا تُحسب مهلة الطابور عليه ─────────
+def test_window_check_asks_as_the_merge_queue_does(tmp_path, monkeypatch):
+    seen = {}
+
+    def spy(cmd, cwd=None, timeout=1800, inp=None, env_extra=None):
+        seen.update(cmd=cmd, env=env_extra)
+        return runner.subprocess.CompletedProcess(cmd, 1, "", "")
+
+    monkeypatch.setattr(runner, "sh", spy)
+    assert runner.Effects(CFG).in_deploy_window(str(tmp_path), 1444) is False
+    # بلا EVENT=merge_group يسمح السكربتُ دائماً؛ ورقمُ الطلب بصيغة مرجع الطابور ليُقرأ وسمُ «نشر-عاجل»
+    assert seen["env"]["EVENT"] == "merge_group" and "/pr-1444-" in seen["env"]["HEAD_REF"] and seen["env"]["REPO"] == runner.GH_REPO
+
+
+def test_merge_stage_waits_for_the_window_on_every_path(env):
+    lp, _ = env
+    _card(lp, state="in_progress")
+    fx = Fake(window=False)
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7) == "waiting_window" and not fx.merged
+    fx.window = True
+    fx.merge_state = "OPEN"
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7) == "waiting_merge" and fx.merged
+
+
+def test_school_hours_starting_mid_queue_do_not_burn_the_merge_timeout(env):
+    lp, _ = env
+    _card(lp, state="in_progress")
+    ledger.append_event("update", "W-20261104-901", {"runner_resume": {"stage": "merged_wait", "merged_wait_since": 0, "pr": 7}}, lp)
+    fx = Fake(window=False)
+    fx.merge_state = "OPEN"
+    late = lambda: runner.MERGE_WAIT_S * 5  # noqa: E731 — مضت خمسُ ساعات: بلا الإصلاح تُغلق البطاقة
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7, now=late) == "waiting_window" and not fx.merged
+    r = _state(lp)["runner_resume"]
+    assert r["stage"] == "merge" and "merged_wait_since" not in r
+    events = len(ledger.load_events(lp))
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7, now=late) == "waiting_window"
+    assert len(ledger.load_events(lp)) == events  # لا حدثَ كلَّ دورة
+    fx.window = True  # فُتحت النافذة: دمجٌ جديد ومهلةٌ جديدة
+    assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7, now=late) == "waiting_merge" and fx.merged
+    assert _state(lp)["runner_resume"]["merged_wait_since"] == late()
