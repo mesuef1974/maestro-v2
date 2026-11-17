@@ -3075,3 +3075,19 @@ def test_school_hours_starting_mid_queue_do_not_burn_the_merge_timeout(env):
     fx.window = True  # فُتحت النافذة: دمجٌ جديد ومهلةٌ جديدة
     assert runner.merge_and_publish(_state(lp), fx, lp, "/t", 7, now=late) == "waiting_merge" and fx.merged
     assert _state(lp)["runner_resume"]["merged_wait_since"] == late()
+
+
+def test_page_field_with_a_description_gives_the_path_alone():
+    """حقلُ «الصفحة» نصٌّ حرّ: الوصفُ بعد المسار لا يدخل الرابطَ (W-20261117-002 أسقط الدورةَ بـInvalidURL)."""
+    card = {"scope_page": "/wings/ ورقة خروج الطالب (الإصدار وإعادة الطباعة)"}
+    assert runner.page_path(card) == "/wings/"
+    assert runner.preview_info(card, 7)["url"] == runner.PREVIEW_URL + "/wings/"
+    assert runner.page_path({}) == "" and runner.preview_info({}, 7)["url"] == runner.PREVIEW_URL + "/"
+
+
+def test_page_status_survives_a_url_that_cannot_be_sent(monkeypatch):
+    def boom(*_a, **_k):
+        raise runner.http.client.InvalidURL("URL can't contain control characters")
+
+    monkeypatch.setattr(runner, "open_as", boom)
+    assert runner.Effects.page_status(type("F", (), {"target": 0})(), "/a b", "1") == 0

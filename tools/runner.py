@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import http.cookiejar
 import importlib.util
 import json
@@ -1320,7 +1321,7 @@ class Effects:
         """رمزُ HTTP لصفحة البطاقة بحساب المعاينة قبل أيّ بذر: 403 صلاحيّةٌ لا بياناتٌ ناقصة، فلا يصلحها سكربت."""
         try:
             return open_as(account, path, slot_url(self.target) if self.target else PREVIEW_URL)
-        except (OSError, AttributeError):
+        except (OSError, AttributeError, http.client.HTTPException):  # رابطٌ لا يُرسَل أصلاً ليس 403: لا يُسقط الدورة
             return 0
 
     def check_seed(self, path: str, account: str) -> tuple[bool, str]:
@@ -1680,12 +1681,19 @@ def same_tree(a: str, b: str) -> bool:
     return a.replace("\\", "/").rstrip("/").lower() == b.replace("\\", "/").rstrip("/").lower()
 
 
+def page_path(card: dict) -> str:
+    """مسارُ الصفحة وحده من حقل «الصفحة»: الحقلُ نصٌّ حرّ قد يتبع المسارَ فيه وصفٌ («/wings/ ورقة الخروج»)، والوصفُ
+    في الرابط يرفعه http.client استثناءً أسقط كلَّ دورةٍ بلا أثرٍ في الدفتر (W-20261117-002: خمسون دقيقةً عند «يجهّز المعاينة»)."""
+    parts = str(card.get("scope_page") or "").split()
+    return parts[0] if parts else ""
+
+
 def preview_info(card: dict, pr: int) -> dict:
     """ما يلزم المالكَ ليعاين، في حقلٍ يقرؤه ميزان أيضاً."""
     number, role = card.get("preview_account") or PREVIEW_ACCOUNT
     acc = card.get("accept")
     checks = [a for a in acc if not str(a).startswith(AUTO_CRITERIA)] if isinstance(acc, list) else [str(acc or "")]
-    page = card.get("scope_page") or "/"
+    page = page_path(card) or "/"
     return {"url": PREVIEW_URL + (page if page.startswith("/") else "/" + page), "account": number, "role": role,
             "password_at": PREVIEW_PASSWORD_AT, "checks": checks or [card.get("problem", "")], "pr": pr}
 
@@ -1737,7 +1745,7 @@ def seed_preview(card: dict, info: dict, fx: Effects, lpath=None) -> tuple[str, 
     mapped, log = fx.map_rls(info["account"])
     if not mapped:
         return "", failure_summary(mask(log))[:200]
-    page = str(card.get("scope_page") or "")
+    page = page_path(card)
     if page.startswith("/") and fx.page_status(page, info["account"]) == 403:
         return "", PREVIEW_FORBIDDEN  # محصورةٌ عن حساب المعاينة: ستُّ محاولات بذرٍ أُحرقت على 403 لا يصلحه بذر (W-20261114-003)
     saved = SEED_SCRIPTS / f"{cid}.py"
