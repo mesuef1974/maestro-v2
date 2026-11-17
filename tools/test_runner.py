@@ -2714,6 +2714,26 @@ def test_a_revision_that_fails_local_checks_is_not_a_round_and_stops_after_three
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and "أسقط الفحصَ المحلّي" in _queue()
 
 
+def test_revision_failures_accumulate_and_reopen_resets_the_try_counter(env):
+    """003 (2026-11-17): تأرجح النموذجُ بين سقوطين لأنه لا يرى إلا آخرَهما، والاستئنافُ أبقى عدّادَ المحاولات فتُغلق عند أوّل رفض."""
+    lp, lock = env
+    _preview_card(lp)
+    fx = Fake()
+    runner.run_cycle(CFG, fx, lp, lock)
+    assert runner.decide_preview("W-20261104-901", False, "الخط كبير", lp)[0]
+    for log in ("E   كتلة style 0 → 1", "E   صنف بلا تعريف: sig", "E   كتلة style 0 → 1"):
+        fx.verify = lambda tree, _l=log: (False, _l)
+        runner.run_cycle(CFG, fx, lp, lock)
+    fail = _state(lp)["runner_resume"]["revise_fail"]
+    assert "صنف بلا تعريف" in fail and fail.count("كتلة style") == 1
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred"
+    fx.merge_state, fx.restore_tree = "OPEN", lambda branch, tree: None
+    ok, why = runner.reopen_card("W-20261104-901", fx, lp)
+    assert ok, why
+    r = _state(lp)["runner_resume"]
+    assert "revise_tries" not in r and "صنف بلا تعريف" in r["revise_fail"]
+
+
 def test_model_runs_with_a_test_environment_and_is_told_how_to_verify(monkeypatch, tmp_path):
     """W-20261111-001: كلُّ pytest سقط بلا SECRET_KEY، والأوامرُ المركّبة رُفضت، فعدّل النموذجُ خمسَ جولاتٍ على العمى."""
     seen = {}
