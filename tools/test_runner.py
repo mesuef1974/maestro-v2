@@ -2726,7 +2726,9 @@ def test_revision_failures_accumulate_and_reopen_resets_the_try_counter(env):
         runner.run_cycle(CFG, fx, lp, lock)
     fail = _state(lp)["runner_resume"]["revise_fail"]
     assert "صنف بلا تعريف" in fail and fail.count("كتلة style") == 1
+    assert fail.split(runner.REVISE_SEP)[-1] == "E   كتلة style 0 → 1"  # المتكرّرُ يُنقل إلى الآخر
     assert runner.run_cycle(CFG, fx, lp, lock) == "referred"
+    assert "كتلة style" in _queue() and "صنف بلا تعريف" not in _queue()  # التقريرُ يذكر آخرَ سقوطٍ وحدَه
     fx.merge_state, fx.restore_tree = "OPEN", lambda branch, tree: None
     ok, why = runner.reopen_card("W-20261104-901", fx, lp)
     assert ok, why

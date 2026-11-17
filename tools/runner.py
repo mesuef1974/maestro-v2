@@ -2174,7 +2174,8 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
 
 
 REVISION_MAX = 2  # جولتا تعديلٍ بسبب المالك على الطلب نفسه، ثم تُغلق بتقرير
-REVISE_TRIES_MAX = 3  # محاولاتُ النموذج لرفضٍ واحد: سقوطُ الفحص المحلّي لا يُحسب جولةً على المالك (005 أُغلقت بجولتين لم تبلغاه)
+REVISE_SEP = "\n---\n"  # فاصلُ أسباب السقوط المتراكمة في revise_fail
+REVISE_TRIES_MAX = 3 # محاولاتُ النموذج لرفضٍ واحد: سقوطُ الفحص المحلّي لا يُحسب جولةً على المالك (005 أُغلقت بجولتين لم تبلغاه)
 
 
 def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, pr: int) -> str:
@@ -2183,7 +2184,7 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
     r = dict(card.get("runner_resume") or {})
     done, spent, tries = int(r.get("revisions") or 0), float(r.get("spent") or 0), int(r.get("revise_tries") or 0)
     if tries >= REVISE_TRIES_MAX:
-        raise RunnerError(f"تعديلُ الطلب {pr} بعد رفضك أسقط الفحصَ المحلّي {tries} مرّات: {str(r.get('revise_fail') or '')[:300]}")
+        raise RunnerError(f"تعديلُ الطلب {pr} بعد رفضك أسقط الفحصَ المحلّي {tries} مرّات: {str(r.get('revise_fail') or '').split(REVISE_SEP)[-1][:300]}")  # آخرُ سقوطٍ لا أوّلُه (003: ذُكر <style> القديم والساقطُ اختبارٌ آخر)
     model, _, budget = _tiers(cfg, card)[-1]
     rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
     ask = "رفض المالك المعاينة بهذا السبب، عدِّل ما يلزم ليُحقّقه: " + reason
@@ -2208,7 +2209,7 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
         # تُعاد للجولة التالية فلا تكرّر الخطأ نفسَه (005). وتتراكم الأسبابُ المختلفة ولا يمحو آخرُها ما قبله:
         # 003 تأرجحت بين <style> في القالب وأصنافٍ بلا تعريف ثلاثَ محاولاتٍ لأنها لا ترى إلا آخرَ سقوط (2026-11-17)
         prev, new = str(r.get("revise_fail") or ""), fail_detail(mask(vlog))
-        r["revise_fail"] = (prev if new in prev else f"{prev}\n---\n{new}" if prev else new)[-4500:]
+        r["revise_fail"] = REVISE_SEP.join([s for s in prev.split(REVISE_SEP) if s and s != new] + [new])[-4500:]  # المتكرّرُ يُنقل إلى الآخر: آخرُ مقطعٍ هو آخرُ سقوط
         card["runner_resume"] = r
         ledger.append_event("update", cid, {"runner_resume": r}, lpath)
         ledger.append_event("note", cid, {"text": f"[مشغّل] تعديلٌ بعد الرفض فشل: {summary}", "by": BY}, lpath)
