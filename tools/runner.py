@@ -2188,7 +2188,7 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
     rules = [Path(f).read_text(encoding="utf-8")[:3000] for f in card.get("rules") or [] if Path(f).is_file()]
     ask = "رفض المالك المعاينة بهذا السبب، عدِّل ما يلزم ليُحقّقه: " + reason
     if r.get("revise_fail"):
-        ask += "\n\nمحاولتك السابقة أسقطت الفحص المحلّي، فلا تكرّر سببه:\n" + str(r["revise_fail"])
+        ask += "\n\nمحاولاتك السابقة أسقطت الفحص المحلّي بالأسباب الآتية كلِّها؛ لا تكرّر أيًّا منها ولا تعُد إلى حلٍّ سقط قبلُ:\n" + str(r["revise_fail"])
     res = fx.run_model(tree, brief(card, rules, ask, fx.branch_diff(tree)), model, budget)
     record_run(cid, f"{model} تعديل بعد رفض {done + 1}", res, lpath)
     r.update(revise_tries=tries + 1, spent=spent + res.cost)
@@ -2205,7 +2205,10 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
     ok, vlog = fx.verify(tree)
     if not ok:
         summary = failure_summary(mask(vlog))
-        r["revise_fail"] = fail_detail(mask(vlog))  # تُعاد للجولة التالية فلا تكرّر الخطأ نفسَه (005: سقطت جولتان على حارس الطبقات ذاته)
+        # تُعاد للجولة التالية فلا تكرّر الخطأ نفسَه (005). وتتراكم الأسبابُ المختلفة ولا يمحو آخرُها ما قبله:
+        # 003 تأرجحت بين <style> في القالب وأصنافٍ بلا تعريف ثلاثَ محاولاتٍ لأنها لا ترى إلا آخرَ سقوط (2026-11-17)
+        prev, new = str(r.get("revise_fail") or ""), fail_detail(mask(vlog))
+        r["revise_fail"] = (prev if new in prev else f"{prev}\n---\n{new}" if prev else new)[-4500:]
         card["runner_resume"] = r
         ledger.append_event("update", cid, {"runner_resume": r}, lpath)
         ledger.append_event("note", cid, {"text": f"[مشغّل] تعديلٌ بعد الرفض فشل: {summary}", "by": BY}, lpath)
@@ -2584,7 +2587,8 @@ def reopen_card(cid: str, fx: Effects | None = None, lpath=None) -> tuple[bool, 
         return False, f"{cid}: الطلب {r['pr']} حالته {state} لا OPEN"
     fx.restore_tree(r["branch"], r["tree"])
     # الطلبُ OPEN فلم يُدمج: مرحلةُ ما بعد الدمج وساعتُها القديمة تُسقطان، وإلا انقضت مهلةُ الساعة في أوّل دورة (002، 2026-11-16)
-    stale = ("ci_fixes", "ci_fp", "ci_fp_head", "revisions", "stage", "merged_wait_since", "deploy_wait_since", "oid")
+    # عدّادُ محاولات الرفض يُسقط معها وإلا أُغلقت عند أوّل رفضٍ بعد الاستئناف؛ وأسبابُ السقوط (revise_fail) تبقى ليراها النموذج (003، 2026-11-17)
+    stale = ("ci_fixes", "ci_fp", "ci_fp_head", "revisions", "revise_tries", "stage", "merged_wait_since", "deploy_wait_since", "oid")
     r = {k: v for k, v in r.items() if k not in stale}
     ledger.append_event("note", cid, {"text": f"[مالك] استئناف على الطلب {r['pr']}", "by": "owner"}, lpath)
     ledger.append_event("update", cid, {"runner_hold": False, "runner_resume": r, "waiting": None}, lpath)
