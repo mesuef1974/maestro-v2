@@ -2637,12 +2637,20 @@ def seed_from_earlier(card: dict, tree: str, fx: Effects, lpath=None) -> str:
     return ""
 
 
+def _request_order(f: Path) -> tuple:
+    """ترتيبُ التقديم لا ترتيبُ الأسماء: web-X-2 (تصادمٌ في الثانية نفسها) يأتي بعد web-X لا قبله، لأنّ «-» يسبق «.» أبجديّاً."""
+    m = re.fullmatch(r"(.+?)-(\d{1,3})", f.stem)
+    if m and re.search(r"\d{8}-\d{6}$", m.group(1)):
+        return (m.group(1), int(m.group(2)))
+    return (f.stem, 1)
+
+
 def intake_requests(cfg: dict, lpath=None) -> int:
     """ملفّاتُ requests/*.md ← بطاقاتٌ بلا نموذج؛ القالب: عنوان/مطلوب/معايير/وسم، سطرٌ لكلّ مفتاح."""
     n = 0
     if not REQUESTS.is_dir():
         return 0
-    for f in sorted(REQUESTS.glob("*.md")):
+    for f in sorted(REQUESTS.glob("*.md"), key=_request_order):
         fields = {}
         try:
             text = f.read_text(encoding="utf-8")
