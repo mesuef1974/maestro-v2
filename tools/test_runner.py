@@ -28,6 +28,7 @@ class Fake(runner.Effects):
         self.runs = 0
         self.ci = "green"
         self.merge_state = "MERGED"
+        self.passed = []  # فحوصٌ ناجحة بأسمائها (فحصا الهجرة لدمج D-532م)
         self.prod = "oid1"
         self.old_prs = []
         self.removed = False
@@ -54,6 +55,8 @@ class Fake(runner.Effects):
     def set_pr_body(self, tree, pr, body): self.pr_bodies = getattr(self, 'pr_bodies', []) + [body]
     def close_old_prs(self, tree, cid, new): return self.old_prs
     def checks_state(self, tree, pr): return self.ci
+
+    def passed_names(self, tree, pr): return list(self.passed)
     def failed_checks(self, tree, pr): return "Ruff"
     def failed_names(self, tree, pr): return list(getattr(self, "failed", ["Ruff"])) if self.ci == "red" else []
     def infra_runs(self, tree, pr): return dict(getattr(self, "cancelled", {})) if self.ci == "red" else {}
@@ -3120,3 +3123,97 @@ def test_visual_label_alone_when_snapshots_run_on_labeled(monkeypatch):
 def test_visual_on_label_reads_the_types_list():
     assert runner.VISUAL_ON_LABEL.search("  pull_request:\n    types: [opened, synchronize, reopened, labeled]\n")
     assert not runner.VISUAL_ON_LABEL.search("  pull_request:\n    branches: [main]\n")
+
+
+# ───── المراجعة الجذرية 2026-11-19: دمج الهجرة بعد الاعتماد (D-532م)، منع النوم (D-533م)، الإعادة الآليّة ─────
+MIG_OK = ["مدقّق الهجرات — Expand/Contract", "زمن الهجرات"]
+
+
+def test_an_approved_migration_card_merges_itself_when_its_two_checks_pass(env):
+    lp, _ = env
+    card = _owner_merge_card(lp)
+    fx = _OwnerMerge(gate=False)
+    fx.passed = MIG_OK
+    fx.pr_body_of = lambda tree, pr: runner.pr_body(card, "h1")
+    out = runner.finish(card, CFG, fx, lp, "t", "b", "h1", 7)
+    st = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert out == "published" and st["state"] == "published" and not st.get("owner_action")
+
+
+def test_a_migration_without_its_checks_or_without_approval_still_waits_for_the_owner():
+    approved = {"approval": "معاينة", "preview_approved": True}
+    assert runner.approved_migration(approved, MIG, MIG_OK) is True
+    assert runner.approved_migration(approved, MIG, MIG_OK[:1]) is False
+    assert runner.approved_migration({"approval": "مباشر", "preview_approved": True}, MIG, MIG_OK) is False
+    assert runner.approved_migration({"approval": "معاينة"}, MIG, MIG_OK) is False
+    two = "مساراتٌ محظورةٌ على الدمج الآليّ: a/migrations/1.py (يطابق */migrations/*)، b/migrations/2.py (يطابق */migrations/*)"
+    assert runner.approved_migration(approved, two, MIG_OK) is True
+    sec = "مساراتٌ محظورةٌ على الدمج الآليّ: a/migrations/1.py (يطابق */migrations/*)، core/permissions.py (يطابق *permissions*)"
+    assert runner.approved_migration(approved, sec, MIG_OK) is False
+    perm_mig = "مساراتٌ محظورةٌ على الدمج الآليّ: a/migrations/0003_permissions.py (يطابق *permissions*)"
+    assert runner.approved_migration(approved, perm_mig, MIG_OK) is False
+
+
+class _Kernel:
+    def __init__(self): self.calls = []
+    def SetThreadExecutionState(self, flags): self.calls.append(flags); return 1
+
+
+def test_keep_awake_only_while_a_card_can_move_without_the_owner(env):
+    lp, _ = env
+    k = _Kernel()
+    assert runner.keep_awake({}, CFG, kernel=k) is False and k.calls == []
+    _owner_merge_card(lp)
+    ledger.append_event("update", "W-20261104-901", {"waiting": {"stage": "waiting_owner"}}, lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.keep_awake(items, CFG, kernel=k) is False
+    ledger.append_event("update", "W-20261104-901", {"waiting": {"stage": "waiting_ci"}}, lp)
+    items = ledger.reduce_state(ledger.load_events(lp))
+    assert runner.keep_awake(items, CFG, kernel=k) is True
+    assert k.calls == [runner.ES_CONTINUOUS | runner.ES_SYSTEM_REQUIRED]
+
+
+def test_keep_awake_for_a_routed_card_waiting_to_be_built(env):
+    lp, _ = env
+    _card(lp)
+    assert runner.busy_cards(ledger.reduce_state(ledger.load_events(lp)), CFG) == ["W-20261104-901"]
+
+
+def _done_request(folder, stem="web-20261119-020400", extra=""):
+    folder.mkdir(parents=True, exist_ok=True)
+    lines = ["العنوان: عنوان الطلب هنا", "المطلوب: شيء", "معايير القبول: يمرّ", "الوسم: صغير", *([extra] if extra else []),
+             "مقدَّم في: 2026-11-19T02:04:00", "المصدر: mizan-form", "sha256: ab"]
+    (folder / f"{stem}.done").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return stem
+
+
+def test_a_build_failure_is_retried_once_from_its_diff_then_never_again(env):
+    lp, _ = env
+    src = _done_request(runner.REQUESTS)
+    again = runner.auto_retry({"id": "W-1", "request_file": src}, "نموذج")
+    body = (runner.REQUESTS / f"{again}.md").read_text(encoding="utf-8")
+    assert f"إعادة لـ: {src}" in body and "إعادة آلية: نعم" in body and "sha256" not in body and body.count("العنوان:") == 1
+    runner.intake_requests(CFG, lp)
+    new = next(i for i in ledger.reduce_state(ledger.load_events(lp)).values() if i.get("request_file") == again)
+    assert new["retry_of"] == src and new["auto_retry"] is True
+    assert runner.auto_retry(new, "نموذج") == ""  # الإعادةُ الآليّة لا تُعاد
+
+
+def test_no_auto_retry_for_owner_rejection_environment_or_a_missing_request(env):
+    src = _done_request(runner.REQUESTS)
+    assert runner.auto_retry({"id": "W-1", "request_file": src}, "أخرى") == ""
+    assert runner.auto_retry({"id": "W-1", "request_file": src}, "بيئة") == ""
+    assert runner.auto_retry({"id": "W-1", "request_file": src, "owner_cancelled": "x"}, "نموذج") == ""
+    assert runner.auto_retry({"id": "W-1"}, "نموذج") == ""
+    assert runner.auto_retry({"id": "W-1", "request_file": "web-20000101-000000"}, "نموذج") == ""
+    assert list(runner.REQUESTS.glob("*.md")) == []
+
+
+def test_fail_closes_and_writes_the_one_auto_retry(env):
+    lp, _ = env
+    src = _done_request(runner.REQUESTS)
+    _card(lp, request_file=src)
+    card = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert runner.fail(card, runner.RunnerError("فشل النموذج بعد السلّم الكامل: x"), Fake(), lp) == "referred"
+    assert len(list(runner.REQUESTS.glob("*.md"))) == 1
+    assert "أُعيدت آليًّا" in runner.OWNER_QUEUE.read_text(encoding="utf-8")

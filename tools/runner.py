@@ -1430,6 +1430,10 @@ class Effects:
         out = sh(["gh", "pr", "checks", str(pr)], tree).stdout
         return [ln.split("\t")[0] for ln in out.splitlines() if "\tfail" in ln or "\tcancel" in ln]
 
+    def passed_names(self, tree: str, pr: int) -> list[str]:
+        out = sh(["gh", "pr", "checks", str(pr)], tree).stdout
+        return [ln.split("\t")[0] for ln in out.splitlines() if "\tpass" in ln]
+
     def failed_checks(self, tree: str, pr: int) -> str:
         return "، ".join(self.failed_names(tree, pr))[:300] or "؟"
 
@@ -1665,9 +1669,10 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         return hold_for_owner(card, lpath, pr, head)
     if not fx.gate_allows(tree, pr):
         reasons = fx.gate_reasons(tree, pr)
-        if owner_merge_only(reasons):  # هجرةٌ أو مسارٌ محظورٌ على الآليّ: الدمجُ للمالك بتصميم البوّابة، لا فشلُ بطاقة
+        if not owner_merge_only(reasons):
+            raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {reasons}")
+        if not approved_migration(card, reasons, fx.passed_names(tree, pr)):  # مسارٌ محظورٌ غيرُ الهجرة، أو هجرةٌ بلا اعتماد معاينة: الدمجُ للمالك
             return wait_owner_merge(card, fx, lpath, tree, pr, head, reasons)
-        raise RunnerError(f"بوّابةُ الدمج الآليّ رفضت الطلب {pr}: {reasons}")
     if fx.remote_head(branch) != head:
         raise Transient("الرأسُ تغيّر بعد الفحص")
     if not fx.in_deploy_window(tree, pr):  # الدمجُ نشرٌ فوريّ: خارجَ النافذة لا دمج، ويبقى الطلبُ مفتوحاً
@@ -2062,6 +2067,24 @@ def owner_merge_only(reasons: str) -> bool:
     """كلُّ أسباب رفض البوّابة هي المساراتُ المحظورةُ وحدَها (هجرة، صلاحيات…): والباقي فشلٌ حقيقيٌّ يبقى فشلاً."""
     lines = [x.strip() for x in reasons.split(" | ") if x.strip()]
     return bool(lines) and all(x.startswith(OWNER_MERGE_MARK) for x in lines)
+
+
+MIGRATION_PATTERN = "(يطابق */migrations/*)"  # نصُّ البوّابة لكلّ ملفٍّ محظور؛ هجرةٌ اسمُها يطابق نمطًا أسبق (permissions…) تبقى يدويّة
+MIGRATION_CHECKS = ("مدقّق الهجرات", "زمن الهجرات")  # فحصا CI للهجرة: يلزم نجاحُهما لا غيابُهما
+
+
+def approved_migration(card: dict, reasons: str, passed: list[str]) -> bool:
+    """D-532م: اعتمادُ المالك معاينةَ الرأس على 8500 إذنُ دمجٍ لبطاقة الهجرة، متى كان كلُّ المحظور هجراتٍ ونجح فحصاها.
+
+    قبلها وقفت بطاقاتُ الهجرة سبعَ مرّاتٍ في أسبوعٍ عند «ينتظر دمجك اليدويّ» (19.7 ساعة، المراجعة 2026-11-19 البند 2).
+    البطاقةُ المباشرةُ بلا معاينة، وأيُّ مسارٍ محظورٍ غيرِ الهجرة (أمن، صلاحيّات، أدوار) يبقى للمالك."""
+    if card.get("approval") != "معاينة" or not card.get("preview_approved"):
+        return False
+    body = reasons.split(":", 1)[1] if ":" in reasons else ""
+    entries = [x.strip() for x in body.replace(" | ", "، ").split("، ") if x.strip()]
+    if not entries or not all(x.endswith(MIGRATION_PATTERN) for x in entries):
+        return False
+    return all(any(c in name for name in passed) for c in MIGRATION_CHECKS)
 
 
 def wait_owner_merge(card: dict, fx: Effects, lpath, tree: str, pr: int, head: str, reasons: str, now=None) -> str:
@@ -2540,8 +2563,40 @@ def fail(card: dict, exc: Exception, fx: Effects, lpath=None) -> str:
     ledger.append_event("note", cid, {"text": f"[مشغّل] أُغلقت بتقرير: {exc}"[:800], "by": BY}, lpath)
     ledger.append_event("update", cid, {"runner_hold": True, "runner_resume": None, "fail_kind": fail_kind(str(exc))}, lpath)
     ledger.append_event("state", cid, {"state": "closed", "by": BY, "held_by": ""}, lpath)
-    refer(cid, str(exc)[:700])  # يتّسع للرأس والمعايير الناقصة وآخر سبب، فلا يُقصّ السببُ من التقرير
+    again = auto_retry(card, fail_kind(str(exc)))
+    if again:
+        ledger.append_event("note", cid, {"text": f"[مشغّل] أُعيدت آليًّا مرّةً من فرقها: {again}", "by": BY}, lpath)
+    refer(cid, str(exc)[:600] + (f" — أُعيدت آليًّا مرّةً من فرقها ({again})، وتتبعها البطاقات المعتمدة عليها" if again else ""))
     return "referred"
+
+
+AUTO_RETRY_KINDS = ("نموذج", "ci", "بلا_تغيير")  # فشلُ البناء وحده؛ رفضُ المالك وإلغاؤه والبيئةُ والبوّابة لا تُعاد آليًّا
+AUTO_RETRY_DROP = ("إعادة لـ:", "إعادة آلية:", "مقدَّم في:", "المصدر:", "sha256:")
+
+
+def auto_retry(card: dict, kind: str, folder: Path | None = None, now=None) -> str:
+    """إعادةٌ آليّةٌ واحدةٌ للطلب نفسه من فرق محاولته قبل أن يتوقّف كلُّ ما يعتمد عليه (المراجعة 2026-11-19 البند 3).
+
+    001 فشلت 02:32 فوقفت 002 و003 حتى أعاد المالكُ طلبَها بيده 05:31. الإعادةُ ملفُّ طلبٍ جديدٌ بـ«إعادة لـ» فتبدأ من فرق
+    المحاولة (prior_diff) وتتبعها المعتمِدةُ عليها (resolve_dep)، و«إعادة آلية» تمنع إعادةً ثانية."""
+    src = card.get("request_file") or ""
+    if kind not in AUTO_RETRY_KINDS or not src or card.get("auto_retry") or card.get("owner_cancelled"):
+        return ""
+    folder = folder or REQUESTS
+    orig = folder / f"{src}.done"
+    if not orig.is_file():
+        return ""
+    lines = [ln for ln in orig.read_text(encoding="utf-8").splitlines() if ln.strip() and not ln.startswith(AUTO_RETRY_DROP)]
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
+    path, n = folder / f"web-{stamp}.md", 1
+    while path.exists() or path.with_suffix(".done").exists():
+        n += 1
+        path = folder / f"web-{stamp}-{n}.md"
+    tmp = folder / ".incoming" / (path.name + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(chr(10).join(lines + [f"إعادة لـ: {src}", "إعادة آلية: نعم", f"مقدَّم في: {time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now))}", "المصدر: runner-auto-retry"]) + chr(10), encoding="utf-8")
+    os.replace(tmp, path)
+    return path.stem
 
 
 def resume(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
@@ -2685,7 +2740,7 @@ def intake_requests(cfg: dict, lpath=None) -> int:
         cid = ledger.new_id(ledger.load_events(lpath))
         touches = [t.strip() for t in fields.get("يمسّ", "").split("،") if t.strip()]
         approval = "معاينة" if fields.get("الاعتماد") == "معاينة" or (not fields.get("الاعتماد") and fields["الوسم"] == "تصميم") else "مباشر"
-        extra = {"request_file": f.stem, "retry_of": fields.get("إعادة لـ", ""), "req_type": fields.get("النوع", ""), "criteria_ids": [int(x) for x in _split_list(fields, "معايير مرقّمة") if x.isdigit()],
+        extra = {"request_file": f.stem, "retry_of": fields.get("إعادة لـ", ""), "auto_retry": fields.get("إعادة آلية", "") == "نعم", "req_type": fields.get("النوع", ""), "criteria_ids": [int(x) for x in _split_list(fields, "معايير مرقّمة") if x.isdigit()],
                  "runner_checks": [c for c in _split_list(fields, "فحوص المشغّل") if c in CRITERIA_CHECKS],
                  "legal": fields.get("يلمس لائحة", "") == "نعم", "scope_page": fields.get("الصفحة", ""), "scope_files": _split_list(fields, "الملفات"), "out_of_scope": fields.get("خارج النطاق", ""), "depends_on": [d for d in re.split(r"[\s,،]+", fields.get("يعتمد على", "")) if re.fullmatch(r"W-\d{8}-\d{3}", d)],
                  "attachments_dir": fields.get("المرفقات", "") if Path(fields.get("المرفقات", "") or "/nonexistent").is_dir() else "",
@@ -2723,6 +2778,7 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
     try:
         intake_requests(cfg, lpath)
         requeue_orphans(lpath)
+        keep_awake(ledger.reduce_state(ledger.load_events(lpath)), cfg)
         fx = fx or Effects(cfg)
         out = "idle"
         try:
@@ -2744,6 +2800,35 @@ def run_cycle(cfg: dict | None = None, fx: Effects | None = None, lpath=None, lo
             return report_env(str(exc))
     finally:
         release_lock(lock)
+
+
+IDLE_STAGES = ("waiting_owner", "waiting_owner_merge", "waiting_window")  # لا يتقدّم فيها شيءٌ بلا المالك أو بلا الساعة: لا سببَ لإبقاء الجهاز صاحيًا
+ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+
+
+def busy_cards(items: dict, cfg: dict) -> list[str]:
+    """بطاقاتٌ تتقدّم بلا يد: قيد البناء، أو تنتظر CI أو المعاينة أو النشر، أو في الطابور ما يُلتقط الآن."""
+    out = [i["id"] for i in items.values() if i.get("state") == "in_progress" and not i.get("runner_resume")]
+    out += [i["id"] for i in inflight(items) if ((i.get("waiting") or {}).get("stage") or "waiting_ci") not in IDLE_STAGES]
+    if not out:
+        nxt = pick_card(items, cfg)
+        out = [nxt["id"]] if nxt else []
+    return out
+
+
+def keep_awake(items: dict, cfg: dict, kernel=None) -> bool:
+    """D-533م: الجهازُ لا ينام آليًّا ما دامت بطاقةٌ تتقدّم. نام اليوم ثلاثَ مرّاتٍ فتوقّفت البطاقاتُ ستَّ ساعات (007 أنهت CI
+    في 07:03 ولم تُعرض إلا 10:25؛ المراجعة 2026-11-19 البند 1). الطلبُ لعمر عمليّة الدورة وحدها (≈4.5 دقيقة) ويزول بخروجها،
+    والمهمّةُ تعيده كلَّ خمس دقائق؛ فلا يُغيَّر إعدادٌ في النظام، ولا يمنع إطفاءً يدويًّا ولا إغلاقَ الغطاء."""
+    if sys.platform != "win32" and kernel is None:
+        return False
+    try:
+        if not busy_cards(items, cfg):
+            return False
+        kernel = kernel or __import__("ctypes").windll.kernel32
+        return bool(kernel.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED))
+    except (OSError, AttributeError, ValueError):  # منعُ النوم لا يوقف الدورة
+        return False
 
 
 def requeue_orphans(lpath=None) -> list[str]:
