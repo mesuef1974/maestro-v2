@@ -1041,9 +1041,10 @@ class Effects:
         name = f"runner-{Path(tree).name.lower()}"
         extra = referenced_tests(tree, self.changed(tree))
         affected = self.affected_env(tree)
+        branches = fp.open_pr_branches()  # حارسُ تصادم الهجرات يُحصر بالطلبات المفتوحة لا بكلّ فرعٍ مهجور
 
         def cmd_for(net: str) -> list[str]:
-            cmd = fp.prepush_command(tree, gitdir, common, name, net, fp.root_prepush_scripts(tree))
+            cmd = fp.prepush_command(tree, gitdir, common, name, net, fp.root_prepush_scripts(tree), branches)
             i = cmd.index(fp.PREPUSH_IMAGE)
             cmd[i:i] = [*prepush_env(extra, tree), *affected]
             return cmd

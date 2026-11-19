@@ -3,6 +3,9 @@
 «الطلباتُ المفتوحة» هنا فروعُ origin/* غيرُ المدموجة في origin/main، تُقرأ من مجلّد .git الرئيس المركَّب للقراءة (يلزم أن يكون
 المضيفُ قد جلب origin حديثاً). هي مجموعةٌ فوقيّةٌ من الطلبات المفتوحة (فرعٌ بلا طلب أو دُمج بـsquash ولم يُحذف يدخلها)،
 فالخطأ المحتمل إنذارٌ زائد لا نجاحٌ زائف؛ والملفُّ ذاتُه بالمسار نفسِه ليس تصادماً في حارس المنصّة.
+
+والمضيفُ يملك gh فيمرّر فروعَ الطلبات المفتوحة في PREPUSH_OPEN_BRANCHES (مفصولةً بفواصل) فتُحصر بها: فرعٌ مهجورٌ بلا طلب
+أسقط إصلاحَ W-20261119-005 بتصادمٍ مع 0087 في claude/w009-032-view-as-role (2026-10-29، بلا طلبٍ قطّ). غيابُ المتغيّر = السلوكُ القديم.
 """
 
 from __future__ import annotations
@@ -10,7 +13,7 @@ from __future__ import annotations
 import os
 
 
-def open_pull_requests(run, base: str = "origin/main", not_measured=RuntimeError) -> dict[str, dict]:
+def open_pull_requests(run, base: str = "origin/main", not_measured=RuntimeError, only: set[str] | None = None) -> dict[str, dict]:
     """بصيغة scripts/check_migration_collisions.open_pull_requests: التسمية ← {head, branch, files}. `run` أمرٌ → CompletedProcess."""
     refs = run(["git", "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/remotes/origin"])
     if refs.returncode != 0:
@@ -24,6 +27,8 @@ def open_pull_requests(run, base: str = "origin/main", not_measured=RuntimeError
         branch = name.removeprefix("origin/")
         if branch in ("HEAD", "main") or name == "origin":
             continue
+        if only is not None and branch not in only:
+            continue  # فرعٌ بلا طلبٍ مفتوح: لا يُحجز رقمُ هجرته
         if run(["git", "merge-base", "--is-ancestor", sha, base]).returncode == 0:
             continue  # مدموجٌ في main: ليس مفتوحاً
         mb = run(["git", "merge-base", base, sha])
@@ -42,7 +47,9 @@ def check(pc, cmc):
     saved = {k: os.environ.get(k) for k in ("GIT_DIR", "GIT_WORK_TREE")}
     if git_dir:
         os.environ["GIT_DIR"], os.environ["GIT_WORK_TREE"] = git_dir, os.getcwd()
-    cmc.open_pull_requests = lambda: open_pull_requests(cmc._run, not_measured=cmc.NotMeasuredError)
+    listed = os.environ.get("PREPUSH_OPEN_BRANCHES")
+    only = {b for b in listed.split(",") if b} if listed is not None else None
+    cmc.open_pull_requests = lambda: open_pull_requests(cmc._run, not_measured=cmc.NotMeasuredError, only=only)
     try:
         code, message = cmc.run()
     finally:
