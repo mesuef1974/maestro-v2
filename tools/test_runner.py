@@ -3103,3 +3103,20 @@ def test_page_status_survives_a_url_that_cannot_be_sent(monkeypatch):
 
     monkeypatch.setattr(runner, "open_as", boom)
     assert runner.Effects.page_status(type("F", (), {"target": 0})(), "/a b", "1") == 0
+
+
+def test_visual_label_alone_when_snapshots_run_on_labeled(monkeypatch):
+    """فحصُ اللقطات على labeled في main: الوسمُ وحده بلا إغلاقٍ وفتحٍ يعيدان كلَّ الفحوص (#1466)؛ وإلا فالطريقُ القديم."""
+    calls = []
+    monkeypatch.setattr(runner, "sh", lambda cmd, cwd=None, **k: calls.append(cmd) or types.SimpleNamespace(returncode=0, stdout="", stderr=""))
+    fx = runner.Effects.__new__(runner.Effects)
+    for on_label, expected in ((True, [["edit"]]), (False, [["edit"], ["close"], ["reopen"]])):
+        calls.clear()
+        monkeypatch.setattr(runner.Effects, "visual_on_label", lambda self, v=on_label: v)
+        fx.mark_visual("t", 7)
+        assert [c[2:3] for c in calls] == expected
+
+
+def test_visual_on_label_reads_the_types_list():
+    assert runner.VISUAL_ON_LABEL.search("  pull_request:\n    types: [opened, synchronize, reopened, labeled]\n")
+    assert not runner.VISUAL_ON_LABEL.search("  pull_request:\n    branches: [main]\n")

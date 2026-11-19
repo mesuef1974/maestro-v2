@@ -1409,11 +1409,19 @@ class Effects:
         return out
 
     def mark_visual(self, tree: str, pr: int) -> None:
-        """الوسمُ ثمّ إغلاقٌ وفتحٌ ليعمل فحصُ اللقطات بحمولةٍ تحمل الوسم."""
-        for cmd in (["edit", str(pr), "--add-label", VISUAL_LABEL], ["close", str(pr)], ["reopen", str(pr)]):
+        """الوسم؛ وإن لم يعمل فحصُ اللقطات على labeled في main فإغلاقٌ وفتحٌ ليعمل بحمولةٍ تحمل الوسم.
+
+        الفتحُ يعيد كلَّ فحوص الطلب (نحو 45 دقيقة هدرًا، #1466 في 2026-11-19)، فيُتجنَّب متى دعم الملفُّ الحدث (web-20261119-174632)."""
+        reopen = () if self.visual_on_label() else (["close", str(pr)], ["reopen", str(pr)])
+        for cmd in (["edit", str(pr), "--add-label", VISUAL_LABEL], *reopen):
             p = sh(["gh", "pr", *cmd], tree)
             if p.returncode:
                 raise Transient(f"تعذّر وسمُ الطلب {pr}: {p.stderr.strip()[-200:]}")
+
+    def visual_on_label(self) -> bool:
+        """هل يعيد فحصُ اللقطات في main نفسَه عند حدث labeled؟ تعذّرُ القراءة يرجع إلى الطريق القديم الآمن (إعادة الفتح)."""
+        path = self.main_file(".github/workflows/visual-snapshots.yml")
+        return bool(path) and VISUAL_ON_LABEL.search(Path(path).read_text(encoding="utf-8")) is not None
 
     def rerun_failed(self, tree: str, run_id: str) -> bool:
         return sh(["gh", "run", "rerun", run_id, "--failed"], tree).returncode == 0
@@ -2305,6 +2313,7 @@ CODE_FAIL_SIGN = re.compile(r"FAILED tests/|=+ FAILURES =+|AssertionError")  # �
 NETWORK_JOBS_MAX = 30  # سقفُ ما يُجلب سجلُّه في تشغيلٍ واحد
 VISUAL_CHECK = "لقطات الهويّة"  # اسمُ فحص CI (visual-snapshots.yml)
 VISUAL_LABEL = "تغيير-بصريّ"
+VISUAL_ON_LABEL = re.compile(r"types:\s*\[[^\]]*\blabeled\b")  # visual-snapshots.yml يعمل على الوسم فلا يلزم إعادةُ فتح الطلب
 VISUAL_PAGE = re.compile(r"(\S+\.png): ([\d.]+)%")
 ADVISORY_MARK = "استشاري"
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
