@@ -71,3 +71,12 @@ def test_check_maps_status_and_restores_env(monkeypatch):
     import os
 
     assert "GIT_DIR" not in os.environ
+
+
+def test_only_open_pr_branches_are_kept_when_the_host_lists_them():
+    """فرعٌ مهجورٌ بلا طلبٍ مفتوح لا يحجز رقمَ هجرة (W-20261119-005 مع claude/w009-032-view-as-role)."""
+    refs = "origin/stale aaa\norigin/live bbb"
+    files = {"aaa": ["core/migrations/0087_x.py"], "bbb": ["core/migrations/0088_y.py"]}
+    out = g.open_pull_requests(_fake(refs, files=files), only={"live"})
+    assert list(out) == ["live (فرع بعيد)"]
+    assert set(g.open_pull_requests(_fake(refs, files=files))) == {"stale (فرع بعيد)", "live (فرع بعيد)"}

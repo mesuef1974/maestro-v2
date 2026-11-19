@@ -557,7 +557,22 @@ def ready_mark_default_repo() -> str:
     return ready_mark.DEFAULT_REPO
 
 
-def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str, root_scripts: str | None = None) -> list[str]:
+def open_pr_branches(sh=None) -> list[str] | None:
+    """فروعُ الطلبات المفتوحة لحارس تصادم الهجرات في الحاوية؛ None إن تعذّرت القراءة (فيبقى الحارسُ على كلّ الفروع: إنذارٌ زائد لا نجاحٌ زائف)."""
+    rc, out = (sh or _sh)(["gh", "pr", "list", "--state", "open", "--limit", "300", "--json", "headRefName"], ac.REPO_DIR)
+    if rc:
+        return None
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return sorted({str(p.get("headRefName") or "") for p in data if isinstance(p, dict)} - {""})
+
+
+def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str, root_scripts: str | None = None,
+                    open_branches: list[str] | None = None) -> list[str]:
     """أمرُ docker run: الشجرةُ و.git الرئيس للقراءة فقط، على شبكةٍ داخليّةٍ لا خارجَ لها (فيها قاعدةُ الاختبار وحدَها)؛ GIT_DIR نسبةً إلى
     المركَّب. الإيصالُ لا يُكتب من الحاوية."""
     rel = os.path.relpath(gitdir, common).replace("\\", "/")
@@ -570,6 +585,7 @@ def prepush_command(tree: str, gitdir: str, common: str, name: str, net: str, ro
         "-e", f"PREPUSH_GIT_DIR={git_dir}", "-e", "GIT_OPTIONAL_LOCKS=0", "-e", "HOME=/tmp",
         "-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=*",
         *(["-v", f"{root_scripts}:/rootscripts:ro", "-e", "PREPUSH_ROOT_SCRIPTS=/rootscripts"] if root_scripts else []),
+        *(["-e", "PREPUSH_OPEN_BRANCHES=" + ",".join(open_branches)] if open_branches is not None else []),
         PREPUSH_IMAGE, "sh", "/runner/entry.sh",
     ]
 
@@ -793,7 +809,8 @@ def prepush_pass(states: dict[str, dict], apply: bool, repos: list[str] | None =
             continue
         ran += 1
         name = f"prepush-{cid.lower()}-{head[:8]}"
-        code, log = run_with_db(docker, lambda net: prepush_command(path, gitdir.strip(), common.strip(), name, net, root_scripts), name, timeout)
+        branches = open_pr_branches()
+        code, log = run_with_db(docker, lambda net: prepush_command(path, gitdir.strip(), common.strip(), name, net, root_scripts, branches), name, timeout)
         # شرطُ الإيصال: رمز 0، وسطرُ النجاح الكامل، وخلوُّ المخرَج من «غير مقيس»، وبقاءُ الرأس ونظافةُ الشجرة بعد التشغيل
         _, head_after = git(path, "rev-parse", "HEAD")
         _, dirty_after = git(path, "status", "--porcelain", "--untracked-files=no")

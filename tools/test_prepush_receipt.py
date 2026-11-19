@@ -132,3 +132,13 @@ def test_root_scripts_not_used_when_tree_has_its_own_tool_or_is_not_platform_or_
     assert fp.root_prepush_scripts(str(own), str(root)) is None
     assert fp.root_prepush_scripts(str(gov), str(root)) is None
     assert fp.root_prepush_scripts(str(bare), str(tmp_path / "empty-root")) is None
+
+
+def test_open_pr_branches_reach_the_container_and_a_failed_listing_is_omitted():
+    import json as _json
+
+    import flow_pump as fp
+    assert "PREPUSH_OPEN_BRANCHES=a,b" in fp.prepush_command("t", "g", "g", "n", "net", None, ["a", "b"])
+    assert not any("PREPUSH_OPEN_BRANCHES" in x for x in fp.prepush_command("t", "g", "g", "n", "net"))
+    assert fp.open_pr_branches(lambda cmd, cwd=None: (0, _json.dumps([{"headRefName": "b"}, {"headRefName": "a"}]))) == ["a", "b"]
+    assert fp.open_pr_branches(lambda cmd, cwd=None: (1, "boom")) is None
