@@ -473,6 +473,18 @@ def _write_req(env, **kw):
     (d / "web-1.md").write_text("\n".join(f"{k}: {v}" for k, v in base.items()), encoding="utf-8")
 
 
+def test_intake_takes_collision_names_in_submission_order(env):
+    """web-X-2 قُدّم بعد web-X في الثانية نفسها: يُستلم بعده فيأخذ الرقم التالي."""
+    lp, _ = env
+    d = runner.REQUESTS
+    d.mkdir(exist_ok=True)
+    for stem, title in (("web-20261119-021500-2", "ثان"), ("web-20261119-021500", "أوّل"), ("web-20261119-021500-10", "عاشر"), ("web-20261119-021459", "سابق")):
+        (d / f"{stem}.md").write_text(f"العنوان: {title}\nالمطلوب: م\nمعايير القبول: ق\nالوسم: صغير\n", encoding="utf-8")
+    runner.intake_requests(CFG, lp)
+    cards = sorted(ledger.reduce_state(ledger.load_events(lp)).values(), key=lambda c: c["id"])
+    assert [c["problem"] for c in cards] == ["سابق", "أوّل", "ثان", "عاشر"]
+
+
 def test_intake_splits_accept_and_defaults_approval(env):
     lp, _ = env
     _write_req(env)
