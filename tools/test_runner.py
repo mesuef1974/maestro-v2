@@ -118,7 +118,7 @@ class Fake(runner.Effects):
     def pr_body_of(self, tree, pr): return (getattr(self, "pr_bodies", None) or [""])[-1]
     def gate_reasons(self, tree, pr): return "سبب"
     def gate_allows(self, tree, pr): return self.gate
-    def remote_head(self, branch): return "h1"
+    def remote_head(self, branch): return getattr(self, "pushed_head", "h1")
     def merge(self, tree, pr):
         self.merged = True
         return True
@@ -126,6 +126,11 @@ class Fake(runner.Effects):
     def healthy(self): return self.is_healthy
     def pr_state(self, tree, pr): return self.merge_state, "oid1"
     def pr_conflicted(self, tree, pr): return getattr(self, "conflicted", False)
+    def merge_main(self, tree, branch):
+        self.main_merges = getattr(self, "main_merges", []) + [branch]
+        if getattr(self, "main_head", ""):
+            self.pushed_head = self.main_head
+        return getattr(self, "main_head", "")
     def prod_status(self): return self.prod, self.is_healthy
     def contains(self, tree, oid, prod): return prod == "oid1"
     def main_sha(self): return "good1234abcd"
@@ -3239,3 +3244,105 @@ def test_ci_repair_outside_the_declared_scope_is_not_pushed(env):
     assert not any("إصلاح فحوص CI" in m for m in getattr(fx, "msgs", []))
     assert "خالف معيارًا آليًّا" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
 
+
+
+# ── دمجُ main في الطلب المتعارض بدل إغلاقه (#1482، 2026-11-20) ──
+BASE_REQ = "# تعليق\nplatformdirs==4.14.0\nplaywright==1.64.1\npluggy==1.7.0\n"
+
+
+def test_pins_keep_main_and_take_the_branch_version_change():
+    ours = BASE_REQ.replace("playwright==1.64.1", "playwright==1.65.2")
+    theirs = BASE_REQ.replace("platformdirs==4.14.0", "platformdirs==4.15.0").replace("pluggy==1.7.0", "pluggy==1.8.0")
+    assert runner.merge_pins(BASE_REQ, ours, theirs) == "# تعليق\nplatformdirs==4.15.0\nplaywright==1.65.2\npluggy==1.8.0\n"
+
+
+def test_pins_refuse_what_is_not_a_plain_version_change():
+    ours = BASE_REQ.replace("playwright==1.64.1", "playwright==1.65.2")
+    assert runner.merge_pins(BASE_REQ, ours, BASE_REQ.replace("playwright==1.64.1", "playwright==1.66.0")) is None  # الطرفان بإصدارين
+    assert runner.merge_pins(BASE_REQ, ours, BASE_REQ.replace("playwright==1.64.1\n", "")) is None  # main حذف الحزمة
+    assert runner.merge_pins(BASE_REQ, ours + "newpkg==1.0\n", BASE_REQ) is None  # الفرع أضاف حزمة
+    assert runner.merge_pins(BASE_REQ, ours.replace("# تعليق", "# آخر"), BASE_REQ) is None  # الفرع عدّل غير الإصدار
+    assert runner.merge_pins(BASE_REQ, ours, ours) == ours  # الطرفان بالإصدار نفسه
+
+
+def test_a_conflicted_pr_gets_main_merged_and_goes_back_to_ci(env):
+    lp, lock = env
+    _card(lp, source="owner", approval="مباشر")
+    fx = Fake()
+    fx.merge_state, fx.conflicted, fx.main_head = "OPEN", True, "h2"
+    closed = []
+    fx.close_pr = lambda tree, pr: closed.append(pr)
+    runner.run_cycle(CFG, fx, lp, lock)  # يبني ويفتح الطلب ويطلب دمجه فيجده متعارضًا في الدورة نفسها
+    st = _state(lp)
+    r = st["runner_resume"]
+    assert not closed and st["state"] != "closed" and fx.main_merges
+    assert r["head"] == "h2" and r["main_syncs"] == 1 and "stage" not in r
+    assert "الرأس h2" in fx.pr_bodies[-1]  # سطرُ الاعتماد يُربط بالرأس الجديد فلا يحمرّ فحصُه
+
+
+def test_a_conflicted_pr_is_closed_after_the_sync_limit_or_when_unresolvable(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake()
+    fx.merge_state, fx.conflicted, fx.main_head = "OPEN", True, "h2"
+    closed = []
+    fx.close_pr = lambda tree, pr: closed.append(pr)
+    for _ in range(1 + runner.MAIN_SYNC_MAX):
+        runner.run_cycle(CFG, fx, lp, lock)
+    assert closed and _state(lp)["state"] == "closed" and len(fx.main_merges) == runner.MAIN_SYNC_MAX
+
+
+def test_a_preview_card_is_not_synced_because_the_owner_saw_another_head(env):
+    lp, _ = env
+    _card(lp, approval="معاينة", preview_approved=True)
+    fx = Fake()
+    fx.merge_state, fx.conflicted, fx.main_head = "OPEN", True, "h2"
+    fx.close_pr = lambda tree, pr: None
+    card = {"id": "W-20261104-901", "approval": "معاينة", "runner_resume": {"stage": "merged_wait", "branch": "b"}}
+    try:
+        runner.merge_and_publish(card, fx, lp, "t", 7)
+    except runner.RunnerError as exc:
+        assert "لا يُحلّ آليًّا" in str(exc)
+    else:
+        raise AssertionError("بطاقة المعاينة المتعارضة لا تُدمج فيها main")
+    assert not getattr(fx, "main_merges", [])
+
+
+def _git_repo_with_conflict(tmp_path, ours_extra=""):
+    import subprocess
+
+    def g(cwd, *a):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null", *a], cwd=cwd, check=True, capture_output=True)
+    origin, tree = tmp_path / "origin.git", tmp_path / "tree"
+    g(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    g(tmp_path, "clone", "-q", str(origin), str(tree))
+    (tree / "requirements.txt").write_text(BASE_REQ, encoding="utf-8", newline="\n")
+    g(tree, "add", "."), g(tree, "commit", "-qm", "base"), g(tree, "push", "-q", "origin", "HEAD:main")
+    g(tree, "checkout", "-qb", "card")
+    (tree / "requirements.txt").write_text(BASE_REQ.replace("playwright==1.64.1", "playwright==1.65.2") + ours_extra, encoding="utf-8", newline="\n")
+    g(tree, "commit", "-qam", "ours"), g(tree, "push", "-q", "origin", "card")
+    g(tree, "checkout", "-q", "main")
+    (tree / "requirements.txt").write_text(BASE_REQ.replace("platformdirs==4.14.0", "platformdirs==4.15.0").replace("pluggy==1.7.0", "pluggy==1.8.0"), encoding="utf-8", newline="\n")
+    g(tree, "commit", "-qam", "theirs"), g(tree, "push", "-q", "origin", "main")
+    g(tree, "checkout", "-q", "card")
+    for k, v in (("user.name", "t"), ("user.email", "t@t"), ("core.hooksPath", "/dev/null")):
+        g(tree, "config", k, v)
+    return origin, tree
+
+
+def test_merge_main_resolves_a_pin_conflict_and_pushes_the_branch(tmp_path):
+    import subprocess
+    origin, tree = _git_repo_with_conflict(tmp_path)
+    head = runner.Effects(CFG).merge_main(str(tree), "card")
+    assert head and (tree / "requirements.txt").read_text(encoding="utf-8") == "# تعليق\nplatformdirs==4.15.0\nplaywright==1.65.2\npluggy==1.8.0\n"
+    pushed = subprocess.run(["git", "rev-parse", "card"], cwd=origin, capture_output=True, text=True, check=False).stdout.strip()
+    assert pushed == head
+
+
+def test_merge_main_aborts_an_unresolvable_conflict_and_leaves_the_tree_clean(tmp_path):
+    import subprocess
+    _, tree = _git_repo_with_conflict(tmp_path, ours_extra="newpkg==1.0\n")
+    before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tree, capture_output=True, text=True, check=False).stdout
+    assert runner.Effects(CFG).merge_main(str(tree), "card") == ""
+    st = subprocess.run(["git", "status", "--porcelain"], cwd=tree, capture_output=True, text=True, check=False).stdout
+    assert st == "" and subprocess.run(["git", "rev-parse", "HEAD"], cwd=tree, capture_output=True, text=True, check=False).stdout == before
