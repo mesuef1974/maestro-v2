@@ -3225,6 +3225,20 @@ def test_fail_closes_and_writes_the_one_auto_retry(env):
     assert "أُعيدت آليًّا" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
 
 
+def test_an_agent_that_stopped_asking_without_changes_is_closed_and_referred_not_retried(env):
+    # أمر المالك 2026-11-20: الإعادةُ بالنصّ نفسِه تعيد السؤالَ نفسَه، فتُغلق وتُرفع إليه
+    lp, _ = env
+    src = _done_request(runner.REQUESTS)
+    _card(lp, request_file=src)
+    card = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert runner.fail(card, runner.RunnerError("لم يُحدث النموذجُ أيَّ تغيير"), Fake(), lp) == "referred"
+    assert list(runner.REQUESTS.glob("*.md")) == []
+    state = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert state["state"] == "closed" and state["fail_kind"] == "بلا_تغيير"
+    queue = runner.OWNER_QUEUE.read_text(encoding="utf-8")
+    assert "توقّف الوكيلُ بلا تغيير" in queue and "أُعيدت آليًّا" not in queue
+
+
 def test_ci_repair_outside_the_declared_scope_is_not_pushed(env):
     # جولةُ إصلاح CI تُفحص بمعايير الطلب على الفرع كلّه قبل الدفع (#1473): ملفٌّ خارج النطاق يوقف البطاقة بتقرير
     lp, lock = env
