@@ -1201,6 +1201,11 @@ class Effects:
     def branch_diff(self, tree: str) -> str:
         return sh(["git", "diff", f"{self.cfg['base']}...HEAD"], tree).stdout
 
+    def branch_files(self, tree: str) -> list[str]:
+        """ملفّاتُ الفرع المودَعة منذ الأساس: ما تحكم عليه المعاييرُ بعد الإيداع الأوّل (لا شجرةُ العمل وحدها)."""
+        p = sh(["git", "diff", "--name-only", f"{self.cfg['base']}...HEAD"], tree)
+        return [ln.strip() for ln in p.stdout.splitlines() if ln.strip()]
+
     def ci_log(self, tree: str, pr: int) -> str:
         """سطورُ الفشل من سجلّات CI: ما يحتاجه النموذجُ ليصلح، بلا ضجيج التثبيت."""
         p = sh(["gh", "pr", "checks", str(pr), "--json", "name,state,link"], tree)
@@ -2200,6 +2205,13 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
     if not ok:
         ledger.append_event("note", cid, {"text": f"[مشغّل] إصلاح CI {done + 1} فشل: {failure_summary(mask(vlog))}", "by": BY}, lpath)
         return "waiting_ci"
+    # المعاييرُ الآليّة على الفرع كلّه بعد الإصلاح (2026-11-20، #1473): قبلها كانت جولةُ إصلاح CI تودِع ما يكتبه النموذج
+    # بلا فحص النطاق ولا الهجرات، ووصفُ الطلب يعرض حكمَ البناء الأوّل؛ فما يُدفع بعدها يحقّق المعاييرَ نفسَها فيبقى السطرُ صادقًا.
+    whole = sorted(set(fx.branch_files(tree)) | set(files))
+    miss = criteria_failures(card, whole)
+    if miss:
+        save_fail_diff(cid, fx.branch_diff(tree))
+        raise RunnerError(f"إصلاح CI على الطلب {pr} خالف معيارًا آليًّا فلم يُدفع: {'؛ '.join(miss)[:300]}")
     require_preview(card, files, lpath)
     head = fx.commit_push(tree, branch, files, f"{cid}: إصلاح فحوص CI")
     r["head"] = head
