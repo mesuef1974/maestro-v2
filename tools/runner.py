@@ -528,6 +528,65 @@ def failure_fingerprint(log: str) -> tuple[str, ...]:
     return tuple(sorted(found))
 
 
+def gaps_fingerprint(gaps: list[str]) -> tuple[str, ...]:
+    """بصمةُ معاييرَ لم تتحقّق، فيُكشف تكرارُها كما يُكشف تكرارُ الفحص الفاشل (لا علامةَ ✘ فيها فكانت بصمتُها فارغة)."""
+    return tuple(sorted(f"معيار: {g.strip()[:120]}" for g in gaps if g.strip()))
+
+
+def spin_reason(fp: tuple[str, ...], last_fp: tuple[str, ...], seen: set[tuple[str, ...]]) -> str:
+    """منعُ الدوران (فكرة anti-spin من aitmpl، 2026-11-20): الفشلُ نفسه متتالياً، أو فشلٌ سابقٌ عاد بعد جولةٍ أخرى (تذبذب)."""
+    if not fp:
+        return ""
+    if fp == last_fp:
+        return "الفشل نفسه مرتين"
+    if fp in seen:
+        return "تذبذب: عاد فشلٌ سابقٌ بعد جولةٍ أخرى"
+    return ""
+
+
+# عقدُ الإنجاز (فكرة completion-contract من aitmpl، 2026-11-20): المنفّذ يسمّي لكلّ معيار دليلَه، والمشغّل يتحقّق
+# من وجود الاختبار المذكور، والمراجعُ يرى العقد ادّعاءً يقارنه بالفرق. يُطلب في البطاقات التي تُراجَع وحدها.
+CONTRACT_HEAD = "عقد الإنجاز"
+CONTRACT_LINE = re.compile(r"^\s*[-*]\s*م\s?(\d+)\s*[:：]\s*(.+?)\s*$", re.M)
+TEST_REF = re.compile(r"([\w./\-]+\.py)::(\w+)")
+NO_TEST = re.compile(r"^لا اختبار\s*[—–\-:]\s*\S.{4,}")
+
+
+def contract_wanted(card: dict) -> bool:
+    return norm_size(card.get("runner_size", "")) in REVIEW_SIZES and isinstance(card.get("accept"), list) and bool(card["accept"])
+
+
+def parse_contract(answer: str) -> dict[int, str] | None:
+    """أسطرُ العقد بعد عنوانه؛ None إن لم يُكتب العنوان."""
+    at = answer.rfind(CONTRACT_HEAD)
+    if at < 0:
+        return None
+    return {int(n): ev for n, ev in CONTRACT_LINE.findall(answer[at:])}
+
+
+def contract_gaps(card: dict, answer: str, tree: str) -> list[str]:
+    """ما ينقص العقدَ: معيارٌ بلا دليل، أو اختبارٌ مذكورٌ غيرُ موجود في الشجرة، أو «لا اختبار» بلا سبب."""
+    if not contract_wanted(card):
+        return []
+    entries = parse_contract(answer)
+    if entries is None:
+        return [f"لم يُكتب «{CONTRACT_HEAD}» في آخر الجواب"]
+    gaps = []
+    for i, criterion in enumerate(card["accept"], 1):
+        ev = entries.get(i, "")
+        ref = TEST_REF.search(ev)
+        if not ev:
+            gaps.append(f"م{i} بلا دليل في {CONTRACT_HEAD}: {str(criterion)[:80]}")
+        elif ref:
+            path = Path(tree) / ref[1]
+            body = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+            if not re.search(rf"\bdef {re.escape(ref[2])}\b", body):
+                gaps.append(f"م{i}: الاختبار {ref[0]} غير موجود في الشجرة")
+        elif not NO_TEST.match(ev):
+            gaps.append(f"م{i}: الدليل ليس اختباراً بصيغة <مسار>::<اسم> ولا «لا اختبار — السبب»")
+    return gaps
+
+
 def give_up(cid: str, message: str, log: str, fx: "Effects", tree: str, lpath=None) -> "RunnerError":
     """يحفظ الفرقَ وآخرَ سجلٍّ قبل الإغلاق؛ بادئةُ الملاحظة يقرؤها ميزان فلا تتغيّر."""
     save_fail_diff(cid, fx.review_diff(tree))
@@ -631,6 +690,8 @@ def review_prompt(card: dict, files: list[str], diff: str) -> str:
         f"معايير القبول:\n{acc_txt}",
         "الملفّات المتغيّرة: " + "، ".join(files),
         "<<<الفرق\n" + diff[:REVIEW_DIFF_CHARS] + "\nالفرق>>>" + cut,
+        (f"{CONTRACT_HEAD} كما كتبه المنفّذ (ادّعاءٌ لا يُصدَّق إلا بالفرق؛ دليلٌ لا يثبت معياره في الفرق يجعله ناقصاً):\n"
+         + card["completion_contract"]) if card.get("completion_contract") else "",
         "اعدد المعيارَ ناقصاً فقط إن كان الفرقُ يثبت غيابَه. نجاحُ الاختبارات والفحوص يُتحقَّق منه في مكانٍ آخر فلا تعدّه ناقصاً.",
         'أجب بسطرٍ JSON واحدٍ لا غير: {"missing": ["نصُّ كلِّ معيارٍ ناقص"]} وقائمةٌ فارغةٌ إن تحقّقت كلُّها.',
     ])
@@ -734,6 +795,9 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
         "قبل أن تنتهي: `ruff format <الملفّات المعدَّلة>` ثمّ `ruff check <الملفّات المعدَّلة>`؛ فحصُ الدمج يرفض ملفّاً غيرَ منسَّق.",
         "أرقام الهويّة والجوّال في الاختبارات اصطناعيّة حصرًا: 2900000000x و+9745500000x، فحارس البيانات الشخصيّة يرفض غيرها.",
         "غيّرتَ سلوكَ دالّةٍ أو قالب؟ ابحث (Grep) في tests/ عن كلّ مستعمِلٍ له وحدّث اختباراته وشغّلها؛ اختبارٌ لم تفتحه يكسر CI.",
+        (f"اختم جوابك الأخير بقسم «{CONTRACT_HEAD}:» فيه سطرٌ لكلّ معيار قبول بترتيبه: `- م1: <مسار ملفّ الاختبار>::<اسم دالّة الاختبار>` "
+         "لاختبارٍ يثبته وقد شغّلته فنجح، أو `- م1: لا اختبار — <السبب>` لما لا يُختبر آليّاً. يتحقّق المشغّلُ من وجود كلّ اختبارٍ تذكره، "
+         "والمراجعُ يقارن العقدَ بالفرق، فلا تذكر دليلاً لم تكتبه.") if contract_wanted(card) else "",
     ]
     parts += rules
     try:
@@ -2538,6 +2602,17 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
             rules = [Path(p).read_text(encoding="utf-8")[:3000] for p in card.get("rules") or [] if Path(p).is_file()]
             seed = seed_from_earlier(card, tree, fx, lpath)
             prompt, ok, gaps, log, last_fp = brief(card, rules, seed, fx.diff(tree) if seed else ""), False, [], "", ()
+            seen_fps: set[tuple[str, ...]] = set()
+
+            def stop_if_spinning(fp: tuple[str, ...]) -> None:
+                nonlocal last_fp
+                why = spin_reason(fp, last_fp, seen_fps)
+                if why:
+                    raise give_up(cid, f"{why}: {'، '.join(fp)[:300]}؛ كلفة={spent:.2f}$", log, fx, tree, lpath)
+                if fp:
+                    seen_fps.add(fp)
+                last_fp = fp
+
             tiers, rounds = _tiers(cfg, card), 0
             for tier_no, (model, max_turns, budget) in enumerate(tiers):
                 for attempt in range(MAX_ROUNDS if tier_no == len(tiers) - 1 else MAX_FIX_RUNS + 1):
@@ -2562,17 +2637,20 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         fx.autoformat(tree)
                         ok, log = fx.verify(tree)
                         fp = () if ok else failure_fingerprint(log)
-                    if fp and fp == last_fp:
-                        raise give_up(cid, f"الفشل نفسه مرتين: {'، '.join(fp)[:300]}؛ كلفة={spent:.2f}$", log, fx, tree, lpath)
-                    last_fp = fp
+                    stop_if_spinning(fp)
                     if ok and not fx.changed(tree):
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
                         log = "لم يُحدث النموذجُ أيَّ تغيير؛ جوابُه: " + (res.out or "—")[-400:]  # لا سجلَّ الفحص الأخضر: هو ما أخفى السببَ في 8 محاولات (ضغط الأصول)
                         break
                     if ok:
-                        miss = criteria_failures(card, fx.changed(tree)) + fx.menu_gap(tree, card) + fx.legal_gap(tree, card) + fx.asset_gap(tree, card)
+                        answer = str(res.raw.get("result") or res.out)
+                        if contract_wanted(card) and parse_contract(answer) is not None:
+                            card["completion_contract"] = answer[answer.rfind(CONTRACT_HEAD):][:2000]  # للمراجع فقط؛ لا يُكتب في الدفتر
+                        miss = (criteria_failures(card, fx.changed(tree)) + fx.menu_gap(tree, card) + fx.legal_gap(tree, card)
+                                + fx.asset_gap(tree, card) + contract_gaps(card, answer, tree))
                         if miss:  # الفحوص خضراء لكن معياراً آليّاً من الطلب لم يتحقّق: يُعاد إلى النموذج كإصلاح
                             ok, log = False, "\n".join(miss)
+                            stop_if_spinning(gaps_fingerprint(miss))
                     if ok and norm_size(card.get("runner_size", "")) not in REVIEW_SIZES:
                         break
                     if ok:
@@ -2585,6 +2663,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                             break
                         ok, gaps = False, missing
                         log = "معايير قبول لم تتحقّق:\n" + "\n".join(f"- {m}" for m in missing)
+                        stop_if_spinning(gaps_fingerprint(missing))
                     ledger.append_event("note", cid, {"text": f"[مشغّل] جولة {rounds} فشلت: {failure_summary(mask(log))}", "by": BY}, lpath)
                     prompt = brief(card, rules, log, fx.diff(tree))
                 if ok:

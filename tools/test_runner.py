@@ -38,7 +38,7 @@ class Fake(runner.Effects):
     def prepare_tree(self, cid, round_no=1): return "/t", "claude/runner-x"
     def run_model(self, tree, prompt, model, budget):
         self.runs += 1
-        return runner.Result(True, "تم", self.cost, self.turns)
+        return runner.Result(True, getattr(self, "answer", "تم\nعقد الإنجاز:\n- م1: لا اختبار — منفّذ وهميّ"), self.cost, self.turns)
     def verify(self, tree):
         self.calls = getattr(self, "calls", []) + ["verify"]
         return (self.verify_q.pop(0) if len(self.verify_q) > 1 else self.verify_q[0]), "سجلّ الفشل"
@@ -3360,3 +3360,75 @@ def test_merge_main_aborts_an_unresolvable_conflict_and_leaves_the_tree_clean(tm
     assert runner.Effects(CFG).merge_main(str(tree), "card") == ""
     st = subprocess.run(["git", "status", "--porcelain"], cwd=tree, capture_output=True, text=True, check=False).stdout
     assert st == "" and subprocess.run(["git", "rev-parse", "HEAD"], cwd=tree, capture_output=True, text=True, check=False).stdout == before
+
+
+# ─── منعُ الدوران وعقدُ الإنجاز (أفكار aitmpl، 2026-11-20) ───
+
+def test_spin_reason_catches_repeat_and_oscillation_only():
+    a, b = ("tests/a.py::t",), ("tests/b.py::t",)
+    assert runner.spin_reason(a, a, {a}) == "الفشل نفسه مرتين"
+    assert runner.spin_reason(a, b, {a, b}).startswith("تذبذب")
+    assert runner.spin_reason(b, a, {a}) == ""
+    assert runner.spin_reason((), (), {a}) == ""
+
+
+def test_oscillating_failures_close_on_the_third_round(env):
+    lp, lock = env
+    _card(lp)
+    fx = Logs("FAILED tests/a.py::t", "FAILED tests/b.py::t", "FAILED tests/a.py::t", "ok")
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 3
+    assert "تذبذب" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_same_review_gap_twice_closes_without_running_to_the_cap(env):
+    lp, lock = env
+    _card(lp, size="متوسط")
+    fx = Fake()
+    fx.review_q = [["حذف الخطّاف"]]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 2 < runner.MAX_ROUNDS
+
+
+def test_gaps_fingerprint_ignores_order_and_blanks():
+    assert runner.gaps_fingerprint(["ب", "أ", " "]) == runner.gaps_fingerprint(["أ", "ب"]) == ("معيار: أ", "معيار: ب")
+
+
+def test_contract_is_wanted_only_for_reviewed_sizes():
+    assert runner.contract_wanted({"runner_size": "متوسط", "accept": ["أ"]})
+    assert not runner.contract_wanted({"runner_size": "صغير", "accept": ["أ"]})
+    assert not runner.contract_wanted({"runner_size": "متوسط", "accept": "نصّ"})
+    assert "عقد الإنجاز" in runner.brief({"id": "W-1", "runner_size": "متوسط", "accept": ["أ"]}, [])
+    assert "عقد الإنجاز" not in runner.brief({"id": "W-1", "runner_size": "صغير", "accept": ["أ"]}, [])
+
+
+def test_contract_gaps_check_cited_tests_exist(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    card = {"runner_size": "كبير", "accept": ["أ", "ب", "ج"]}
+    good = "تم\nعقد الإنجاز:\n- م1: tests/test_x.py::test_ok\n- م2: لا اختبار — تغيير نصّ ظاهر فقط\n- م3: tests/test_x.py::test_ok"
+    assert runner.contract_gaps(card, good, str(tmp_path)) == []
+    bad = "عقد الإنجاز:\n- م1: tests/test_x.py::test_missing\n- م2: لا اختبار\n"
+    gaps = runner.contract_gaps(card, bad, str(tmp_path))
+    assert any("test_missing" in g for g in gaps) and any(g.startswith("م2:") for g in gaps) and any(g.startswith("م3 ") for g in gaps)
+    assert runner.contract_gaps(card, "تم", str(tmp_path)) == ["لم يُكتب «عقد الإنجاز» في آخر الجواب"]
+    assert runner.contract_gaps({"runner_size": "صغير", "accept": ["أ"]}, "تم", str(tmp_path)) == []
+
+
+def test_missing_contract_sends_the_model_back_then_passes(env):
+    lp, lock = env
+    _card(lp, size="متوسط")
+    answers = ["تم بلا عقد", "تم\nعقد الإنجاز:\n- م1: لا اختبار — منفّذ وهميّ"]
+
+    class Forgetful(Fake):
+        def run_model(self, tree, prompt, model, budget):
+            self.answer = answers.pop(0) if len(answers) > 1 else answers[0]
+            return super().run_model(tree, prompt, model, budget)
+
+    fx = Forgetful()
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published" and fx.runs == 2 and fx.reviews == 1
+
+
+def test_reviewer_sees_the_contract_as_a_claim():
+    card = {"problem": "م", "accept": ["أ"], "completion_contract": "عقد الإنجاز:\n- م1: tests/t.py::test_a"}
+    text = runner.review_prompt(card, ["a.py"], "diff")
+    assert "tests/t.py::test_a" in text and "ادّعاء" in text
+    assert "عقد الإنجاز" not in runner.review_prompt({"problem": "م", "accept": ["أ"]}, ["a.py"], "diff")
