@@ -1515,6 +1515,34 @@ class Effects:
     def pr_conflicted(self, tree: str, pr: int) -> bool:
         return sh(["gh", "pr", "view", str(pr), "--json", "mergeStateStatus", "-q", ".mergeStateStatus"], tree).stdout.strip() == "DIRTY"
 
+    def merge_main(self, tree: str, branch: str) -> str:
+        """يدمج origin/main في فرع الطلب ويدفعه، ويعيد الرأسَ الجديد؛ "" إن بقي تعارضٌ لا يُحلّ آليًّا (ويُلغى الدمجُ فتبقى الشجرةُ كما كانت).
+
+        التعارضُ المحلولُ آليًّا ملفّاتُ الإصدارات المثبّتة وحدَها (merge_pins)؛ وأيُّ ملفٍّ آخر متعارضٍ يُترك للإغلاق كما كان."""
+        sh(["git", "fetch", "-q", "origin", "main"], tree)
+        if sh(["git", "merge", "--no-edit", "origin/main"], tree).returncode:
+            bad = sh(["git", "diff", "--name-only", "--diff-filter=U"], tree).stdout.split()
+            merged = {}
+            for f in bad:
+                sides = [sh(["git", "show", f":{n}:{f}"], tree) for n in (1, 2, 3)]
+                text = merge_pins(*(x.stdout for x in sides)) if PIN_FILE.search(f) and not any(x.returncode for x in sides) else None
+                if text is None:
+                    break
+                merged[f] = text
+            if not bad or len(merged) != len(bad):
+                sh(["git", "merge", "--abort"], tree)
+                return ""
+            for f, text in merged.items():
+                (Path(tree) / f).write_text(text, encoding="utf-8", newline="\n")
+            sh(["git", "add", "--", *merged], tree)
+            if sh(["git", "commit", "--no-edit"], tree).returncode:
+                sh(["git", "merge", "--abort"], tree)
+                return ""
+        p = sh(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], tree)
+        if p.returncode:
+            raise Transient(f"تعذّر دفعُ دمج main: {p.stderr.strip()[-200:]}")
+        return sh(["git", "rev-parse", "HEAD"], tree).stdout.strip()
+
     def prod_status(self) -> tuple[str, bool]:
         """(commit الإنتاج من /health/، وهل status=ok وكلّ checks=ok)."""
         url = self.cfg.get("health_url")
@@ -2353,6 +2381,9 @@ VISUAL_PAGE = re.compile(r"(\S+\.png): ([\d.]+)%")
 ADVISORY_MARK = "استشاري"
 APPROVAL_CHECK = "سطرُ الاعتماد مطابقٌ للرأس"  # اسمُ فحص CI (pr-approval-head.yml) الذي يحمرّ حتى يُكتب السطر
 MERGE_WAIT_S = 60 * 60
+MAIN_SYNC_MAX = 2  # مرّاتُ دمج main في طلبٍ متعارض قبل إغلاقه: لا دورانَ بلا نهاية إن تجدّد التعارضُ بعد كلّ دمج
+PIN_FILE = re.compile(r"(^|/)requirements[\w.-]*\.txt$")
+PIN_LINE = re.compile(r"^(\s*)([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?(\s*==\s*)(\S+)")
 DEPLOY_WAIT_S = 120 * 60
 
 
@@ -2360,6 +2391,39 @@ def _since(card: dict, stage: str, now) -> float:
     """بدءُ انتظار المرحلة: يُخزَّن في runner_resume فلا يُصفَّر بين الدورات."""
     r = card.get("runner_resume") or {}
     return float(r.get(f"{stage}_since") or now())
+
+
+def _pin_key(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _pins(text: str) -> dict[str, str]:
+    return {_pin_key(m.group(2)): m.group(5) for m in map(PIN_LINE.match, text.splitlines()) if m}
+
+
+def _set_pins(text: str, versions: dict[str, str]) -> str:
+    out = []
+    for ln in text.split("\n"):
+        m = PIN_LINE.match(ln)
+        if m and _pin_key(m.group(2)) in versions:
+            ln = ln[:m.start(5)] + versions[_pin_key(m.group(2))] + ln[m.end(5):]
+        out.append(ln)
+    return "\n".join(out)
+
+
+def merge_pins(base: str, ours: str, theirs: str) -> str | None:
+    """دمجٌ ثلاثيٌّ لملفّ إصداراتٍ مثبّتة (==): نصُّ main، وفيه كلُّ إصدارٍ غيّره فرعُ الطلب؛ None إن لم يكن آمنًا.
+
+    #1482 (W-20261120-004) نجح في CI ثمّ أُغلق لأنّ #1478 غيّر حزمًا مجاورةً لسطر playwright في requirements.txt، فضاع
+    إصلاحٌ ناجح وأُعيدت البطاقةُ من أوّلها. آمنٌ = الفرعُ لم يغيّر إلا أرقامَ إصداراتٍ لحزمٍ قائمة، وmain لم يحذف أيًّا منها
+    ولم يرفعها إلى إصدارٍ آخر؛ وما سوى ذلك (حزمةٌ مضافةٌ أو محذوفة، تعليقٌ عُدّل في الفرع) يبقى للإغلاق."""
+    b, o, t = _pins(base), _pins(ours), _pins(theirs)
+    changes = {k: v for k, v in o.items() if b.get(k) != v}
+    if set(o) != set(b) or _set_pins(ours, {k: b[k] for k in changes}) != base:
+        return None
+    if any(k not in t or t[k] not in (b[k], v) for k, v in changes.items()):
+        return None
+    return _set_pins(theirs, changes)
 
 
 def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stage: str = "merge", now=None) -> str:
@@ -2389,8 +2453,21 @@ def merge_and_publish(card: dict, fx: Effects, lpath, tree: str, pr: int, r_stag
             if state == "CLOSED" or now() - _since(card, "merged_wait", now) > MERGE_WAIT_S:
                 raise RunnerError(f"الطلب {pr} لم يُدمج ({state}) — أُخرج من الطابور أو انقضت مهلة 60 دقيقة")
             if state == "OPEN" and fx.pr_conflicted(tree, pr):  # لا يدخل الطابورَ أبداً، ويحجز خانةً ساعةً كاملة (#1355)
+                # يُدمج main في الفرع أوّلًا فلا يضيع طلبٌ أخضر بتعارضٍ في ملفّ إصدارات (#1482). بطاقةُ المعاينة لا:
+                # اعتمادُ المالك مربوطٌ برأسٍ رآه، والرأسُ الجديد لم يره.
+                syncs, branch = int(resume_.get("main_syncs") or 0), resume_.get("branch", "")
+                head = fx.merge_main(tree, branch) if branch and syncs < MAIN_SYNC_MAX and card.get("approval") != "معاينة" else ""
+                if head:
+                    for k in ("stage", "merged_wait_since", "good"):
+                        resume_.pop(k, None)
+                    resume_.update(head=head, main_syncs=syncs + 1)
+                    card["runner_resume"] = resume_
+                    ledger.append_event("update", cid, {"runner_resume": resume_}, lpath)
+                    fx.set_pr_body(tree, pr, pr_body(card, head))
+                    ledger.append_event("note", cid, {"text": f"[مشغّل] تعارض دمج مع main على الطلب {pr}: دُمج main في فرعه وحُلّت ملفّات الإصدارات آليًّا، ويعود إلى فحوص CI", "by": BY}, lpath)
+                    return "waiting_ci"
                 fx.close_pr(tree, pr)
-                raise RunnerError(f"تعارض دمج مع main على الطلب {pr}: أُغلق، وتُعاد البطاقة من main")
+                raise RunnerError(f"تعارض دمج مع main على الطلب {pr} لا يُحلّ آليًّا: أُغلق، فأعِد البطاقة من main")
             if state == "OPEN":
                 fx.merge(tree, pr)  # لا يزال مفتوحاً بلا طابور: يُعاد طلب الدمج (idempotent)
             if resume_ != (card.get("runner_resume") or {}):  # لا حدثَ مكرَّراً كلَّ دورة: الدفترُ للتغيّر لا للنبض
