@@ -135,6 +135,7 @@ class Fake(runner.Effects):
     def remove_tree(self, tree): self.removed = True
     def review_diff(self, tree): return "الفرق الكامل"
     def branch_diff(self, tree): return "فرق الفرع"
+    def branch_files(self, tree): return list(getattr(self, "branch", []))
     def ci_log(self, tree, pr): return "FAILED tests/test_y.py"
     def review(self, tree, card, budget):
         self.reviews = getattr(self, "reviews", 0) + 1
@@ -3217,3 +3218,24 @@ def test_fail_closes_and_writes_the_one_auto_retry(env):
     assert runner.fail(card, runner.RunnerError("فشل النموذج بعد السلّم الكامل: x"), Fake(), lp) == "referred"
     assert len(list(runner.REQUESTS.glob("*.md"))) == 1
     assert "أُعيدت آليًّا" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
+
+def test_ci_repair_outside_the_declared_scope_is_not_pushed(env):
+    # جولةُ إصلاح CI تُفحص بمعايير الطلب على الفرع كلّه قبل الدفع (#1473): ملفٌّ خارج النطاق يوقف البطاقة بتقرير
+    lp, lock = env
+    _card(lp, runner_checks=["scope_only"], scope_files=["a.py"])
+
+    class Repair(NewHeads):
+        def changed(self, tree):  # البناءُ في النطاق، والإصلاحُ يمسّ الإعدادات
+            return ["config/settings.py"] if self.runs > 1 else ["a.py"]
+
+        def commit_push(self, tree, branch, files, msg):
+            self.msgs = [*getattr(self, "msgs", []), msg]
+            return super().commit_push(tree, branch, files, msg)
+
+    fx = Repair()
+    fx.ci, fx.failed, fx.branch = "red", ["pytest shard 1/8"], ["a.py"]
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and fx.runs == 2
+    assert not any("إصلاح فحوص CI" in m for m in getattr(fx, "msgs", []))
+    assert "خالف معيارًا آليًّا" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
+
