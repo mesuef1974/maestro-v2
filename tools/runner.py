@@ -1771,6 +1771,11 @@ def finish(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str, he
         if not approved_migration(card, reasons, fx.passed_names(tree, pr)):  # مسارٌ محظورٌ غيرُ الهجرة، أو هجرةٌ بلا اعتماد معاينة: الدمجُ للمالك
             return wait_owner_merge(card, fx, lpath, tree, pr, head, reasons)
     if fx.remote_head(branch) != head:
+        # الفرعُ يُحذف عند الدمج فيُقرأ رأسُه فارغاً: طلبٌ دمجه غيرُ المشغّل (البوّابة أو المالك) وهو في دوره يُتبنّى لا يُغلق.
+        # W-20261121-001: دُمج #1491 وهي «تنتظر دور النشر» فأُغلقت بتقرير «الرأس تغيّر» وطلبُها في main.
+        state, oid = fx.pr_state(tree, pr)
+        if state == "MERGED":
+            return adopt_merged(card, fx, lpath, tree, pr, oid, f"[مشغّل] دُمج الطلب {pr} خارج المشغّل؛ تتابع الأتمتةُ النشرَ والصحّة", BY)
         raise Transient("الرأسُ تغيّر بعد الفحص")
     if not fx.in_deploy_window(tree, pr):  # الدمجُ نشرٌ فوريّ: خارجَ النافذة لا دمج، ويبقى الطلبُ مفتوحاً
         return "waiting_window"
@@ -2184,6 +2189,18 @@ def approved_migration(card: dict, reasons: str, passed: list[str]) -> bool:
     return all(any(c in name for name in passed) for c in MIGRATION_CHECKS)
 
 
+def adopt_merged(card: dict, fx: Effects, lpath, tree: str, pr: int, oid: str, note: str, by: str, now=None) -> str:
+    """طلبٌ دُمج بغير يد المشغّل: «مدموجة» بـcommit الدمج وهدفُ التراجع أبوه، ثمّ انتظارُ النشر والصحّة كأيّ دمج."""
+    cid = card["id"]
+    resume_ = dict(card.get("runner_resume") or {})
+    resume_.update(stage="deploy_wait", oid=oid, good=fx.parent_of(tree, oid) or resume_.get("good", ""), deploy_wait_since=(now or time.time)())
+    card["runner_resume"] = resume_
+    ledger.append_event("note", cid, {"text": note, "by": by}, lpath)
+    ledger.append_event("update", cid, {"runner_resume": resume_, "owner_action": None}, lpath)
+    ledger.append_event("state", cid, {"state": "merged", "by": BY, "merge_commit": oid}, lpath)
+    return merge_and_publish(card, fx, lpath, tree, pr)
+
+
 def wait_owner_merge(card: dict, fx: Effects, lpath, tree: str, pr: int, head: str, reasons: str, now=None) -> str:
     """دمجٌ يدويٌّ للمالك تتابعه الأتمتةُ حتى النشر: البطاقةُ لا تُغلق ولا تحجز المسار، وتظهر في ميزان «ينتظر دمجك».
 
@@ -2194,12 +2211,7 @@ def wait_owner_merge(card: dict, fx: Effects, lpath, tree: str, pr: int, head: s
     state, oid = fx.pr_state(tree, pr)
     resume_ = dict(card.get("runner_resume") or {})
     if state == "MERGED":
-        resume_.update(stage="deploy_wait", oid=oid, good=fx.parent_of(tree, oid) or resume_.get("good", ""), deploy_wait_since=now())
-        card["runner_resume"] = resume_
-        ledger.append_event("note", cid, {"text": f"[مالك] دمج الطلب {pr} يدويّاً؛ تتابع الأتمتةُ النشرَ والصحّة", "by": "owner"}, lpath)
-        ledger.append_event("update", cid, {"runner_resume": resume_, "owner_action": None}, lpath)
-        ledger.append_event("state", cid, {"state": "merged", "by": BY, "merge_commit": oid}, lpath)
-        return merge_and_publish(card, fx, lpath, tree, pr)
+        return adopt_merged(card, fx, lpath, tree, pr, oid, f"[مالك] دمج الطلب {pr} يدويّاً؛ تتابع الأتمتةُ النشرَ والصحّة", "owner", now)
     if state == "CLOSED":
         raise RunnerError(f"أُغلق الطلب {pr} دون دمج")
     action = card.get("owner_action") or {}

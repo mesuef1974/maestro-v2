@@ -442,6 +442,26 @@ def test_pr_in_merge_queue_waits_then_continues(env):
     assert runner.run_cycle(CFG, fx, lp, lock) == "published"
 
 
+def test_pr_merged_outside_runner_while_waiting_is_adopted_not_closed(env):
+    """W-20261121-001: دُمج الطلب وهو ينتظر دوره فحُذف فرعه؛ الرأسُ الفارغ ليس «تغيّراً» يُغلق البطاقة."""
+    lp, lock = env
+    _card(lp)
+    fx = Fake(window=False)
+    assert runner.run_cycle(CFG, fx, lp, lock) == "waiting_window"
+    fx.pushed_head = ""  # الفرعُ حُذف بعد الدمج
+    assert runner.run_cycle(CFG, fx, lp, lock) == "published"
+    assert _state(lp)["state"] == "published" and not fx.merged
+
+
+def test_head_changed_on_open_pr_is_still_transient(env):
+    lp, lock = env
+    _card(lp)
+    fx = Fake(window=False)
+    runner.run_cycle(CFG, fx, lp, lock)
+    fx.pushed_head, fx.merge_state = "h2", "OPEN"
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred" and _state(lp)["state"] == "closed"
+
+
 def test_pr_closed_out_of_queue_closes_with_report(env):
     lp, lock = env
     _card(lp)
