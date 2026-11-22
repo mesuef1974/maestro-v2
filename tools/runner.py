@@ -548,7 +548,7 @@ def spin_reason(fp: tuple[str, ...], last_fp: tuple[str, ...], seen: set[tuple[s
 # من وجود الاختبار المذكور، والمراجعُ يرى العقد ادّعاءً يقارنه بالفرق. يُطلب في البطاقات التي تُراجَع وحدها.
 CONTRACT_HEAD = "عقد الإنجاز"
 CONTRACT_LINE = re.compile(r"^\s*[-*]\s*م\s?(\d+)\s*[:：]\s*(.+?)\s*$", re.M)
-TEST_REF = re.compile(r"([\w./\-]+\.py)::(\w+)")
+TEST_REF = re.compile(r"([\w./\-]+\.py)((?:::\w+)+)")  # مسار::اسم أو مسار::صنف::اسم
 NO_TEST = re.compile(r"^لا اختبار\s*[—–\-:]\s*\S.{4,}")
 
 
@@ -580,7 +580,9 @@ def contract_gaps(card: dict, answer: str, tree: str) -> list[str]:
         elif ref:
             path = Path(tree) / ref[1]
             body = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
-            if not re.search(rf"\bdef {re.escape(ref[2])}\b", body):
+            # كلُّ اسمٍ في المرجع يُقبل صنفاً أو دالّة: W-20261123-001 ذكرت صنفَ اختباراتها فأُغلقت وهو موجود (2026-11-23)
+            names = ref[2].split("::")[1:]
+            if not all(re.search(rf"^\s*(?:async\s+)?(?:def|class)\s+{re.escape(n)}\b", body, re.M) for n in names):
                 gaps.append(f"م{i}: الاختبار {ref[0]} غير موجود في الشجرة")
         elif not NO_TEST.match(ev):
             gaps.append(f"م{i}: الدليل ليس اختباراً بصيغة <مسار>::<اسم> ولا «لا اختبار — السبب»")

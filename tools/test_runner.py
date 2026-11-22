@@ -3433,6 +3433,19 @@ def test_contract_gaps_check_cited_tests_exist(tmp_path):
     assert runner.contract_gaps({"runner_size": "صغير", "accept": ["أ"]}, "تم", str(tmp_path)) == []
 
 
+def test_contract_accepts_a_cited_test_class_and_class_method(tmp_path):
+    # W-20261123-001 (2026-11-23): ذكرت صنفَ اختباراتها فقال الفحصُ «غير موجود» وهو في الشجرة
+    (tmp_path / "tests").mkdir()
+    body = "class TestThing:\n    def test_a(self):\n        pass\n"
+    (tmp_path / "tests" / "test_x.py").write_text(body, encoding="utf-8")
+    card = {"runner_size": "كبير", "accept": ["أ", "ب", "ج"]}
+    good = "عقد الإنجاز:\n- م1: tests/test_x.py::TestThing\n- م2: tests/test_x.py::TestThing::test_a\n- م3: tests/test_x.py::TestThing"
+    assert runner.contract_gaps(card, good, str(tmp_path)) == []
+    bad = "عقد الإنجاز:\n- م1: tests/test_x.py::TestOther\n- م2: tests/test_x.py::TestThing::test_b\n- م3: tests/test_x.py::TestThing"
+    gaps = runner.contract_gaps(card, bad, str(tmp_path))
+    assert [g[:2] for g in gaps] == ["م1", "م2"]
+
+
 def test_missing_contract_sends_the_model_back_then_passes(env):
     lp, lock = env
     _card(lp, size="متوسط")
