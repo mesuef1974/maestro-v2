@@ -45,7 +45,7 @@ class Fake(runner.Effects):
     def autoformat(self, tree):
         self.calls = getattr(self, "calls", []) + ["autoformat"]
         return []
-    def regenerate(self, tree):
+    def regenerate(self, tree, declared=()):
         self.regens = getattr(self, "regens", 0) + 1
         return list(getattr(self, "regen_made", []))
     def changed(self, tree): return self.files
@@ -3003,6 +3003,20 @@ def test_regenerate_ratchets_down_and_never_blesses_growth(tmp_path, monkeypatch
     fx.regenerate(str(tmp_path))
     assert seen[0][-1] == runner.REGEN_RATCHETS  # بلا مولِّد الهويّة: لم يتغيّر مصدرٌ له
     assert json.loads(size.read_text(encoding="utf-8")) == {"a.py": 1300, "b.py": 1200}
+
+
+def test_regenerate_writes_the_capabilities_snapshot_only_when_the_request_declares_it(tmp_path, monkeypatch):
+    # W-20261123-003/005/006/007: أُغلقت أربعَ مرّاتٍ لأنّ لقطة القدرات لم تُحدَّث؛ والإعلانُ في الطلب هو القرارُ الصريح
+    (tmp_path / "tests").mkdir()
+    (tmp_path / runner.CAPS_SNAPSHOT).write_text("[]", encoding="utf-8")
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["core/capabilities/wings.py"])
+    assert fx.regenerate(str(tmp_path)) == [] and seen == []  # لم يُعلَن: لا توليد ولا بركة صامتة
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["app/views.py"])
+    assert fx.regenerate(str(tmp_path), [runner.CAPS_SNAPSHOT]) == [] and seen == []  # أُعلن لكنّ مصدرَ القدرات لم يتغيّر
+    fx, seen = _regen_fx(tmp_path, monkeypatch, ["core/capabilities/wings.py"],
+                         lambda st: st["files"].append(runner.CAPS_SNAPSHOT))
+    assert fx.regenerate(str(tmp_path), [runner.CAPS_SNAPSHOT]) == [runner.CAPS_SNAPSHOT]
+    assert runner.REGEN_CAPS in seen[0][-1] and "--network" in seen[0]
 
 
 def test_regenerate_does_nothing_on_a_clean_tree(tmp_path, monkeypatch):
