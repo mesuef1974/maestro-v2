@@ -299,6 +299,12 @@ SIZE_BASELINE = "tests/file_size_baseline.json"
 # حتميٌّ وبصفر توكنز: المولِّدُ يكتب مرجعَه، وسجلُّ الطبقات يثبّت النقصَ وحدَه (ratchet_down)؛ وسجلُّ الحجم يُقصّ بعده في clamp_size_baseline
 REGEN_IDENTITY = "python scripts/gen_identity_reference.py"
 REGEN_RATCHETS = "python -m tests.layering_ratchet --update; python -m tests.file_size_ratchet --update"
+# لقطةُ القدرات (tests/test_capabilities_snapshot.py): تُولَّد في الحاوية لا في جولة نموذج، وبشرط أن يعلنها الطلبُ في ملفّاته
+# (قرارٌ صريحٌ بتغيير القدرات) فلا يمنح نموذجٌ نفسَه قدرةً بصمت. W-20261123-003/005/006/007 أُغلقت أربعَ مرّاتٍ لأنّ النموذج
+# لا يملك بيئةَ دجانغو على الجهاز فلم يُحدِّثها (2026-11-23).
+CAPS_SNAPSHOT = "tests/capabilities_registry_snapshot.json"
+CAPS_SOURCES = ("core/capabilities/", "core/permissions.py", "core/role_inheritance.py")
+REGEN_CAPS = "python -m tests.test_capabilities_snapshot --update"
 
 
 def clamp_size_baseline(old_text: str, new_text: str) -> str:
@@ -1019,7 +1025,7 @@ class Effects:
             raise RunnerError(f"بيئةٌ: تعذّر ruff format — {(p.stdout + p.stderr).strip()[-200:]}")
         return files
 
-    def regenerate(self, tree: str) -> list[str]:
+    def regenerate(self, tree: str, declared=()) -> list[str]:
         """ما يطلبه حارسٌ بأمرٍ معروف يُنفَّذ هنا قبل الفحص لا في جولة نموذج: مرجعُ الهويّة المولَّد وتثبيتُ نقص سجلَّي الطبقات والحجم.
 
         من 9 إلى 15 نوفمبر أُغلقت W-20261109-011 (سجلّ الحجم، 3.50$) وW-20261115-004 (مرجع الهويّة) بالفشل نفسه مرّتين،
@@ -1032,6 +1038,8 @@ class Effects:
         cmds = [REGEN_RATCHETS] if (Path(tree) / SIZE_BASELINE).is_file() else []
         if any(f.startswith(IDENTITY_SOURCES) for f in before) and (Path(tree) / "scripts/gen_identity_reference.py").is_file():
             cmds.insert(0, REGEN_IDENTITY)
+        if CAPS_SNAPSHOT in (declared or ()) and (Path(tree) / CAPS_SNAPSHOT).is_file() and any(f.startswith(CAPS_SOURCES) for f in before):
+            cmds.append(REGEN_CAPS)
         if not cmds:
             return []
         import flow_pump as fp  # noqa: PLC0415
@@ -2302,7 +2310,7 @@ def repair_ci(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch: str,
     if not res.ok:
         return "waiting_ci"
     fx.autoformat(tree)
-    fx.regenerate(tree)
+    fx.regenerate(tree, card.get("scope_files"))
     files = fx.changed(tree)
     if not files:  # الجولةُ التالية بالسجلّ نفسه لن تأتي بجديد (#1348)
         save_fail_diff(cid, fx.branch_diff(tree))
@@ -2356,7 +2364,7 @@ def revise_rejected(card: dict, cfg: dict, fx: Effects, lpath, tree: str, branch
     if not res.ok:
         return "waiting_ci"
     fx.autoformat(tree)
-    fx.regenerate(tree)
+    fx.regenerate(tree, card.get("scope_files"))
     files = fx.changed(tree)
     if not files:
         save_fail_diff(cid, fx.branch_diff(tree))
@@ -2642,7 +2650,7 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                         break  # فشل النموذج: التصعيد إلى الأعلى مسموحُ السلّم
                     advance_others(cid, cfg, fx, lpath)
                     fx.autoformat(tree)  # ما تصلحه الأداةُ لا يُعاد إلى النموذج
-                    made = fx.regenerate(tree)
+                    made = fx.regenerate(tree, card.get("scope_files"))
                     if made:
                         ledger.append_event("note", cid, {"text": f"[مشغّل] وُلّد آليًّا بلا نموذج: {', '.join(made)[:200]}", "by": BY}, lpath)
                     ok, log = fx.verify(tree)
