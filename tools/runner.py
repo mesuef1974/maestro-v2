@@ -3041,12 +3041,26 @@ def requeue_orphans(lpath=None) -> list[str]:
     return back
 
 
-def poll(cfg: dict, cycle=run_cycle, sleep=time.sleep, clock=time.monotonic) -> None:
-    """دوراتٌ كلَّ دقيقةٍ داخل تشغيل المهمّة: مهمّةُ الخمس دقائق تبقى كما هي ويقصر الانتظار بين مراحل البطاقة."""
+def code_signature() -> tuple:
+    """بصمةُ شيفرة المشغّل على القرص (أسماءُ وأوقاتُ تعديل tools/*.py عدا الاختبارات)؛ تُقارَن بما حُمِّل عند الاستيراد."""
+    return tuple(sorted((p.name, p.stat().st_mtime_ns) for p in HERE.glob("*.py") if not p.name.startswith("test_")))
+
+
+LOADED_CODE = code_signature()  # ما حمّلته هذه العملية؛ دمجُ إصلاحٍ في المشغّل لا يصلها إلا بعملية جديدة (#298 و#299 احتاجا إعادةَ تشغيلٍ يدويّة)
+
+
+def poll(cfg: dict, cycle=run_cycle, sleep=time.sleep, clock=time.monotonic, signature=code_signature) -> None:
+    """دوراتٌ كلَّ دقيقةٍ داخل تشغيل المهمّة: مهمّةُ الخمس دقائق تبقى كما هي ويقصر الانتظار بين مراحل البطاقة.
+
+    تتوقّف الحلقةُ عند أوّل حدٍّ بين دورتين إن تغيّرت شيفرةُ المشغّل على القرص: العمليةُ تنتهي والمهمّةُ المجدولة التالية تحمّل الجديد،
+    فلا يعمل بطاقةٌ بإصلاحٍ مدموجٍ قديم (W-20261123-011 أُغلقت بكودٍ حُمِّل قبل دمج الإصلاح)."""
     end = clock() + POLL_WINDOW_S
     while True:
         out = cycle(cfg)
         print(out)
+        if signature() != LOADED_CODE:
+            print("تغيّرت شيفرةُ المشغّل على القرص: تنتهي العمليةُ ليحمّلها التشغيلُ التالي")
+            return
         if not (out in POLL_AGAIN or out.startswith("waiting")) or clock() + POLL_S > end:
             return
         sleep(POLL_S)
