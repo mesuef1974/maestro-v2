@@ -785,6 +785,24 @@ def test_poll_repeats_every_minute_and_ends_before_the_next_task():
     assert _poll_with(["waiting_ci"]) == 5  # 0 و60 و120 و180 و240 ثانية
 
 
+def test_poll_ends_the_process_when_the_runner_code_changed_on_disk():
+    """إصلاحٌ في المشغّل دُمج أثناء عملية جارية: تنتهي عند حدّ الدورة بدل أن تواصل بكودٍ قديم."""
+    t = {"now": 0.0}
+    calls = []
+    runner.poll(CFG, lambda cfg: calls.append(1) or "waiting_ci", lambda s: t.__setitem__("now", t["now"] + s), lambda: t["now"],
+                signature=lambda: ("changed",))
+    assert len(calls) == 1
+    calls.clear()
+    runner.poll(CFG, lambda cfg: calls.append(1) or "waiting_ci", lambda s: t.__setitem__("now", t["now"] + s), lambda: t["now"],
+                signature=lambda: runner.LOADED_CODE)
+    assert len(calls) > 1  # الكودُ كما حُمِّل: تستمرّ الدورات
+
+
+def test_code_signature_ignores_tests_and_tracks_the_runner_files():
+    names = {n for n, _ in runner.code_signature()}
+    assert "runner.py" in names and "test_runner.py" not in names
+
+
 def test_poll_stops_on_env_down_and_locked():
     assert _poll_with(["idle", "env_down"]) == 2
     assert _poll_with(["locked"]) == 1
