@@ -3020,6 +3020,19 @@ def test_regenerate_writes_the_capabilities_snapshot_only_when_the_request_decla
     assert "DJANGO_SETTINGS_MODULE=shschool.settings.testing" in runner.REGEN_CAPS and "SECRET_KEY=" in runner.REGEN_CAPS  # بلا إعدادات الاختبار تقع الحاويةُ على الإنتاج
 
 
+def test_regenerate_writes_the_caps_snapshot_on_a_clean_tree_when_the_branch_changed_the_sources(tmp_path, monkeypatch):
+    """إصلاح CI: الشجرةُ نظيفة وتعديلُ القدرات في الفرع المودَع؛ بلا هذا أُغلقت W-20261123-011 بلقطةٍ قديمة."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / runner.CAPS_SNAPSHOT).write_text("[]", encoding="utf-8")
+    fx, seen = _regen_fx(tmp_path, monkeypatch, [], lambda st: st["files"].append(runner.CAPS_SNAPSHOT))
+    monkeypatch.setattr(fx, "branch_files", lambda tree: ["core/capabilities/wings.py"])
+    assert fx.regenerate(str(tmp_path), [runner.CAPS_SNAPSHOT]) == [runner.CAPS_SNAPSHOT]
+    assert runner.REGEN_CAPS in seen[0][-1] and runner.REGEN_RATCHETS not in seen[0][-1]
+    fx, seen = _regen_fx(tmp_path, monkeypatch, [])
+    monkeypatch.setattr(fx, "branch_files", lambda tree: ["core/capabilities/wings.py"])
+    assert fx.regenerate(str(tmp_path), []) == [] and seen == []  # لم يُعلَن: لا توليد
+
+
 def test_regenerate_does_nothing_on_a_clean_tree(tmp_path, monkeypatch):
     fx, seen = _regen_fx(tmp_path, monkeypatch, [])
     assert fx.regenerate(str(tmp_path)) == [] and seen == []

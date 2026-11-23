@@ -1036,12 +1036,15 @@ class Effects:
         يُرجع ما تغيّر به من ملفّات.
         """
         before = self.changed(tree)
-        if not before:
+        # في إصلاح CI تكون الشجرةُ نظيفةً وتعديلُ القدرات مودَعٌ في الفرع: يُحكم على مصدرها بملفّات الفرع أيضًا (W-20261123-011 أُغلقت بذلك)
+        caps = CAPS_SNAPSHOT in (declared or ()) and (Path(tree) / CAPS_SNAPSHOT).is_file() and any(
+            f.startswith(CAPS_SOURCES) for f in [*before, *self.branch_files(tree)])
+        if not before and not caps:
             return []
-        cmds = [REGEN_RATCHETS] if (Path(tree) / SIZE_BASELINE).is_file() else []
+        cmds = [REGEN_RATCHETS] if before and (Path(tree) / SIZE_BASELINE).is_file() else []
         if any(f.startswith(IDENTITY_SOURCES) for f in before) and (Path(tree) / "scripts/gen_identity_reference.py").is_file():
             cmds.insert(0, REGEN_IDENTITY)
-        if CAPS_SNAPSHOT in (declared or ()) and (Path(tree) / CAPS_SNAPSHOT).is_file() and any(f.startswith(CAPS_SOURCES) for f in before):
+        if caps:
             cmds.append(REGEN_CAPS)
         if not cmds:
             return []
