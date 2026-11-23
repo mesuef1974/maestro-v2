@@ -304,7 +304,10 @@ REGEN_RATCHETS = "python -m tests.layering_ratchet --update; python -m tests.fil
 # لا يملك بيئةَ دجانغو على الجهاز فلم يُحدِّثها (2026-11-23).
 CAPS_SNAPSHOT = "tests/capabilities_registry_snapshot.json"
 CAPS_SOURCES = ("core/capabilities/", "core/permissions.py", "core/role_inheritance.py")
-REGEN_CAPS = "python -m tests.test_capabilities_snapshot --update"
+# الحاويةُ بلا متغيّرات دجانغو فتقع على إعدادات الإنتاج وتفشل بـ SECRET_KEY مطلوب (W-20261123-010 أُغلقت بها)؛ القيمُ هي قيمُ CI الاختباريّة العلنيّة
+REGEN_CAPS = ("DJANGO_SETTINGS_MODULE=shschool.settings.testing SECRET_KEY=ci-testing-only-not-for-production-use-a1b2c3d4e5f6 "
+              "FERNET_KEY=dGVzdC1mZXJuZXQta2V5LTMyLWJ5dGVzLWZvcmNpLS0= EXCEL_PROTECTION_PASSWORD=ci-testing-only "
+              "python -m tests.test_capabilities_snapshot --update")
 
 
 def clamp_size_baseline(old_text: str, new_text: str) -> str:
