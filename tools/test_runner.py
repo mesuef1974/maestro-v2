@@ -3017,6 +3017,7 @@ def test_regenerate_writes_the_capabilities_snapshot_only_when_the_request_decla
                          lambda st: st["files"].append(runner.CAPS_SNAPSHOT))
     assert fx.regenerate(str(tmp_path), [runner.CAPS_SNAPSHOT]) == [runner.CAPS_SNAPSHOT]
     assert runner.REGEN_CAPS in seen[0][-1] and "--network" in seen[0]
+    assert "DJANGO_SETTINGS_MODULE=shschool.settings.testing" in runner.REGEN_CAPS and "SECRET_KEY=" in runner.REGEN_CAPS  # بلا إعدادات الاختبار تقع الحاويةُ على الإنتاج
 
 
 def test_regenerate_does_nothing_on_a_clean_tree(tmp_path, monkeypatch):
