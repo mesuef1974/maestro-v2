@@ -3534,3 +3534,9 @@ def test_reviewer_sees_the_contract_as_a_claim():
     text = runner.review_prompt(card, ["a.py"], "diff")
     assert "tests/t.py::test_a" in text and "ادّعاء" in text
     assert "عقد الإنجاز" not in runner.review_prompt({"problem": "م", "accept": ["أ"]}, ["a.py"], "diff")
+
+
+def test_agent_env_carries_every_key_the_testing_settings_require():
+    """W-20261125-007: توقّف pytest عند المنفّذ لغياب FERNET_KEY فعُدّلت بلا فحص."""
+    assert {"DJANGO_SETTINGS_MODULE", "SECRET_KEY", "FERNET_KEY", "EXCEL_PROTECTION_PASSWORD"} <= set(runner.AGENT_ENV)
+
