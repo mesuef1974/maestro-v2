@@ -404,6 +404,20 @@ def test_no_change_report_names_the_real_reason_not_the_green_check_log(env):
     assert "لم يُحدث النموذجُ أيَّ تغيير" in runner.OWNER_QUEUE.read_text(encoding="utf-8")
 
 
+def test_no_change_after_the_ladder_is_classified_no_change_and_never_auto_retried(env):
+    """جوابٌ طويلٌ كان يُسقط البادئةَ من التقرير فتُصنَّف «نموذج» وتُعاد آليًّا بالنصّ نفسِه (W-20261125-001 ثمّ 002)."""
+    lp, lock = env
+    src = _done_request(runner.REQUESTS)
+    _card(lp, request_file=src)
+    fx = Fake(files=())
+    fx.answer = "نصُّ البطاقة مقطوع. " + "عقد الإنجاز: لا اختبار. " * 60
+    assert runner.run_cycle(CFG, fx, lp, lock) == "referred"
+    state = ledger.reduce_state(ledger.load_events(lp))["W-20261104-901"]
+    assert state["fail_kind"] == "بلا_تغيير" and list(runner.REQUESTS.glob("*.md")) == []
+    queue = runner.OWNER_QUEUE.read_text(encoding="utf-8")
+    assert "نصُّ البطاقة مقطوع" in queue and "أُعيدت آليًّا" not in queue
+
+
 def test_haiku_over_turn_cap_with_green_checks_never_runs_sonnet(env):
     lp, lock = env
     _card(lp)
@@ -2568,6 +2582,7 @@ def test_brief_asks_to_read_the_source_for_a_legal_card():
 
 def test_fail_kind_classifies_the_closing_reason_into_a_fixed_family():
     assert runner.fail_kind("فشل النموذج بعد السلّم الكامل: x") == "نموذج"
+    assert runner.fail_kind("لم يُحدث النموذجُ أيَّ تغيير بعد السلّم الكامل؛ أوّلُ جوابه: x") == "بلا_تغيير"
     assert runner.fail_kind("فحوصُ CI حمراء على الطلب 5") == "ci"
     assert runner.fail_kind("تعذّر الدفع: behind") == "إيداع"
     assert runner.fail_kind("شيءٌ آخر") == "أخرى"
