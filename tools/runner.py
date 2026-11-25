@@ -2668,7 +2668,8 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     stop_if_spinning(fp)
                     if ok and not fx.changed(tree):
                         ok = False  # لم يُحدث تغييراً: يصعد إلى السلّم التالي (D-522م)
-                        log = "لم يُحدث النموذجُ أيَّ تغيير؛ جوابُه: " + (res.out or "—")[-400:]  # لا سجلَّ الفحص الأخضر: هو ما أخفى السببَ في 8 محاولات (ضغط الأصول)
+                        log = NO_CHANGE + "؛ جوابُه: " + (res.out or "—")[-400:]  # لا سجلَّ الفحص الأخضر: هو ما أخفى السببَ في 8 محاولات (ضغط الأصول)
+                        stall = " ".join(mask(res.out or "—").split())[:FAIL_REPORT_CHARS]  # أوّلُ الجواب يحمل سببَ التوقّف؛ آخرُه عقدُ الإنجاز
                         break
                     if ok:
                         answer = str(res.raw.get("result") or res.out)
@@ -2698,6 +2699,8 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
                     break
             if not ok:
                 lack = f"؛ معايير ناقصة: {'، '.join(gaps)[:200]}" if gaps else ""
+                if log.startswith(NO_CHANGE):  # يُسمّى باسمه فيُصنَّف «بلا_تغيير» ولا يُعاد آليًّا (W-20261125-001 أُعيدت بنصّها المقصوص نفسِه)
+                    raise give_up(cid, f"{NO_CHANGE} بعد السلّم الكامل؛ أوّلُ جوابه: {stall}؛ كلفة={spent:.2f}$", log, fx, tree, lpath)
                 why = f": {failure_summary(mask(log))}" if log else ""
                 raise give_up(cid, f"فشل النموذج بعد السلّم الكامل{why}؛ كلفة={spent:.2f}${lack}", log, fx, tree, lpath)
             files = fx.changed(tree)
@@ -2744,7 +2747,9 @@ def process(card: dict, cfg: dict, fx: Effects, lpath=None) -> str:
     return "referred"
 
 
-FAIL_KINDS = (("السلّم الكامل", "نموذج"), ("CI حمراء", "ci"), ("لم يُحدث النموذجُ", "بلا_تغيير"), ("الإيداع", "إيداع"), ("تعذّر الدفع", "إيداع"),
+NO_CHANGE = "لم يُحدث النموذجُ أيَّ تغيير"
+# «بلا_تغيير» أوّلًا: رسالتُه بعد السلّم تحمل «السلّم الكامل» أيضًا
+FAIL_KINDS = (("لم يُحدث النموذجُ", "بلا_تغيير"), ("السلّم الكامل", "نموذج"), ("CI حمراء", "ci"), ("الإيداع", "إيداع"), ("تعذّر الدفع", "إيداع"),
               ("بوّابةُ الدمج", "بوّابة"), ("تعارض دمج", "تعارض"), ("بيئةٌ", "بيئة"), ("API Error", "بيئة"))
 
 
