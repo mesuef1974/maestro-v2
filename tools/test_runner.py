@@ -3071,6 +3071,14 @@ def test_regenerate_does_nothing_on_a_clean_tree(tmp_path, monkeypatch):
     assert fx.regenerate(str(tmp_path)) == [] and seen == []
 
 
+def test_retention_policy_is_in_scope_only_when_the_diff_adds_a_migration():
+    """اختبار الاحتفاظ يفرض ذكر الجدول الجديد في السياسة، فلا يُسقطه النطاق المعلن (W-20261125-003)؛ وبلا هجرة يبقى خارج النطاق."""
+    card = {"runner_checks": ["scope_only"], "scope_files": ["quality/x_models.py", "quality/migrations/0026_x.py"]}
+    assert runner.criteria_failures(card, ["quality/x_models.py", "quality/migrations/0026_x.py", runner.RETENTION_POLICY]) == []
+    assert runner.RETENTION_POLICY in runner.criteria_failures(card, ["quality/x_models.py", runner.RETENTION_POLICY])[0]
+    assert "docs/privacy/other.md" in runner.criteria_failures(card, ["quality/migrations/0026_x.py", "docs/privacy/other.md"])[0]
+
+
 def test_generated_identity_rules_do_not_break_scope_only():
     card = {"runner_checks": ["scope_only"], "scope_files": ["static/css/custom/40-themes.css"]}
     assert runner.criteria_failures(card, ["static/css/custom/40-themes.css", ".claude/rules/identity-colours-core.md"]) == []

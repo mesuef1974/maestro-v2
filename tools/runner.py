@@ -245,6 +245,9 @@ def scope_area(path: str) -> str:
     return parts[0]
 
 
+RETENTION_POLICY = "docs/privacy/data_retention.md"  # tests/test_data_retention.py يفرض ذكرَ كلّ جدولٍ جديد فيه
+
+
 def _check_scope_only(card: dict, files: list[str]) -> str:
     declared = set(card.get("scope_files") or [])
     if declared:
@@ -253,7 +256,9 @@ def _check_scope_only(card: dict, files: list[str]) -> str:
         return ""  # لا نطاقَ معلناً: لا شيء يُقارَن
     areas = {scope_area(f) for f in declared} - {""}
     out = [f for f in files if f not in declared and not (f.startswith("tests/") or "/tests/" in f) and scope_area(f) not in areas
-           and not f.startswith(IDENTITY_RULES)]  # مرجعُ الهويّة يولّده المشغّل نفسُه (regenerate) فلا يُحسب خروجاً عن النطاق
+           and not f.startswith(IDENTITY_RULES)  # مرجعُ الهويّة يولّده المشغّل نفسُه (regenerate) فلا يُحسب خروجاً عن النطاق
+           # هجرةٌ تضيف جدولاً يفرض اختبارُ الاحتفاظ ذكرَه في السياسة: فحصان متعارضان أغلقا W-20261125-003 بعد خمس جولات
+           and not (f == RETENTION_POLICY and any("/migrations/" in x for x in files))]
     return ("المعيار «لا ملفّ خارج النطاق»: عُدّل خارج الملفّات المعلنة: " + ", ".join(out[:8])) if out else ""
 
 
