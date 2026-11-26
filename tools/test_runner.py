@@ -3541,7 +3541,19 @@ def test_agent_env_carries_every_key_the_testing_settings_require():
     assert {"DJANGO_SETTINGS_MODULE", "SECRET_KEY", "FERNET_KEY", "EXCEL_PROTECTION_PASSWORD"} <= set(runner.AGENT_ENV)
 
 
-def test_the_agent_may_run_the_icon_generator_and_no_other_manage_command():
-    """الأيقونات ناتج مولّد: بلا هذا الأمر يعدّل المنفّذ المولّد وتبقى الصور القديمة (W-20261126-004 و005)."""
-    allowed = runner.DEFAULT_CONFIG["allowed_tools"]
-    assert [a for a in allowed if "manage.py" in a] == ["Bash(python manage.py build_app_icons)"]
+def test_regenerate_builds_icons_in_the_container_only_when_the_request_declares_them(tmp_path, monkeypatch):
+    # W-20261126-004 إلى 007: المنفّذ يعدّل المولّد ولا يستطيع تشغيله على الجهاز
+    gen = tmp_path / runner.ICONS_GENERATOR
+    gen.parent.mkdir(parents=True)
+    gen.write_text("", encoding="utf-8")
+    icon = "static/icons/v7/favicon.png"
+    fx, seen = _regen_fx(tmp_path, monkeypatch, [runner.ICONS_GENERATOR])
+    assert fx.regenerate(str(tmp_path)) == [] and seen == []  # لم تُعلَن الأيقونات
+    fx, seen = _regen_fx(tmp_path, monkeypatch, [runner.ICONS_GENERATOR], lambda st: st["files"].append(icon))
+    assert fx.regenerate(str(tmp_path), [runner.ICONS_GENERATOR, icon]) == [icon]
+    assert seen[0][-1] == runner.REGEN_ICONS and "--network" in seen[0]
+    assert runner.REGEN_ICONS.endswith("python manage.py build_app_icons") and "FERNET_KEY=" in runner.REGEN_ICONS
+
+
+def test_the_agent_gets_no_manage_command():
+    assert not [a for a in runner.DEFAULT_CONFIG["allowed_tools"] if "manage.py" in a]
