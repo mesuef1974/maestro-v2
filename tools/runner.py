@@ -828,7 +828,9 @@ def brief(card: dict, rules: list[str], fail_log: str = "", diff: str = "") -> s
 # ───────────────────────── التأثيرات (قابلة للحقن) ─────────────────────────
 # بيئةُ النموذج المنفِّذ: بلا SECRET_KEY يسقط كلُّ pytest بـImproperlyConfigured قبل أن يبدأ، وأمرٌ يسبقه
 # `VAR=x` أو `cd … &&` يُرفض لأنّه غيرُ مأذون؛ فعدّل W-20261111-001 خمسَ جولاتٍ على العمى (2026-11-11)
-AGENT_ENV = {"DJANGO_SETTINGS_MODULE": "shschool.settings.testing", "SECRET_KEY": "runner-local-testing-only-" + "0" * 40}
+# وبلا FERNET_KEY يتوقّف pytest قبل أيّ اختبار (W-20261125-007 عُدّلت بلا فحص)؛ القيمتان قيمتا CI الاختباريّتان العلنيّتان
+AGENT_ENV = {"DJANGO_SETTINGS_MODULE": "shschool.settings.testing", "SECRET_KEY": "runner-local-testing-only-" + "0" * 40,
+             "FERNET_KEY": "dGVzdC1mZXJuZXQta2V5LTMyLWJ5dGVzLWZvcmNpLS0=", "EXCEL_PROTECTION_PASSWORD": "ci-testing-only"}
 
 
 def sh(cmd: list[str], cwd: str | None = None, timeout: int = 1800, inp: str | None = None,
