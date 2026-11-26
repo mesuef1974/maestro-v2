@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
         "كبير": ["sonnet", 80, 4.0],
         "تصميم": ["opus", 80, 6.0],
     },
-    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)", "Bash(python -m tests.file_size_ratchet:*)", "Bash(python manage.py build_app_icons)", f"Bash(python {(HERE / 'img_tool.py').as_posix()}:*)"],
+    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)", "Bash(python -m tests.file_size_ratchet:*)", f"Bash(python {(HERE / 'img_tool.py').as_posix()}:*)"],
     "health_url": "https://shschoolmvp-production.up.railway.app/health/",
     "rollback_cmd": [],  # الافتراضيّ: gh workflow run rollback.yml (runbook §4)
     "worktrees": "C:/Users/mesue/delivery_manager_work_wt",
@@ -313,6 +313,10 @@ CAPS_SOURCES = ("core/capabilities/", "core/permissions.py", "core/role_inherita
 REGEN_CAPS = ("DJANGO_SETTINGS_MODULE=shschool.settings.testing SECRET_KEY=ci-testing-only-not-for-production-use-a1b2c3d4e5f6 "
               "FERNET_KEY=dGVzdC1mZXJuZXQta2V5LTMyLWJ5dGVzLWZvcmNpLS0= EXCEL_PROTECTION_PASSWORD=ci-testing-only "
               "python -m tests.test_capabilities_snapshot --update")
+# الأيقونات ناتج مولّد يحتاج دجانغو، وبيئة المنفّذ على الجهاز بلا حزم المشروع (W-20261126-004 إلى 007 أُغلقت والصور قديمة).
+ICONS_GENERATOR = "core/management/commands/build_app_icons.py"
+ICONS_DIR = "static/icons/"
+REGEN_ICONS = REGEN_CAPS.replace("python -m tests.test_capabilities_snapshot --update", "python manage.py build_app_icons")
 
 
 def clamp_size_baseline(old_text: str, new_text: str) -> str:
@@ -1046,13 +1050,18 @@ class Effects:
         # في إصلاح CI تكون الشجرةُ نظيفةً وتعديلُ القدرات مودَعٌ في الفرع: يُحكم على مصدرها بملفّات الفرع أيضًا (W-20261123-011 أُغلقت بذلك)
         caps = CAPS_SNAPSHOT in (declared or ()) and (Path(tree) / CAPS_SNAPSHOT).is_file() and any(
             f.startswith(CAPS_SOURCES) for f in [*before, *self.branch_files(tree)])
-        if not before and not caps:
+        # المولّد يكتب كل الأيقونات: لا يُشغَّل إلا إن أعلنت البطاقة المولّد وأيقونة، وما لم يُعلَن من ناتجه يُعاد
+        icons = (ICONS_GENERATOR in (declared or ()) and any(f.startswith(ICONS_DIR) for f in declared or ())
+                 and (Path(tree) / ICONS_GENERATOR).is_file() and ICONS_GENERATOR in [*before, *self.branch_files(tree)])
+        if not before and not caps and not icons:
             return []
         cmds = [REGEN_RATCHETS] if before and (Path(tree) / SIZE_BASELINE).is_file() else []
         if any(f.startswith(IDENTITY_SOURCES) for f in before) and (Path(tree) / "scripts/gen_identity_reference.py").is_file():
             cmds.insert(0, REGEN_IDENTITY)
         if caps:
             cmds.append(REGEN_CAPS)
+        if icons:
+            cmds.append(REGEN_ICONS)
         if not cmds:
             return []
         import flow_pump as fp  # noqa: PLC0415
@@ -1067,6 +1076,8 @@ class Effects:
         made = []
         for f in self.changed(tree):
             if f in before:
+                continue
+            if icons and f.startswith(ICONS_DIR) and f not in declared and sh(["git", "checkout", "--", f], tree).returncode == 0:
                 continue
             # الحاويةُ تكتب LF والشجرةُ على ويندوز CRLF: الملفُّ يظهر معدَّلاً ومحتواه واحد، فيُحسب «تغييراً» لنموذجٍ لم يغيّر شيئاً
             if sh(["git", "diff", "--quiet", "--", f], tree).returncode == 0 and sh(["git", "checkout", "--", f], tree).returncode == 0:
