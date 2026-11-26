@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
         "كبير": ["sonnet", 80, 4.0],
         "تصميم": ["opus", 80, 6.0],
     },
-    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)", "Bash(python -m tests.file_size_ratchet:*)", f"Bash(python {(HERE / 'img_tool.py').as_posix()}:*)"],
+    "allowed_tools": ["Read", "Edit", "Write", "Glob", "Grep", "Bash(pytest:*)", "Bash(python -m pytest:*)", "Bash(ruff:*)", "Bash(python -m ruff:*)", "Bash(mypy:*)", "Bash(python -m mypy:*)", "Bash(python -m tests.layering_ratchet:*)", "Bash(python -m tests.file_size_ratchet:*)", "Bash(python manage.py build_app_icons)", f"Bash(python {(HERE / 'img_tool.py').as_posix()}:*)"],
     "health_url": "https://shschoolmvp-production.up.railway.app/health/",
     "rollback_cmd": [],  # الافتراضيّ: gh workflow run rollback.yml (runbook §4)
     "worktrees": "C:/Users/mesue/delivery_manager_work_wt",

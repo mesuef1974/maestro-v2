@@ -3540,3 +3540,8 @@ def test_agent_env_carries_every_key_the_testing_settings_require():
     """W-20261125-007: توقّف pytest عند المنفّذ لغياب FERNET_KEY فعُدّلت بلا فحص."""
     assert {"DJANGO_SETTINGS_MODULE", "SECRET_KEY", "FERNET_KEY", "EXCEL_PROTECTION_PASSWORD"} <= set(runner.AGENT_ENV)
 
+
+def test_the_agent_may_run_the_icon_generator_and_no_other_manage_command():
+    """الأيقونات ناتج مولّد: بلا هذا الأمر يعدّل المنفّذ المولّد وتبقى الصور القديمة (W-20261126-004 و005)."""
+    allowed = runner.DEFAULT_CONFIG["allowed_tools"]
+    assert [a for a in allowed if "manage.py" in a] == ["Bash(python manage.py build_app_icons)"]
